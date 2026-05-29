@@ -1,0 +1,12 @@
+{
+  "name": "merch-x",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Barebones team-hosted merchandising reports app.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
