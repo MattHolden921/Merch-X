@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Product Merchandising</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#fff;--bg2:#f7f7f5;--bg3:#eceae4;--ink:#181816;--muted:#666660;--soft:#9b9a91;--line:rgba(0,0,0,.13);--line2:rgba(0,0,0,.25);--good:#1e7e4a;--warn:#a76610;--bad:#b13b2e;--info:#1a5f8f;--gold:#b58b16;--r:8px}
+@media(prefers-color-scheme:dark){:root{--bg:#1f1f1d;--bg2:#2b2b28;--bg3:#33332f;--ink:#f1f0ea;--muted:#b4b3aa;--soft:#7e7d74;--line:rgba(255,255,255,.14);--line2:rgba(255,255,255,.27);--good:#42b978;--warn:#d49635;--bad:#e35f50;--info:#64a8d7;--gold:#d2ad3d}}
+body{min-height:100vh;background:var(--bg3);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:22px 16px 48px}
+.wrap{max-width:1680px;margin:0 auto}
+.home{display:inline-flex;align-items:center;gap:6px;margin-bottom:14px;color:var(--muted);font-size:12px;text-decoration:none}
+.home:hover{color:var(--ink)}
+.head{display:grid;grid-template-columns:minmax(280px,1fr) auto;gap:16px;align-items:start;margin-bottom:16px}
+h1{font-size:24px;font-weight:600;letter-spacing:0;margin-bottom:5px}
+.sub{font-size:13px;color:var(--muted);line-height:1.55;max-width:780px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+button,.select,input{font:inherit}
+.btn{height:34px;border:.5px solid var(--line2);background:var(--bg);color:var(--ink);border-radius:var(--r);padding:0 12px;font-size:12px;cursor:pointer}
+.btn:hover{background:var(--bg2)}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.icon{min-width:34px;padding:0 10px;font-weight:700}
+.panel{background:var(--bg);border:.5px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:14px}
+.toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;align-items:end}
+.field label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:5px}
+.select,input{width:100%;height:32px;border:.5px solid var(--line2);border-radius:var(--r);background:var(--bg2);color:var(--ink);padding:0 9px;font-size:12px}
+.score{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;min-width:260px}
+.score span{display:block;background:var(--bg2);border-radius:var(--r);padding:8px 10px;font-size:12px;color:var(--muted)}
+.score b{color:var(--ink);font-weight:600}
+.status{font-size:12px;line-height:1.5;color:var(--muted)}
+.status strong{color:var(--ink)}
+.status.ok{color:var(--good)}.status.warn{color:var(--warn)}.status.err{color:var(--bad)}
+.cards{display:grid;grid-template-columns:repeat(8,1fr);gap:10px;margin-bottom:14px}
+.metric{background:var(--bg);border:.5px solid var(--line);border-radius:var(--r);padding:12px}
+.metric label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:5px}
+.metric span{font-size:20px;font-weight:600}
+.metric small{display:block;font-size:11px;color:var(--muted);margin-top:2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(188px,1fr));gap:12px}
+.product{background:var(--bg);border:.5px solid var(--line);border-radius:var(--r);overflow:hidden;break-inside:avoid}
+.photo{position:relative;aspect-ratio:3/4;background:var(--bg2);overflow:hidden}
+.photo img{width:100%;height:100%;object-fit:contain;display:block}
+.empty{height:100%;display:flex;align-items:center;justify-content:center;color:var(--soft);font-size:12px}
+.rank{position:absolute;top:8px;left:8px;min-width:26px;height:26px;border-radius:999px;background:rgba(0,0,0,.68);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;padding:0 7px}
+.rank.r1{background:var(--gold)}.rank.r2{background:#858585}.rank.r3{background:#9b6440}
+.tag{position:absolute;top:8px;right:8px;max-width:86px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(0,0,0,.62);color:#fff;border-radius:999px;padding:3px 7px;font-size:10px}
+.body{padding:10px}
+.name{font-size:13px;font-weight:600;line-height:1.32;min-height:34px}
+.chips{display:flex;gap:4px;flex-wrap:wrap;margin:7px 0 8px}
+.chip{font-size:10px;color:var(--muted);background:var(--bg2);border-radius:999px;padding:3px 7px}
+.money{font-size:16px;font-weight:700;margin-bottom:7px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;border-top:.5px solid var(--line);padding-top:8px}
+.stats label{display:block;font-size:9px;color:var(--soft);text-transform:uppercase;letter-spacing:.04em}
+.stats span{font-size:12px;color:var(--ink);font-weight:600}
+.ga-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px;padding-top:8px;border-top:.5px solid var(--line)}
+.ga-stats label{display:block;font-size:9px;color:var(--soft);text-transform:uppercase;letter-spacing:.04em}
+.ga-stats span{font-size:12px;color:var(--ink);font-weight:600}
+.bar{height:3px;background:var(--bg2);border-radius:999px;margin-top:8px;overflow:hidden}
+.fill{height:100%;background:var(--good);border-radius:999px}
+.action-badge{display:inline-flex;align-items:center;max-width:100%;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#fff;background:var(--info);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.action-Reorder{background:var(--bad)}.action-Feature{background:var(--good)}.action-Markdown{background:var(--warn)}.action-Soldout{background:#555}.action-Watch{background:var(--info)}.action-GoldDust{background:var(--gold)}.action-NeedsWork{background:#7a4cb0}
+.card-top{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:7px 0 8px}
+.sell-strong{color:var(--good)}.sell-low{color:var(--warn)}
+.connect{display:grid;grid-template-columns:1.2fr 1fr;gap:12px;align-items:start}
+.connect code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;color:var(--ink);background:var(--bg2);border-radius:5px;padding:2px 5px}
+.notes{font-size:12px;color:var(--muted);line-height:1.7}
+.notes b{color:var(--ink);font-weight:600}
+.modal{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.46);padding:18px}
+.modal.open{display:flex}
+.modal-box{width:min(760px,100%);max-height:88vh;overflow:auto;background:var(--bg);border:.5px solid var(--line);border-radius:var(--r);box-shadow:0 20px 70px rgba(0,0,0,.28)}
+.modal-head{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;background:var(--bg);border-bottom:.5px solid var(--line)}
+.modal-head h2{font-size:17px;font-weight:600}
+.modal-close{width:30px;height:30px;border:.5px solid var(--line2);border-radius:var(--r);background:var(--bg2);color:var(--ink);cursor:pointer;font-size:18px;line-height:1}
+.key-content{padding:16px 18px 20px;display:grid;gap:16px}
+.key-section h3{font-size:13px;font-weight:700;margin-bottom:8px}
+.key-section p,.key-section li{font-size:12px;color:var(--muted);line-height:1.55}
+.key-section ul{padding-left:18px;display:grid;gap:5px}
+.formula{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;color:var(--ink);background:var(--bg2);border-radius:var(--r);padding:10px;line-height:1.55;overflow:auto}
+.key-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.key-item{border:.5px solid var(--line);border-radius:var(--r);padding:10px;background:var(--bg2)}
+.key-item b{display:block;font-size:12px;margin-bottom:4px}
+@media(max-width:1180px){.cards{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:980px){.head{grid-template-columns:1fr}.actions{justify-content:flex-start}.toolbar{grid-template-columns:repeat(2,1fr)}.cards{grid-template-columns:repeat(2,1fr)}.connect{grid-template-columns:1fr}}
+@media(max-width:560px){body{padding:18px 10px 36px}.toolbar{grid-template-columns:1fr}.cards{grid-template-columns:1fr}.grid{grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:8px}.score{grid-template-columns:1fr}.name{font-size:12px}}
+@media print{body{background:#fff;padding:10mm}.home,.actions,.panel.connect-panel,.toolbar-panel,.modal{display:none}.wrap{max-width:none}.head{display:block;margin-bottom:10px}.sub{font-size:10px}.cards{grid-template-columns:repeat(5,1fr);gap:6px}.metric{padding:7px}.metric span{font-size:14px}.grid{grid-template-columns:repeat(4,1fr);gap:8px}.product{border-color:#ddd}.body{padding:7px}.name{font-size:10px;min-height:28px}.money{font-size:12px}.stats span{font-size:9px}.stats label{font-size:8px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>Product merchandising</h1>
+      <p class="sub">A live Shopify-fed range board ranked by recent sales, stock depth, and gross margin when product costs are available. Use it for buying reviews, trade meetings, and print-ready merchandising plans.</p>
+    </div>
+    <div class="actions">
+      <button class="btn icon" id="keyBtn" type="button" aria-haspopup="dialog" aria-controls="keyModal">Key</button>
+      <button class="btn" id="printBtn" type="button">Print</button>
+      <button class="btn primary" id="syncBtn" type="button">Sync Shopify</button>
+    </div>
+  </section>
+  <section class="panel connect-panel connect">
+    <p class="notes"><b>Shopify connection</b><br>Set <code>SHOPIFY_SHOP</code>, <code>SHOPIFY_CLIENT_ID</code>, and <code>SHOPIFY_CLIENT_SECRET</code> on the server. Optional: <code>SHOPIFY_API_VERSION</code>. The page exchanges those credentials server-side, so secrets are never exposed in browser code.</p>
+    <p class="status" id="connectionStatus">Using sample products until Shopify environment variables are configured.</p>
+  </section>
+  <section class="panel toolbar-panel">
+    <div class="toolbar">
+      <div class="field"><label for="searchInput">Search</label><input id="searchInput" type="search" placeholder="Product, tag, colour"></div>
+      <div class="field"><label for="typeFilter">Category</label><select class="select" id="typeFilter"></select></div>
+      <div class="field"><label for="seasonFilter">Season</label><select class="select" id="seasonFilter"></select></div>
+      <div class="field"><label for="modeSelect">Mode</label><select class="select" id="modeSelect"><option value="commercial">Commercial</option><option value="reorder">Reorder</option><option value="markdown">Markdown</option><option value="feature">Feature</option><option value="goldDust">Gold Dust</option><option value="needsWork">Needs Work</option></select></div>
+      <div class="field"><label for="actionFilter">Action</label><select class="select" id="actionFilter"><option value="">All actions</option><option>Reorder</option><option>Feature</option><option>Markdown</option><option>Gold Dust</option><option>Needs Work</option><option>Watch</option><option>Sold out</option></select></div>
+      <div class="field"><label for="sortSelect">Sort</label><select class="select" id="sortSelect"><option value="score">Merch score</option><option value="revenue">Sales</option><option value="units">Units</option><option value="gaViews">Views</option><option value="gaAdds">Add to cart</option><option value="stock">Stock</option><option value="sellThrough">Sell-through</option><option value="margin">Gross margin</option></select></div>
+      <div class="field"><label for="daysSelect">Sales window</label><select class="select" id="daysSelect"><option value="14">Last 2 weeks</option><option value="30">Last 30 days</option><option value="60">Last 60 days</option><option value="90">Last 90 days</option></select></div>
+      <div class="score" id="scoreWeights" aria-label="Score weighting"><span><b>50%</b> sales</span><span><b>25%</b> stock</span><span><b>25%</b> profit</span></div>
+    </div>
+  </section>
+  <section class="cards" aria-label="Merchandising summary">
+    <div class="metric"><label>Products</label><span id="metricProducts">0</span><small>shown in board</small></div>
+    <div class="metric"><label>Sales</label><span id="metricRevenue">£0</span><small id="metricWindow">last 2 weeks</small></div>
+    <div class="metric"><label>Units</label><span id="metricUnits">0</span><small>recent orders</small></div>
+    <div class="metric"><label>Views</label><span id="metricViews">0</span><small>GA4 item views</small></div>
+    <div class="metric"><label>Add to cart</label><span id="metricAdds">0</span><small id="metricCvr">0% CVR</small></div>
+    <div class="metric"><label>Stock</label><span id="metricStock">0</span><small>available units</small></div>
+    <div class="metric"><label>Sell-through</label><span id="metricSellThrough">0%</span><small>units / units + stock</small></div>
+    <div class="metric"><label>GP</label><span id="metricMargin">n/a</span><small id="metricMarginNote">priced costed items</small></div>
+  </section>
+  <section class="grid" id="productGrid" aria-label="Ranked products"></section>
+</main>
+<div class="modal" id="keyModal" role="dialog" aria-modal="true" aria-labelledby="keyTitle">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2 id="keyTitle">Merchandising key</h2>
+      <button class="modal-close" id="keyCloseBtn" type="button" aria-label="Close key">×</button>
+    </div>
+    <div class="key-content">
+      <section class="key-section">
+        <h3>Modes</h3>
+        <div class="key-grid">
+          <div class="key-item"><b>Commercial</b><p>Ranks the strongest overall products for a general trade view.</p><div class="formula">50% sales + 25% stock + 25% GP</div></div>
+          <div class="key-item"><b>Reorder</b><p>Prioritises strong sellers that are running low or have gone oversold.</p><div class="formula">50% sales + 35% low stock + 15% GP</div></div>
+          <div class="key-item"><b>Markdown</b><p>Finds high-stock products with weaker sales and weaker margin.</p><div class="formula">45% stock + 35% low sales + 20% low GP</div></div>
+          <div class="key-item"><b>Feature</b><p>Finds products worth pushing because sales, margin, and depth can support demand.</p><div class="formula">55% sales + 25% GP + 20% stock</div></div>
+          <div class="key-item"><b>Gold Dust</b><p>Finds products with low GA4 views but strong Shopify units per view.</p><div class="formula">55% CVR + 35% low views + 10% GP</div></div>
+          <div class="key-item"><b>Needs Work</b><p>Finds products getting attention but not converting into unit sales.</p><div class="formula">55% views + 35% low CVR + 10% stock</div></div>
+        </div>
+      </section>
+      <section class="key-section">
+        <h3>Action Badges</h3>
+        <ul>
+          <li><b>Feature:</b> strong sales with enough stock behind it.</li>
+          <li><b>Reorder:</b> strong sales with low stock.</li>
+          <li><b>Markdown:</b> low sales with high stock.</li>
+          <li><b>Gold Dust:</b> low views with high CVR. Candidate for more exposure.</li>
+          <li><b>Needs Work:</b> high views with low CVR. Candidate for content, price, stock, or product-page review.</li>
+          <li><b>Sold out:</b> sold units with zero or negative available stock.</li>
+          <li><b>Watch:</b> does not strongly fit another action yet.</li>
+        </ul>
+      </section>
+      <section class="key-section">
+        <h3>Core Metrics</h3>
+        <ul>
+          <li><b>Sales:</b> order line revenue in the selected window.</li>
+          <li><b>Units:</b> order line quantity in the selected window.</li>
+          <li><b>Stock:</b> available Shopify inventory across variants. Negative stock is shown because it can signal oversold items.</li>
+          <li><b>Sell-through:</b> units sold divided by units sold plus current stock.</li>
+          <li><b>GP:</b> calculated from Shopify price and variant cost per item. If cost is missing, the card shows No cost.</li>
+          <li><b>Views:</b> GA4 item views matched by item ID, SKU, Shopify IDs, handle, or item name.</li>
+          <li><b>ATC:</b> GA4 items added to cart.</li>
+          <li><b>CVR:</b> Shopify units sold in the selected period divided by GA4 item views for the same period.</li>
+        </ul>
+      </section>
+      <section class="key-section">
+        <h3>Score Logic</h3>
+        <p>Scores compare each product against the current filtered view. Sales strength is revenue divided by the highest revenue in view. Stock strength is available stock divided by the highest stock in view. GP strength is GP percentage divided by 100.</p>
+        <div class="formula">sell-through = units / (units + max(stock, 0))</div>
+        <p>If no GP data is available, Commercial mode falls back to 67% sales and 33% stock. If some products are missing GP, they use the average GP of costed products for scoring so missing cost does not automatically sink them. GA4 metrics are displayed for context, but they do not currently change the Merch score.</p>
+      </section>
+    </div>
+  </div>
+</div>
+<script>
+const sampleProducts=[
+{title:"Meredith Washed Linen Pinafore Navy",productType:"Dresses",season:"SS26",color:"Navy",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/IMG_0207_b653c30b-5010-4a72-a0c3-414d5161a4b1.jpg?v=1773859647",price:59,revenue:363,units:7,stock:26,margin:88,tags:["linen","navy"]},
+{title:"Cesca Strap Linen Dress Navy",productType:"Dresses",season:"SS26",color:"Navy",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/Cesca_Strap_Linen_Dress_Navy_D.png?v=1779293309",price:52,revenue:124,units:3,stock:7,margin:86,tags:["linen","strap"]},
+{title:"Ellerie V-Neck Linen Dress Stone",productType:"Dresses",season:"SS26",color:"Stone",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/IMG_3540_46e6bb37-57ae-4325-9eb8-5a73f5ba75f5.jpg?v=1773858419",price:55,revenue:135,units:3,stock:18,margin:84,tags:["linen"]},
+{title:"Nova Linen Dress Stone",productType:"Dresses",season:"SS26",color:"Stone",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/IMG_8167_3d1df879-23cf-4675-bad6-758ed01e66cf.jpg?v=1773858456",price:49,revenue:122,units:3,stock:5,margin:89,tags:["linen"]},
+{title:"Solange Pocket Linen Dress Fuchsia",productType:"Dresses",season:"SS26",color:"Fuchsia",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/Solange_Pink_A.png?v=1779458803",price:58,revenue:144,units:3,stock:8,margin:87,tags:["linen","pocket"]},
+{title:"Morianna Cotton Dress White",productType:"Dresses",season:"SS25",color:"White",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/Morrianna_White_D.png?v=1779464790",price:48,revenue:127,units:3,stock:9,margin:86,tags:["cotton"]},
+{title:"Helenton Button Dress Mid Denim",productType:"Dresses",season:"SS25",color:"Denim",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/Henenton_Denim_Dress_A.png?v=1779269107",price:62,revenue:32,units:1,stock:35,margin:84,tags:["denim"]},
+{title:"Tisha Needlecord Shirt Dress Black",productType:"Dresses",season:"AW25",color:"Black",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/DSC08378_57bd5ae3-06b3-40e3-8624-dc195caa6d30.jpg?v=1773859374",price:64,revenue:78,units:2,stock:9,margin:88,tags:["needlecord"]}
+];
+let products=sampleProducts;
+const fmtMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
+const els={grid:document.getElementById("productGrid"),status:document.getElementById("connectionStatus"),sync:document.getElementById("syncBtn"),search:document.getElementById("searchInput"),type:document.getElementById("typeFilter"),season:document.getElementById("seasonFilter"),mode:document.getElementById("modeSelect"),action:document.getElementById("actionFilter"),sort:document.getElementById("sortSelect"),days:document.getElementById("daysSelect"),weights:document.getElementById("scoreWeights")};
+const keyModal=document.getElementById("keyModal");
+const keyBtn=document.getElementById("keyBtn");
+const keyCloseBtn=document.getElementById("keyCloseBtn");
+function openKey(){keyModal.classList.add("open");keyCloseBtn.focus()}
+function closeKey(){keyModal.classList.remove("open");keyBtn.focus()}
+function clamp01(value){return Math.max(0,Math.min(1,value))}
+function sellThrough(product){const units=Number(product.units||0);const stock=Math.max(0,Number(product.stock||0));return units+stock>0?units/(units+stock):0}
+function productCvr(product){return Number(product.gaViews||0)>0?Number(product.units||0)/Number(product.gaViews||0):0}
+function scoreContext(source){const margins=source.map((p)=>p.margin).filter((value)=>value!=null);const cvrs=source.map(productCvr).filter((value)=>value>0);return{revenue:Math.max(...source.map((p)=>p.revenue||0),0),stock:Math.max(...source.map((p)=>Math.max(0,p.stock||0)),0),views:Math.max(...source.map((p)=>p.gaViews||0),0),cvr:Math.max(...cvrs,0),hasMargins:margins.length>0,avgMargin:margins.length?margins.reduce((sum,value)=>sum+value,0)/margins.length:0}}
+function productSignals(product,ctx){const sales=ctx.revenue?clamp01((product.revenue||0)/ctx.revenue):0;const stock=ctx.stock?clamp01(Math.max(0,product.stock||0)/ctx.stock):0;const views=ctx.views?clamp01((product.gaViews||0)/ctx.views):0;const cvr=ctx.cvr?clamp01(productCvr(product)/ctx.cvr):0;const margin=ctx.hasMargins?clamp01((product.margin==null?ctx.avgMargin:product.margin)/100):null;const through=sellThrough(product);return{sales,stock,views,cvr,lowViews:1-views,lowStock:1-stock,lowSales:1-sales,lowCvr:1-cvr,margin:margin==null?0:margin,through}}
+function scoreProduct(product,ctx){const s=productSignals(product,ctx);const mode=els.mode.value;if(mode==="reorder")return s.sales*50+s.lowStock*35+s.margin*15;if(mode==="markdown")return s.stock*45+s.lowSales*35+(1-s.margin)*20;if(mode==="feature")return s.sales*55+s.margin*25+s.stock*20;if(mode==="goldDust")return s.cvr*55+s.lowViews*35+s.margin*10;if(mode==="needsWork")return s.views*55+s.lowCvr*35+s.stock*10;if(!ctx.hasMargins)return s.sales*67+s.stock*33;return s.sales*50+s.stock*25+s.margin*25}
+function actionForProduct(product,ctx){const s=productSignals(product,ctx);if(Number(product.stock||0)<=0&&Number(product.units||0)>0)return"Sold out";if(Number(product.gaViews||0)>0&&s.cvr>=.55&&s.views<=.35)return"Gold Dust";if(s.views>=.55&&s.cvr<=.25)return"Needs Work";if(s.sales>=.45&&s.stock<=.25)return"Reorder";if(s.sales>=.45&&s.stock>.25)return"Feature";if(s.sales<=.15&&s.stock>=.45)return"Markdown";return"Watch"}
+function updateWeights(){const mode=els.mode.value;const text={commercial:products.some((p)=>p.margin!=null)?["50% sales","25% stock","25% profit"]:["67% sales","33% stock","profit off"],reorder:["50% sales","35% low stock","15% profit"],markdown:["45% stock","35% low sales","20% low profit"],feature:["55% sales","25% profit","20% stock"],goldDust:["55% CVR","35% low views","10% profit"],needsWork:["55% views","35% low CVR","10% stock"]}[mode];els.weights.innerHTML=text.map((item)=>{const split=item.split(" ");return`<span><b>${escapeHtml(split.shift())}</b> ${escapeHtml(split.join(" "))}</span>`}).join("")}
+function rankedProducts(){const q=els.search.value.trim().toLowerCase();const type=els.type.value;const season=els.season.value;const action=els.action.value;const filtered=products.filter((p)=>!type||p.productType===type).filter((p)=>!season||p.season===season).filter((p)=>!q||`${p.title} ${p.color} ${p.productType} ${(p.tags||[]).join(" ")}`.toLowerCase().includes(q));const ctx=scoreContext(filtered.length?filtered:products);return filtered.map((p)=>({...p,score:scoreProduct(p,ctx),action:actionForProduct(p,ctx),sellThrough:sellThrough(p)})).filter((p)=>!action||p.action===action).sort((a,b)=>{const key=els.sort.value;if(key==="margin")return((b.margin==null?-1:b.margin)-(a.margin==null?-1:a.margin));return(b[key]||0)-(a[key]||0)})}
+function setFilters(){const currentType=els.type.value;const currentSeason=els.season.value;const types=[...new Set(products.map((p)=>p.productType).filter(Boolean))].sort();const seasons=[...new Set(products.map((p)=>p.season).filter(Boolean))].sort().reverse();els.type.innerHTML=`<option value="">All categories</option>${types.map((value)=>`<option>${escapeHtml(value)}</option>`).join("")}`;els.season.innerHTML=`<option value="">All seasons</option>${seasons.map((value)=>`<option>${escapeHtml(value)}</option>`).join("")}`;if(types.includes(currentType))els.type.value=currentType;if(seasons.includes(currentSeason))els.season.value=currentSeason}
+function render(){updateWeights();const rows=rankedProducts();const totalRevenue=rows.reduce((sum,p)=>sum+Number(p.revenue||0),0);const totalUnits=rows.reduce((sum,p)=>sum+Number(p.units||0),0);const totalViews=rows.reduce((sum,p)=>sum+Number(p.gaViews||0),0);const totalAdds=rows.reduce((sum,p)=>sum+Number(p.gaAdds||0),0);const totalStock=rows.reduce((sum,p)=>sum+Number(p.stock||0),0);const margins=rows.map((p)=>p.margin).filter((value)=>value!=null);const totalSellBase=rows.reduce((sum,p)=>sum+Number(p.units||0)+Math.max(0,Number(p.stock||0)),0);const avgSellThrough=totalSellBase?Math.round((totalUnits/totalSellBase)*100):0;const cvr=totalViews?((totalUnits/totalViews)*100).toFixed(1):"0.0";document.getElementById("metricProducts").textContent=rows.length.toLocaleString("en-GB");document.getElementById("metricRevenue").textContent=fmtMoney.format(totalRevenue);document.getElementById("metricUnits").textContent=totalUnits.toLocaleString("en-GB");document.getElementById("metricViews").textContent=totalViews.toLocaleString("en-GB");document.getElementById("metricAdds").textContent=totalAdds.toLocaleString("en-GB");document.getElementById("metricCvr").textContent=`${cvr}% CVR`;document.getElementById("metricStock").textContent=totalStock.toLocaleString("en-GB");document.getElementById("metricSellThrough").textContent=`${avgSellThrough}%`;document.getElementById("metricMargin").textContent=margins.length?`${Math.round(margins.reduce((s,v)=>s+v,0)/margins.length)}%`:"No cost";document.getElementById("metricMarginNote").textContent=margins.length?"priced costed items":"add cost per item in Shopify";document.getElementById("metricWindow").textContent=els.days.options[els.days.selectedIndex].text.toLowerCase();els.grid.innerHTML=rows.map((product,index)=>productCard(product,index+1)).join("")}
+function productCard(product,rank){const gp=product.margin==null?"No cost":`${Math.round(product.margin)}%`;const sellPct=Math.round((product.sellThrough||0)*100);const cvr=product.gaViews?((Number(product.units||0)/Number(product.gaViews||0))*100).toFixed(1):"0.0";const sellClass=sellPct>=65?"sell-strong":sellPct<=15?"sell-low":"";const actionClass=product.action==="Sold out"?"Soldout":product.action;const rankClass=rank===1?"r1":rank===2?"r2":rank===3?"r3":"";return `<article class="product"><div class="photo">${product.imageUrl?`<img src="${escapeAttr(product.imageUrl)}" alt="${escapeAttr(product.imageAlt||product.title)}" loading="lazy">`:`<div class="empty">No image</div>`}<span class="rank ${rankClass}">#${rank}</span>${product.season?`<span class="tag">${escapeHtml(product.season)}</span>`:""}</div><div class="body"><div class="name">${escapeHtml(product.title)}</div><div class="card-top"><span class="action-badge action-${escapeAttr(actionClass)}">${escapeHtml(product.action)}</span><span class="chip">${Math.round(product.score||0)} score</span></div><div class="chips">${[product.color,product.productType].filter(Boolean).map((value)=>`<span class="chip">${escapeHtml(value)}</span>`).join("")}</div><div class="money">${fmtMoney.format(product.revenue||0)}</div><div class="stats"><div><label>Units</label><span>${Number(product.units||0).toLocaleString("en-GB")}</span></div><div><label>Stock</label><span>${Number(product.stock||0).toLocaleString("en-GB")}</span></div><div><label>Sell</label><span class="${sellClass}">${sellPct}%</span></div><div><label>GP</label><span>${gp}</span></div></div><div class="ga-stats"><div><label>Views</label><span>${Number(product.gaViews||0).toLocaleString("en-GB")}</span></div><div><label>ATC</label><span>${Number(product.gaAdds||0).toLocaleString("en-GB")}</span></div><div><label>CVR</label><span>${cvr}%</span></div></div><div class="bar"><div class="fill" style="width:${Math.max(0,Math.min(100,product.score||0))}%"></div></div></div></article>`}
+async function syncShopify(){els.sync.disabled=true;els.sync.textContent="Syncing";els.status.className="status";els.status.textContent="Connecting to Shopify...";try{const response=await fetch(`/api/shopify-merchandising?days=${encodeURIComponent(els.days.value)}&limit=180`);const data=await response.json();if(!data.configured){products=sampleProducts;els.status.className="status warn";els.status.textContent=data.message}else if(!response.ok){throw new Error(data.message||"Shopify sync failed")}else{products=data.products.length?data.products:sampleProducts;const syncedAt=new Date(data.syncedAt).toLocaleString("en-GB");const shopifyText=data.ordersAvailable?`<strong>Connected.</strong> Synced ${data.products.length.toLocaleString("en-GB")} products from Shopify at ${escapeHtml(syncedAt)}.`:`<strong>Products synced.</strong> Orders were unavailable, so sales metrics show as zero. Check Shopify order scopes.`;const gaText=data.gaAvailable?" GA4 ecommerce metrics included.":data.gaMessage?` GA4 not connected: ${escapeHtml(data.gaMessage)}`:"";els.status.className=data.ordersAvailable?"status ok":"status warn";els.status.innerHTML=`${shopifyText}${gaText}`}}catch(error){products=sampleProducts;els.status.className="status err";els.status.textContent=`${error.message}. Showing sample products.`}finally{setFilters();render();els.sync.disabled=false;els.sync.textContent="Sync Shopify"}}
+function escapeHtml(value){return String(value||"").replace(/[&<>"']/g,(char)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]))}
+function escapeAttr(value){return escapeHtml(value).replace(/`/g,"&#96;")}
+[els.search,els.type,els.season,els.mode,els.action,els.sort].forEach((el)=>el.addEventListener("input",render));
+els.days.addEventListener("change",syncShopify);
+els.sync.addEventListener("click",syncShopify);
+keyBtn.addEventListener("click",openKey);
+keyCloseBtn.addEventListener("click",closeKey);
+keyModal.addEventListener("click",(event)=>{if(event.target===keyModal)closeKey()});
+document.addEventListener("keydown",(event)=>{if(event.key==="Escape"&&keyModal.classList.contains("open"))closeKey()});
+document.getElementById("printBtn").addEventListener("click",()=>window.print());
+setFilters();
+render();
+syncShopify();
+</script>
+</body>
+</html>
