@@ -4,27 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Merch KK</title>
+<link rel="stylesheet" href="/design-system.css">
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#fff;--bg2:#f7f7f5;--bg3:#f0efe9;--text:#1a1a18;--text2:#62625d;--text3:#999990;--border:rgba(0,0,0,.12);--border2:rgba(0,0,0,.22);--success:#1e7e4a;--r:8px}
-@media(prefers-color-scheme:dark){:root{--bg:#1e1e1c;--bg2:#2a2a28;--bg3:#333330;--text:#f0efe9;--text2:#b6b6ad;--text3:#7c7c74;--border:rgba(255,255,255,.12);--border2:rgba(255,255,255,.22);--success:#3dba6e}}
-body{min-height:100vh;background:var(--bg3);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:28px 18px 56px}
-.wrap{max-width:1100px;margin:0 auto}
+.wrap{max-width:1100px}
 header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:28px}
 .brand{font-size:14px;color:var(--text2);margin-bottom:8px}
 h1{font-size:28px;line-height:1.15;font-weight:600;letter-spacing:0;margin-bottom:8px}
 .sub{font-size:14px;line-height:1.6;color:var(--text2);max-width:680px}
-.status{font-size:12px;color:var(--success);background:var(--bg);border:.5px solid var(--border);border-radius:999px;padding:7px 11px;white-space:nowrap}
+.status{display:inline-flex;align-items:center;min-height:30px;color:var(--success);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:0 10px;white-space:nowrap}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
 .tool{display:flex;flex-direction:column;min-height:178px;background:var(--bg);border:.5px solid var(--border);border-radius:var(--r);padding:18px;color:inherit;text-decoration:none}
 .tool:hover{border-color:var(--border2);background:var(--bg2)}
 .tool.disabled{opacity:.62;pointer-events:none}
 .top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
 .label{font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em}
-.pill{font-size:11px;border:.5px solid var(--border);border-radius:999px;padding:4px 8px;color:var(--text2);background:var(--bg2)}
 .tool h2{font-size:17px;font-weight:600;margin-bottom:8px}
 .tool p{font-size:13px;line-height:1.55;color:var(--text2);margin-bottom:18px}
-.action{margin-top:auto;font-size:13px;color:var(--text)}
+.action{margin-top:auto;font-size:13px;color:var(--ds-action);font-weight:600}
 .footer{margin-top:26px;font-size:12px;color:var(--text3);line-height:1.6}
 @media(max-width:620px){body{padding:20px 12px 40px}header{display:block}.status{display:inline-block;margin-top:16px}h1{font-size:24px}.tool{min-height:160px}}
 </style>
@@ -48,7 +44,7 @@ h1{font-size:28px;line-height:1.15;font-weight:600;letter-spacing:0;margin-botto
       </div>
       <h2>Bestsellers report</h2>
       <p>Upload Shopify sales, product, inventory, and trade files to analyse bestsellers, stock position, revenue, slow sellers, and weekly trade.</p>
-      <span class="action">Open report →</span>
+      <span class="action">Open report &rarr;</span>
     </a>
 
     <a class="tool" href="/merchandising.html">
@@ -58,7 +54,7 @@ h1{font-size:28px;line-height:1.15;font-weight:600;letter-spacing:0;margin-botto
       </div>
       <h2>Product merchandising</h2>
       <p>Sync Shopify products into a print-ready range board ranked by recent sales, stock depth, and gross margin.</p>
-      <span class="action">Open board →</span>
+      <span class="action">Open board &rarr;</span>
     </a>
 
     <a class="tool" href="/collection-planner.html">
@@ -68,7 +64,7 @@ h1{font-size:28px;line-height:1.15;font-weight:600;letter-spacing:0;margin-botto
       </div>
       <h2>Collection reorder planner</h2>
       <p>Pick a Shopify collection, compare current product order with strategy-led suggestions, and export a CSV review plan.</p>
-      <span class="action">Open planner -&gt;</span>
+      <span class="action">Open planner &rarr;</span>
     </a>
 
     <div class="tool disabled">
