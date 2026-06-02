@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Collection Reorder Planner</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#fff;--bg2:#f7f7f5;--bg3:#eceae4;--ink:#181816;--muted:#666660;--soft:#9b9a91;--line:rgba(0,0,0,.13);--line2:rgba(0,0,0,.25);--good:#1e7e4a;--warn:#a76610;--bad:#b13b2e;--info:#1a5f8f;--gold:#b58b16;--r:8px}
+@media(prefers-color-scheme:dark){:root{--bg:#1f1f1d;--bg2:#2b2b28;--bg3:#33332f;--ink:#f1f0ea;--muted:#b4b3aa;--soft:#7e7d74;--line:rgba(255,255,255,.14);--line2:rgba(255,255,255,.27);--good:#42b978;--warn:#d49635;--bad:#e35f50;--info:#64a8d7;--gold:#d2ad3d}}
+body{min-height:100vh;background:var(--bg3);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:22px 16px 48px}
+.wrap{max-width:1680px;margin:0 auto}
+.home{display:inline-flex;align-items:center;gap:6px;margin-bottom:14px;color:var(--muted);font-size:12px;text-decoration:none}
+.home:hover{color:var(--ink)}
+.head{display:grid;grid-template-columns:minmax(280px,1fr) auto;gap:16px;align-items:start;margin-bottom:16px}
+h1{font-size:24px;font-weight:600;letter-spacing:0;margin-bottom:5px}
+.sub{font-size:13px;color:var(--muted);line-height:1.55;max-width:850px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+button,.select,input{font:inherit}
+.btn{height:34px;border:.5px solid var(--line2);background:var(--bg);color:var(--ink);border-radius:var(--r);padding:0 12px;font-size:12px;cursor:pointer}
+.btn:hover{background:var(--bg2)}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.panel{background:var(--bg);border:.5px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:14px}
+.connect{display:grid;grid-template-columns:1.2fr 1fr;gap:12px;align-items:start}
+.notes{font-size:12px;color:var(--muted);line-height:1.7}
+.notes b{color:var(--ink);font-weight:600}
+.notes code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;color:var(--ink);background:var(--bg2);border-radius:5px;padding:2px 5px}
+.status{font-size:12px;line-height:1.5;color:var(--muted)}
+.status strong{color:var(--ink)}
+.status.ok{color:var(--good)}.status.warn{color:var(--warn)}.status.err{color:var(--bad)}
+.toolbar{display:grid;grid-template-columns:minmax(220px,1.7fr) repeat(6,minmax(135px,1fr));gap:10px;align-items:end}
+.field label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:5px}
+.select,input{width:100%;height:32px;border:.5px solid var(--line2);border-radius:var(--r);background:var(--bg2);color:var(--ink);padding:0 9px;font-size:12px}
+.cards{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px}
+.metric{background:var(--bg);border:.5px solid var(--line);border-radius:var(--r);padding:12px}
+.metric label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:5px}
+.metric span{font-size:20px;font-weight:600}
+.metric small{display:block;font-size:11px;color:var(--muted);margin-top:2px;min-height:16px}
+.workspace{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:14px;align-items:start}
+.workspace.visual-active{grid-template-columns:1fr}
+.workspace.visual-active .side{display:none}
+.table-panel{padding:0;overflow:hidden}
+.hidden{display:none!important}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px 12px;border-bottom:.5px solid var(--line);text-align:left;vertical-align:middle}
+th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);background:var(--bg2);font-weight:600}
+td{font-size:12px;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+.product-cell{display:grid;grid-template-columns:44px minmax(0,1fr);gap:10px;align-items:center}
+.thumb{width:44px;height:58px;background:var(--bg2);border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--soft);font-size:10px}
+.thumb img{width:100%;height:100%;object-fit:contain;display:block}
+.title{font-size:13px;color:var(--ink);font-weight:600;line-height:1.3}
+.meta{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.chip{font-size:10px;color:var(--muted);background:var(--bg2);border-radius:999px;padding:3px 7px}
+.move{display:inline-flex;align-items:center;justify-content:center;min-width:42px;height:24px;border-radius:999px;font-size:11px;font-weight:700;background:var(--bg2);color:var(--muted)}
+.move.up{background:rgba(30,126,74,.12);color:var(--good)}
+.move.down{background:rgba(177,59,46,.12);color:var(--bad)}
+.score{font-weight:700;color:var(--ink)}
+.reason{line-height:1.45;max-width:360px}
+.side{display:grid;gap:14px}
+.side h2{font-size:15px;font-weight:600;margin-bottom:8px}
+.summary-list{display:grid;gap:8px}
+.summary-item{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:.5px solid var(--line);padding-bottom:8px;font-size:12px;color:var(--muted)}
+.summary-item:last-child{border-bottom:0;padding-bottom:0}
+.summary-item b{color:var(--ink);font-weight:600;text-align:right}
+.review-note{font-size:12px;color:var(--muted);line-height:1.65}
+.review-note b{color:var(--ink);font-weight:600}
+.preview{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.preview-card{border:.5px solid var(--line);border-radius:var(--r);background:var(--bg2);overflow:hidden}
+.preview-photo{position:relative;aspect-ratio:3/4;background:var(--bg)}
+.preview-photo img{width:100%;height:100%;object-fit:contain;display:block}
+.preview-rank{position:absolute;top:6px;left:6px;min-width:24px;height:24px;border-radius:999px;background:rgba(0,0,0,.68);color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700}
+.preview-name{padding:8px;font-size:11px;color:var(--ink);font-weight:600;line-height:1.28;min-height:50px}
+.visual-panel{padding:14px}
+.visual-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:12px}
+.visual-head h2{font-size:15px;font-weight:600;margin-bottom:4px}
+.visual-count{font-size:12px;color:var(--muted);line-height:1.45}
+.visual-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.visual-card{background:var(--bg);border:.5px solid var(--line);border-radius:var(--r);overflow:hidden;content-visibility:auto;contain-intrinsic-size:260px}
+.visual-photo{position:relative;aspect-ratio:3/4;background:var(--bg2)}
+.visual-photo img{width:100%;height:100%;object-fit:contain;display:block}
+.visual-rank{position:absolute;top:7px;left:7px;min-width:28px;height:26px;border-radius:999px;background:rgba(0,0,0,.68);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;padding:0 8px}
+.visual-move{position:absolute;right:7px;top:7px}
+.visual-body{padding:9px}
+.visual-title{font-size:12px;color:var(--ink);font-weight:600;line-height:1.3;min-height:47px}
+.visual-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:8px;padding-top:8px;border-top:.5px solid var(--line)}
+.visual-stats label{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--soft)}
+.visual-stats span{display:block;font-size:11px;color:var(--ink);font-weight:600;margin-top:2px}
+.visual-reason{font-size:11px;color:var(--muted);line-height:1.4;margin-top:8px;min-height:32px}
+.empty-state{padding:34px 16px;text-align:center;color:var(--muted);font-size:13px;line-height:1.55}
+@media(max-width:1180px){.cards{grid-template-columns:repeat(3,1fr)}.workspace{grid-template-columns:1fr}.side{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:900px){.head{grid-template-columns:1fr}.actions{justify-content:flex-start}.toolbar{grid-template-columns:repeat(2,1fr)}.connect{grid-template-columns:1fr}.table-scroll{overflow:auto}.table-scroll table{min-width:900px}}
+@media(max-width:620px){body{padding:18px 10px 36px}.toolbar,.cards,.side{grid-template-columns:1fr}.preview{grid-template-columns:repeat(2,1fr)}.visual-grid{grid-template-columns:repeat(2,1fr);gap:8px}.visual-head{display:block}h1{font-size:22px}}
+@media print{body{background:#fff;padding:10mm}.home,.actions,.connect-panel,.toolbar-panel,.side{display:none}.wrap{max-width:none}.head{display:block;margin-bottom:10px}.sub{font-size:10px}.cards{grid-template-columns:repeat(6,1fr);gap:6px}.metric{padding:7px}.metric span{font-size:14px}th,td{padding:7px 8px}.thumb{width:32px;height:42px}.title{font-size:10px}.reason,td{font-size:9px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>Collection reorder planner</h1>
+      <p class="sub">A review workspace for comparing the current Shopify collection order with a suggested order. Choose a ranking strategy, inspect the movement and reasons, then export a CSV for review before any Shopify changes are considered.</p>
+    </div>
+    <div class="actions">
+      <button class="btn" id="printBtn" type="button">Print</button>
+      <button class="btn" id="exportBtn" type="button">Export CSV</button>
+      <button class="btn primary" id="syncBtn" type="button">Sync Collections</button>
+    </div>
+  </section>
+
+  <section class="panel connect-panel connect">
+    <p class="notes"><b>Review-only workflow</b><br>This planner fetches Shopify collections and products, then ranks locally in the browser. It does not apply ordering changes to Shopify. Credentials stay server-side via <code>SHOPIFY_SHOP</code>, <code>SHOPIFY_CLIENT_ID</code>, and <code>SHOPIFY_CLIENT_SECRET</code>.</p>
+    <p class="status" id="connectionStatus">Using sample collection data until Shopify environment variables are configured.</p>
+  </section>
+
+  <section class="panel toolbar-panel">
+    <div class="toolbar">
+      <div class="field"><label for="collectionSelect">Collection</label><select class="select" id="collectionSelect"></select></div>
+      <div class="field"><label for="strategySelect">Strategy</label><select class="select" id="strategySelect"><option value="bestSellers">Best Sellers</option><option value="newArrivals">New Arrivals</option><option value="conversionLift">Conversion Lift</option><option value="clearance">Clearance</option><option value="highMargin">High Margin</option><option value="goldDust">Gold Dust</option></select></div>
+      <div class="field"><label for="searchInput">Search</label><input id="searchInput" type="search" placeholder="Product, tag, colour"></div>
+      <div class="field"><label for="daysSelect">Sales window</label><select class="select" id="daysSelect"><option value="14">Last 2 weeks</option><option value="30" selected>Last 30 days</option><option value="60">Last 60 days</option><option value="90">Last 90 days</option></select></div>
+      <div class="field"><label for="scopeSelect">Sync scope</label><select class="select" id="scopeSelect"><option value="180" selected>Fast preview (180)</option><option value="all">Full collection</option></select></div>
+      <div class="field"><label for="viewSelect">View</label><select class="select" id="viewSelect"><option value="table">Comparison table</option><option value="visual">Visual plan</option></select></div>
+      <div class="field"><label for="movementSelect">Movement</label><select class="select" id="movementSelect"><option value="">All products</option><option value="movers">Movers only</option><option value="up">Moving up</option><option value="down">Moving down</option><option value="top20">Suggested top 20</option></select></div>
+    </div>
+  </section>
+
+  <section class="cards" aria-label="Collection reorder summary">
+    <div class="metric"><label>Products</label><span id="metricProducts">0</span><small>in comparison</small></div>
+    <div class="metric"><label>Moving</label><span id="metricMoving">0</span><small>suggested changes</small></div>
+    <div class="metric"><label>Top Gainer</label><span id="metricGainer">0</span><small id="metricGainerName">none</small></div>
+    <div class="metric"><label>Sales</label><span id="metricRevenue">GBP 0</span><small id="metricWindow">last 30 days</small></div>
+    <div class="metric"><label>Views</label><span id="metricViews">0</span><small>GA4 item views</small></div>
+    <div class="metric"><label>Stock</label><span id="metricStock">0</span><small>available units</small></div>
+  </section>
+
+  <section class="workspace" id="workspace">
+    <div class="panel table-panel" id="tablePanel">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Current</th>
+              <th>Suggested</th>
+              <th>Move</th>
+              <th>Product</th>
+              <th>Score</th>
+              <th>Sales</th>
+              <th>Stock</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="comparisonBody"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="emptyState">Sync Shopify or choose a sample collection to build a reorder plan.</div>
+    </div>
+
+    <section class="panel visual-panel hidden" id="visualPanel">
+      <div class="visual-head">
+        <div>
+          <h2>Suggested visual order</h2>
+          <p class="visual-count" id="visualCount">0 products</p>
+        </div>
+      </div>
+      <div class="visual-grid" id="visualGrid"></div>
+    </section>
+
+    <aside class="side">
+      <section class="panel">
+        <h2>Plan Summary</h2>
+        <div class="summary-list" id="planSummary"></div>
+      </section>
+      <section class="panel">
+        <h2>Review Guardrail</h2>
+        <p class="review-note"><b>No Shopify writes are available here.</b> Use the CSV to review the proposed order, discuss exceptions, then decide whether an apply-to-Shopify step should be added later.</p>
+      </section>
+      <section class="panel">
+        <h2>Suggested Top 10</h2>
+        <div class="preview" id="previewGrid"></div>
+      </section>
+    </aside>
+  </section>
+</main>
+<script>
+const sampleCollections=[
+  {id:"sample-dresses",title:"Ladies Dresses",handle:"ladies-dresses",sortOrder:"MANUAL",productsCount:8},
+  {id:"sample-new-in",title:"New Arrivals",handle:"new-arrivals",sortOrder:"CREATED",productsCount:8}
+];
+const sampleProducts=[
+{id:"p1",currentPosition:1,title:"Meredith Washed Linen Pinafore Navy",productType:"Dresses",season:"SS26",color:"Navy",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/IMG_0207_b653c30b-5010-4a72-a0c3-414d5161a4b1.jpg?v=1773859647",price:59,revenue:363,units:7,stock:26,margin:88,gaViews:64,gaAdds:9,createdAt:"2026-05-26T09:00:00Z",publishedAt:"2026-05-26T09:00:00Z",tags:["linen","navy"]},
+{id:"p2",currentPosition:2,title:"Cesca Strap Linen Dress Navy",productType:"Dresses",season:"SS26",color:"Navy",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/Cesca_Strap_Linen_Dress_Navy_D.png?v=1779293309",price:52,revenue:124,units:3,stock:7,margin:86,gaViews:44,gaAdds:5,createdAt:"2026-05-29T09:00:00Z",publishedAt:"2026-05-29T09:00:00Z",tags:["linen","strap"]},
+{id:"p3",currentPosition:3,title:"Ellerie V-Neck Linen Dress Stone",productType:"Dresses",season:"SS26",color:"Stone",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/IMG_3540_46e6bb37-57ae-4325-9eb8-5a73f5ba75f5.jpg?v=1773858419",price:55,revenue:135,units:3,stock:18,margin:84,gaViews:81,gaAdds:4,createdAt:"2026-04-22T09:00:00Z",publishedAt:"2026-04-22T09:00:00Z",tags:["linen"]},
+{id:"p4",currentPosition:4,title:"Nova Linen Dress Stone",productType:"Dresses",season:"SS26",color:"Stone",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/IMG_8167_3d1df879-23cf-4675-bad6-758ed01e66cf.jpg?v=1773858456",price:49,revenue:122,units:3,stock:5,margin:89,gaViews:29,gaAdds:6,createdAt:"2026-05-30T09:00:00Z",publishedAt:"2026-05-30T09:00:00Z",tags:["linen"]},
+{id:"p5",currentPosition:5,title:"Solange Pocket Linen Dress Fuchsia",productType:"Dresses",season:"SS26",color:"Fuchsia",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/Solange_Pink_A.png?v=1779458803",price:58,revenue:144,units:3,stock:8,margin:87,gaViews:22,gaAdds:7,createdAt:"2026-05-28T09:00:00Z",publishedAt:"2026-05-28T09:00:00Z",tags:["linen","pocket"]},
+{id:"p6",currentPosition:6,title:"Morianna Cotton Dress White",productType:"Dresses",season:"SS25",color:"White",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/Morrianna_White_D.png?v=1779464790",price:48,revenue:127,units:3,stock:9,margin:86,gaViews:58,gaAdds:4,createdAt:"2025-05-12T09:00:00Z",publishedAt:"2025-05-12T09:00:00Z",tags:["cotton"]},
+{id:"p7",currentPosition:7,title:"Helenton Button Dress Mid Denim",productType:"Dresses",season:"SS25",color:"Denim",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/Henenton_Denim_Dress_A.png?v=1779269107",price:62,revenue:32,units:1,stock:35,margin:84,gaViews:93,gaAdds:2,createdAt:"2025-04-15T09:00:00Z",publishedAt:"2025-04-15T09:00:00Z",tags:["denim","clearance"]},
+{id:"p8",currentPosition:8,title:"Tisha Needlecord Shirt Dress Black",productType:"Dresses",season:"AW25",color:"Black",imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/DSC08378_57bd5ae3-06b3-40e3-8624-dc195caa6d30.jpg?v=1773859374",price:64,revenue:78,units:2,stock:9,margin:88,gaViews:18,gaAdds:3,createdAt:"2025-09-11T09:00:00Z",publishedAt:"2025-09-11T09:00:00Z",tags:["needlecord"]}
+];
+let collections=sampleCollections;
+let products=sampleProducts;
+let selectedCollectionId=sampleCollections[0].id;
+const fmtMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
+const els={collection:document.getElementById("collectionSelect"),strategy:document.getElementById("strategySelect"),search:document.getElementById("searchInput"),days:document.getElementById("daysSelect"),scope:document.getElementById("scopeSelect"),view:document.getElementById("viewSelect"),movement:document.getElementById("movementSelect"),sync:document.getElementById("syncBtn"),export:document.getElementById("exportBtn"),status:document.getElementById("connectionStatus"),body:document.getElementById("comparisonBody"),empty:document.getElementById("emptyState"),summary:document.getElementById("planSummary"),preview:document.getElementById("previewGrid"),workspace:document.getElementById("workspace"),tablePanel:document.getElementById("tablePanel"),visualPanel:document.getElementById("visualPanel"),visualGrid:document.getElementById("visualGrid"),visualCount:document.getElementById("visualCount")};
+function clamp01(value){return Math.max(0,Math.min(1,value))}
+function productCvr(product){return Number(product.gaViews||0)>0?Number(product.units||0)/Number(product.gaViews||0):0}
+function sellThrough(product){const units=Number(product.units||0);const stock=Math.max(0,Number(product.stock||0));return units+stock>0?units/(units+stock):0}
+function ageDays(product){const raw=product.publishedAt||product.createdAt||product.updatedAt;const time=raw?new Date(raw).getTime():0;return time?Math.max(0,(Date.now()-time)/86400000):365}
+const colorPhrases=["Powder Blue","Light Blue","Mid Denim","Dark Denim","Washed Denim","Kingfisher","Fuchsia","Chocolate","Charcoal","Natural","Oatmeal","Magenta","Emerald","Mustard","Burgundy","Terracotta","Lavender","Cobalt","Camel","Coral","Ecru","Mint","Mocha","Multi","Silver","Taupe","Teal","Stone","Black","Blue","Brown","Cocoa","Cream","Denim","Green","Grey","Ivory","Khaki","Lime","Navy","Olive","Orange","Pink","Purple","Red","Sage","White","Yellow"].sort((a,b)=>b.length-a.length);
+function styleParts(product){const title=String(product.title||"").replace(/\s+/g," ").trim();let style=title;let color=String(product.color||"").trim();for(const phrase of colorPhrases){const match=new RegExp(`\\s+${phrase.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}$`,"i");if(match.test(style)){style=style.replace(match,"").trim();color=phrase;break}}if(color){const match=new RegExp(`\\s+${color.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}$`,"i");style=style.replace(match,"").trim()}const key=(style||title).toLowerCase().replace(/[^a-z0-9]+/g," ").trim();return{styleName:style||title,styleKey:key||title.toLowerCase(),colorName:color}}
+function context(source){const margins=source.map((p)=>p.margin).filter((value)=>value!=null);const cvrs=source.map(productCvr).filter((value)=>value>0);const ages=source.map(ageDays);return{revenue:Math.max(...source.map((p)=>p.revenue||0),0),units:Math.max(...source.map((p)=>p.units||0),0),stock:Math.max(...source.map((p)=>Math.max(0,p.stock||0)),0),views:Math.max(...source.map((p)=>p.gaViews||0),0),cvr:Math.max(...cvrs,0),age:Math.max(...ages,1),hasMargins:margins.length>0,avgMargin:margins.length?margins.reduce((sum,value)=>sum+value,0)/margins.length:0}}
+function signals(product,ctx){const sales=ctx.revenue?clamp01((product.revenue||0)/ctx.revenue):0;const units=ctx.units?clamp01((product.units||0)/ctx.units):0;const stock=ctx.stock?clamp01(Math.max(0,product.stock||0)/ctx.stock):0;const views=ctx.views?clamp01((product.gaViews||0)/ctx.views):0;const cvr=ctx.cvr?clamp01(productCvr(product)/ctx.cvr):0;const recency=1-clamp01(ageDays(product)/Math.min(ctx.age,365));const margin=ctx.hasMargins?clamp01((product.margin==null?ctx.avgMargin:product.margin)/100):0;const currentDepth=1-clamp01(((product.currentPosition||1)-1)/Math.max(products.length-1,1));const saleTag=(product.tags||[]).join(" ").toLowerCase().includes("sale")||(product.tags||[]).join(" ").toLowerCase().includes("clearance");return{sales,units,stock,views,cvr,recency,margin,currentDepth,sell:sellThrough(product),lowSales:1-sales,lowViews:1-views,lowCvr:1-cvr,lowStock:1-stock,saleTag:saleTag?1:0}}
+function score(product,ctx){const s=signals(product,ctx);switch(els.strategy.value){case"newArrivals":return s.recency*55+s.stock*20+s.margin*15+s.sales*10;case"conversionLift":return s.cvr*45+s.lowViews*25+s.stock*15+s.margin*15;case"clearance":return s.stock*40+s.lowSales*30+(1-s.margin)*15+s.saleTag*15;case"highMargin":return s.margin*45+s.sales*25+s.stock*20+s.cvr*10;case"goldDust":return s.cvr*55+s.lowViews*30+s.margin*10+s.stock*5;default:return s.sales*50+s.units*20+s.stock*15+s.margin*15}}
+function reason(product,ctx){const s=signals(product,ctx);const parts=[];if(els.strategy.value==="newArrivals"){parts.push(`${Math.round(s.recency*100)}% newness`);if(s.stock>.45)parts.push("enough stock to feature");if(s.sales>.35)parts.push("early sales signal")}
+else if(els.strategy.value==="conversionLift"){parts.push(`${(productCvr(product)*100).toFixed(1)}% CVR`);if(s.lowViews>.45)parts.push("needs more exposure");if(s.stock>.25)parts.push("stock can support lift")}
+else if(els.strategy.value==="clearance"){parts.push(`${Number(product.stock||0).toLocaleString("en-GB")} units in stock`);if(s.lowSales>.55)parts.push("weak recent sales");if(s.saleTag)parts.push("sale/clearance tagged")}
+else if(els.strategy.value==="highMargin"){parts.push(product.margin==null?"margin missing":`${Math.round(product.margin)}% GP`);if(s.sales>.35)parts.push("commercial demand");if(s.stock>.25)parts.push("stock available")}
+else if(els.strategy.value==="goldDust"){parts.push(`${(productCvr(product)*100).toFixed(1)}% CVR`);if(s.lowViews>.45)parts.push("low views");if(s.margin>.75)parts.push("strong GP")}
+else{if(Number(product.revenue||0)>0){parts.push(fmtMoney.format(product.revenue||0))}else{parts.push("no recent sales")}if(s.units>.35)parts.push("strong units");if(s.stock>.25)parts.push("stock depth")};return parts.slice(0,3).join("; ")||"No strong signal yet"}
+function sortByScoreThenPosition(a,b){return(b.score||0)-(a.score||0)||Number(a.currentPosition||9999)-Number(b.currentPosition||9999)}
+function addPairReason(product,note){return{...product,reason:product.reason?`${product.reason}; ${note}`:note}}
+function pairedOrder(source,ctx){const scored=source.map((product)=>{const parts=styleParts(product);const rawScore=score(product,ctx);return{...product,...parts,baseScore:rawScore,score:rawScore,reason:reason(product,ctx)}});const stocked=scored.filter((product)=>Number(product.stock||0)>0);const outOfStock=scored.filter((product)=>Number(product.stock||0)<=0).sort((a,b)=>Number(a.currentPosition||9999)-Number(b.currentPosition||9999)).map((product)=>({...product,score:0,reason:"No stock; moved to bottom"}));const groups=new Map();for(const product of stocked.sort(sortByScoreThenPosition)){const group=groups.get(product.styleKey)||[];group.push(product);groups.set(product.styleKey,group)}const colourwayBlocks=[];const singles=[];for(const group of groups.values()){group.sort(sortByScoreThenPosition);while(group.length>=2){const items=group.splice(0,2);const blockScore=Math.max(...items.map((item)=>item.baseScore||0));colourwayBlocks.push({score:blockScore,items:items.map((item)=>addPairReason({...item,score:blockScore},"paired colourway"))})}if(group.length)singles.push(group[0])}singles.sort(sortByScoreThenPosition);const singleBlocks=[];for(let index=0;index<singles.length;index+=2){const items=singles.slice(index,index+2);const blockScore=Math.max(...items.map((item)=>item.baseScore||0));singleBlocks.push({score:blockScore,items:items.map((item)=>items.length>1?addPairReason(item,"paired with another single-colour style"):item)})}return[...colourwayBlocks,...singleBlocks].sort((a,b)=>(b.score||0)-(a.score||0)).flatMap((block)=>block.items).concat(outOfStock)}
+function plannedRows(){const q=els.search.value.trim().toLowerCase();const base=products.filter((p)=>!q||`${p.title} ${p.color||""} ${p.productType||""} ${(p.tags||[]).join(" ")}`.toLowerCase().includes(q));const ctx=context(base.length?base:products);const ranked=pairedOrder(base,ctx).map((product,index)=>({...product,suggestedPosition:index+1,move:(product.currentPosition||index+1)-(index+1)}));const movement=els.movement.value;return ranked.filter((p)=>movement==="movers"?p.move!==0:movement==="up"?p.move>0:movement==="down"?p.move<0:movement==="top20"?p.suggestedPosition<=20:true).sort((a,b)=>movement==="top20"?(a.suggestedPosition||0)-(b.suggestedPosition||0):(a.currentPosition||0)-(b.currentPosition||0))}
+function setCollections(){const current=selectedCollectionId||els.collection.value;els.collection.innerHTML=collections.map((collection)=>`<option value="${escapeAttr(collection.id)}">${escapeHtml(collection.title)} (${Number(collection.productsCount||0).toLocaleString("en-GB")})</option>`).join("");if(collections.some((collection)=>collection.id===current)){els.collection.value=current;selectedCollectionId=current}else if(collections[0]){selectedCollectionId=collections[0].id;els.collection.value=selectedCollectionId}}
+function render(){const rows=plannedRows();const allRows=plannedRowsForMetrics();const moving=allRows.filter((p)=>p.move!==0);const topGainer=allRows.reduce((best,p)=>p.move>(best?.move||0)?p:best,null);const visualMode=els.view.value==="visual";document.getElementById("metricProducts").textContent=rows.length.toLocaleString("en-GB");document.getElementById("metricMoving").textContent=moving.length.toLocaleString("en-GB");document.getElementById("metricGainer").textContent=topGainer&&topGainer.move>0?`+${topGainer.move}`:"0";document.getElementById("metricGainerName").textContent=topGainer&&topGainer.move>0?topGainer.title:"none";document.getElementById("metricRevenue").textContent=fmtMoney.format(rows.reduce((sum,p)=>sum+Number(p.revenue||0),0));document.getElementById("metricWindow").textContent=els.days.options[els.days.selectedIndex].text.toLowerCase();document.getElementById("metricViews").textContent=rows.reduce((sum,p)=>sum+Number(p.gaViews||0),0).toLocaleString("en-GB");document.getElementById("metricStock").textContent=rows.reduce((sum,p)=>sum+Number(p.stock||0),0).toLocaleString("en-GB");els.workspace.classList.toggle("visual-active",visualMode);els.tablePanel.classList.toggle("hidden",visualMode);els.visualPanel.classList.toggle("hidden",!visualMode);els.empty.style.display=!visualMode&&!rows.length?"block":"none";if(visualMode){els.body.innerHTML="";renderVisual(rows)}else{els.visualGrid.innerHTML="";els.body.innerHTML=rows.map(rowHtml).join("")}renderSummary(allRows);renderPreview(allRows)}
+function plannedRowsForMetrics(){const savedMovement=els.movement.value;els.movement.value="";const rows=plannedRows();els.movement.value=savedMovement;return rows}
+function rowHtml(product){const moveClass=product.move>0?"up":product.move<0?"down":"";const moveLabel=product.move>0?`+${product.move}`:String(product.move);return`<tr><td>${Number(product.currentPosition||0).toLocaleString("en-GB")}</td><td>${product.suggestedPosition.toLocaleString("en-GB")}</td><td><span class="move ${moveClass}">${moveLabel}</span></td><td><div class="product-cell"><div class="thumb">${product.imageUrl?`<img src="${escapeAttr(product.imageUrl)}" alt="${escapeAttr(product.imageAlt||product.title)}" loading="lazy">`:"No image"}</div><div><div class="title">${escapeHtml(product.title)}</div><div class="meta">${[product.color,product.productType,product.season].filter(Boolean).map((value)=>`<span class="chip">${escapeHtml(value)}</span>`).join("")}</div></div></div></td><td><span class="score">${Math.round(product.score||0)}</span></td><td>${fmtMoney.format(product.revenue||0)}<br><span class="chip">${Number(product.units||0)} units</span></td><td>${Number(product.stock||0).toLocaleString("en-GB")}</td><td><div class="reason">${escapeHtml(product.reason)}</div></td></tr>`}
+function renderVisual(rows){const suggested=[...rows].sort((a,b)=>(a.suggestedPosition||0)-(b.suggestedPosition||0));els.visualCount.textContent=`${suggested.length.toLocaleString("en-GB")} products shown in suggested order`;els.visualGrid.innerHTML=suggested.map(visualCardHtml).join("")}
+function visualCardHtml(product){const moveClass=product.move>0?"up":product.move<0?"down":"";const moveLabel=product.move>0?`+${product.move}`:String(product.move);return`<article class="visual-card"><div class="visual-photo">${product.imageUrl?`<img src="${escapeAttr(product.imageUrl)}" alt="${escapeAttr(product.imageAlt||product.title)}" loading="lazy">`:`<div class="empty">No image</div>`}<span class="visual-rank">#${product.suggestedPosition}</span><span class="move visual-move ${moveClass}">${moveLabel}</span></div><div class="visual-body"><div class="visual-title">${escapeHtml(product.title)}</div><div class="meta">${[product.color,product.productType,product.season].filter(Boolean).map((value)=>`<span class="chip">${escapeHtml(value)}</span>`).join("")}</div><div class="visual-stats"><div><label>Current</label><span>${Number(product.currentPosition||0).toLocaleString("en-GB")}</span></div><div><label>Score</label><span>${Math.round(product.score||0)}</span></div><div><label>Stock</label><span>${Number(product.stock||0).toLocaleString("en-GB")}</span></div></div><p class="visual-reason">${escapeHtml(product.reason)}</p></div></article>`}
+function renderSummary(rows){const selected=collections.find((collection)=>collection.id===selectedCollectionId);const totalProducts=products.length;const rowsBySuggested=[...rows].sort((a,b)=>a.suggestedPosition-b.suggestedPosition);const newTop=rowsBySuggested.slice(0,5).map((p)=>p.title).join(", ")||"None";const unchanged=rows.filter((p)=>p.move===0).length;els.summary.innerHTML=[["Collection",selected?selected.title:"Sample collection"],["Strategy",els.strategy.options[els.strategy.selectedIndex].text],["Sync scope",els.scope.options[els.scope.selectedIndex].text],["Products loaded",totalProducts.toLocaleString("en-GB")],["Unchanged",unchanged.toLocaleString("en-GB")],["Top five",newTop]].map(([label,value])=>`<div class="summary-item"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join("")}
+function renderPreview(rows){els.preview.innerHTML=[...rows].sort((a,b)=>a.suggestedPosition-b.suggestedPosition).slice(0,10).map((product)=>`<article class="preview-card"><div class="preview-photo">${product.imageUrl?`<img src="${escapeAttr(product.imageUrl)}" alt="${escapeAttr(product.imageAlt||product.title)}" loading="lazy">`:""}<span class="preview-rank">#${product.suggestedPosition}</span></div><div class="preview-name">${escapeHtml(product.title)}</div></article>`).join("")}
+async function syncCollections(){const scope=els.scope.value;const fullScope=scope==="all";els.sync.disabled=true;els.sync.textContent="Syncing";els.status.className="status";els.status.textContent=fullScope?"Connecting to Shopify collections and loading the complete selected collection...":"Connecting to Shopify collections and loading a fast 180-product preview...";try{const query=new URLSearchParams({days:els.days.value,collectionLimit:"80",productLimit:scope});if(selectedCollectionId&&!selectedCollectionId.startsWith("sample-"))query.set("collectionId",selectedCollectionId);const response=await fetch(`/api/shopify-collection-planner?${query.toString()}`);const data=await response.json();if(!data.configured){collections=sampleCollections;products=sampleProducts;selectedCollectionId=sampleCollections[0].id;els.status.className="status warn";els.status.textContent=data.message}else if(!response.ok){throw new Error(data.message||"Collection sync failed")}else{collections=data.collections.length?data.collections:sampleCollections;if(data.selectedCollection)selectedCollectionId=data.selectedCollection.id;if(data.products&&data.products.length){products=data.products}else if(!selectedCollectionId||selectedCollectionId.startsWith("sample-")){products=[]}const syncedAt=new Date(data.syncedAt).toLocaleString("en-GB");const scopeText=fullScope?"complete collection":"fast preview";const selected=data.selectedCollection?` Loaded ${data.products.length.toLocaleString("en-GB")} products from ${escapeHtml(data.selectedCollection.title)} (${scopeText}).`:" Choose a collection to load products.";const orderText=data.ordersAvailable?"Sales metrics included.":"Orders unavailable, so sales metrics show as zero.";const gaText=data.gaAvailable?" GA4 ecommerce metrics included.":data.gaMessage?` GA4 not connected: ${escapeHtml(data.gaMessage)}`:"";els.status.className=data.ordersAvailable?"status ok":"status warn";els.status.innerHTML=`<strong>Connected.</strong> Synced ${collections.length.toLocaleString("en-GB")} collections at ${escapeHtml(syncedAt)}.${selected} ${orderText}${gaText}`}}catch(error){collections=sampleCollections;products=sampleProducts;selectedCollectionId=sampleCollections[0].id;els.status.className="status err";els.status.textContent=`${error.message}. Showing sample collection plan.`}finally{setCollections();render();els.sync.disabled=false;els.sync.textContent="Sync Collections"}}
+async function loadSelectedCollection(){selectedCollectionId=els.collection.value;if(selectedCollectionId.startsWith("sample-")){products=sampleProducts;render();return}await syncCollections()}
+function exportCsv(){const rows=plannedRowsForMetrics().sort((a,b)=>a.suggestedPosition-b.suggestedPosition);const selected=collections.find((collection)=>collection.id===selectedCollectionId);const header=["collection","strategy","current_position","suggested_position","move","product_title","handle","sku","revenue","units","stock","gross_margin","ga_views","ga_adds","cvr","score","reason"];const lines=[header.join(",")];for(const p of rows){lines.push([selected?.title||"",els.strategy.options[els.strategy.selectedIndex].text,p.currentPosition||"",p.suggestedPosition,p.move,p.title,p.handle||"",(p.skus||[]).join("|"),p.revenue||0,p.units||0,p.stock||0,p.margin==null?"":p.margin,p.gaViews||0,p.gaAdds||0,productCvr(p),Math.round(p.score||0),p.reason].map(csvCell).join(","))}const blob=new Blob([lines.join("\n")],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);const link=document.createElement("a");const slug=(selected?.handle||"collection-plan").replace(/[^a-z0-9-]+/gi,"-").toLowerCase();link.href=url;link.download=`${slug}-${els.strategy.value}-reorder-plan.csv`;document.body.appendChild(link);link.click();link.remove();URL.revokeObjectURL(url)}
+function csvCell(value){const text=String(value==null?"":value);return/[",\n]/.test(text)?`"${text.replace(/"/g,'""')}"`:text}
+function escapeHtml(value){return String(value||"").replace(/[&<>"']/g,(char)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]))}
+function escapeAttr(value){return escapeHtml(value).replace(/`/g,"&#96;")}
+[els.strategy,els.search,els.view,els.movement].forEach((el)=>el.addEventListener("input",render));
+els.collection.addEventListener("change",loadSelectedCollection);
+els.days.addEventListener("change",syncCollections);
+els.scope.addEventListener("change",syncCollections);
+els.sync.addEventListener("click",syncCollections);
+els.export.addEventListener("click",exportCsv);
+document.getElementById("printBtn").addEventListener("click",()=>window.print());
+setCollections();
+render();
+syncCollections();
+</script>
+</body>
+</html>

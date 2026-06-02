@@ -586,7 +586,9 @@ async function fetchCollectionPlanner(req, res) {
   const days = Math.max(1, Math.min(90, Number(url.searchParams.get("days") || 30)));
   const collectionId = url.searchParams.get("collectionId") || "";
   const collectionLimit = Math.max(10, Math.min(100, Number(url.searchParams.get("collectionLimit") || 60)));
-  const productLimit = Math.max(12, Math.min(250, Number(url.searchParams.get("productLimit") || 120)));
+  const productLimitParam = url.searchParams.get("productLimit") || "120";
+  const fetchAllProducts = productLimitParam === "all";
+  const productLimit = fetchAllProducts ? Infinity : Math.max(12, Math.min(250, Number(productLimitParam || 120)));
   let orderMetrics = new Map();
   let ordersAvailable = true;
 
@@ -613,7 +615,7 @@ async function fetchCollectionPlanner(req, res) {
   `;
 
   const productsQuery = `
-    query PlannerCollectionProducts($id: ID!, $limit: Int!) {
+    query PlannerCollectionProducts($id: ID!, $limit: Int!, $cursor: String) {
       collection(id: $id) {
         id
         title
@@ -622,7 +624,7 @@ async function fetchCollectionPlanner(req, res) {
         updatedAt
         productsCount { count }
         image { url altText }
-        products(first: $limit) {
+        products(first: $limit, after: $cursor) {
           nodes {
             id
             legacyResourceId
@@ -647,6 +649,7 @@ async function fetchCollectionPlanner(req, res) {
               }
             }
           }
+          pageInfo { hasNextPage endCursor }
         }
       }
     }
@@ -660,18 +663,27 @@ async function fetchCollectionPlanner(req, res) {
     let gaAvailable = false;
     let gaMessage = "";
 
-    if (collectionId) {
-      const productData = await shopifyGraphql(productsQuery, { id: collectionId, limit: productLimit });
-      if (!productData.collection) {
-        sendJson(res, 404, { configured: true, message: "Collection not found.", collections });
-        return;
-      }
+    const targetCollectionId = collectionId || collections[0]?.id || "";
+    if (targetCollectionId) {
+      let cursor = null;
+      let hasNextPage = true;
+      while (hasNextPage && products.length < productLimit) {
+        const remaining = fetchAllProducts ? 100 : Math.min(100, productLimit - products.length);
+        const productData = await shopifyGraphql(productsQuery, { id: targetCollectionId, limit: remaining, cursor });
+        if (!productData.collection) {
+          sendJson(res, 404, { configured: true, message: "Collection not found.", collections });
+          return;
+        }
 
-      selectedCollection = normalizeCollection(productData.collection);
-      products = productData.collection.products.nodes.map((product, index) => ({
-        ...normalizeProduct(product, orderMetrics),
-        currentPosition: index + 1
-      }));
+        selectedCollection = normalizeCollection(productData.collection);
+        const positionOffset = products.length;
+        products.push(...productData.collection.products.nodes.map((product, index) => ({
+          ...normalizeProduct(product, orderMetrics),
+          currentPosition: positionOffset + index + 1
+        })));
+        hasNextPage = Boolean(productData.collection.products.pageInfo.hasNextPage);
+        cursor = productData.collection.products.pageInfo.endCursor;
+      }
 
       try {
         const ga = await fetchGaMetrics(days);
