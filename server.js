@@ -3,11 +3,13 @@ const https = require("node:https");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const Database = require("better-sqlite3");
 
 const port = Number(process.env.PORT || 3000);
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
 const orderDbPath = path.join(dataDir, "order-form-db.json");
+const sqliteDbPath = process.env.DATABASE_PATH || path.join(dataDir, "merch-x.sqlite");
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, ".env");
@@ -41,7 +43,12 @@ const mimeTypes = {
 };
 
 function sendJson(res, status, payload) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "content-type, authorization"
+  });
   res.end(JSON.stringify(payload));
 }
 
@@ -745,7 +752,12 @@ function requireAuth(res) {
 }
 
 function sendJson(res, status, payload) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "content-type, authorization"
+  });
   res.end(JSON.stringify(payload));
 }
 
@@ -798,20 +810,159 @@ function emptyOrderDb() {
   };
 }
 
-function readOrderDb() {
-  if (!fs.existsSync(orderDbPath)) return emptyOrderDb();
+let orderSqliteDb = null;
+
+function parseJson(value, fallback) {
+  if (!value) return fallback;
   try {
-    const parsed = JSON.parse(fs.readFileSync(orderDbPath, "utf8"));
-    return { ...emptyOrderDb(), ...parsed };
+    return JSON.parse(value);
   } catch (error) {
-    console.error("Could not read order database", error);
-    return emptyOrderDb();
+    return fallback;
   }
 }
 
+function openOrderSqliteDb() {
+  if (orderSqliteDb) return orderSqliteDb;
+  fs.mkdirSync(path.dirname(sqliteDbPath), { recursive: true });
+  orderSqliteDb = new Database(sqliteDbPath);
+  orderSqliteDb.pragma("journal_mode = WAL");
+  orderSqliteDb.pragma("foreign_keys = ON");
+  orderSqliteDb.exec(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      reference TEXT,
+      last_order_number TEXT,
+      last_ordered_at TEXT,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sku TEXT NOT NULL UNIQUE,
+      style TEXT,
+      supplier_name TEXT,
+      last_order_number TEXT,
+      last_ordered_at TEXT,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS orders (
+      id TEXT PRIMARY KEY,
+      order_number TEXT NOT NULL UNIQUE,
+      supplier_name TEXT,
+      order_date TEXT,
+      status TEXT,
+      saved_at TEXT NOT NULL,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  importOrderJsonIfNeeded(orderSqliteDb);
+  return orderSqliteDb;
+}
+
+function importOrderJsonIfNeeded(db) {
+  const hasRows =
+    db.prepare("SELECT COUNT(*) AS count FROM suppliers").get().count ||
+    db.prepare("SELECT COUNT(*) AS count FROM products").get().count ||
+    db.prepare("SELECT COUNT(*) AS count FROM orders").get().count;
+  if (hasRows || !fs.existsSync(orderDbPath)) return;
+
+  const imported = parseJson(fs.readFileSync(orderDbPath, "utf8"), null);
+  if (!imported) return;
+  writeOrderDbToSqlite(db, { ...emptyOrderDb(), ...imported });
+}
+
+function writeOrderDbToSqlite(db, dbData) {
+  const write = db.transaction((data) => {
+    db.prepare("DELETE FROM suppliers").run();
+    db.prepare("DELETE FROM products").run();
+    db.prepare("DELETE FROM orders").run();
+
+    const setSetting = db.prepare(`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `);
+    setSetting.run("company", JSON.stringify(data.company || emptyOrderDb().company));
+    setSetting.run("delivery", JSON.stringify(data.delivery || emptyOrderDb().delivery));
+
+    const insertSupplier = db.prepare(`
+      INSERT INTO suppliers (name, reference, last_order_number, last_ordered_at, data, updated_at)
+      VALUES (@name, @reference, @lastOrderNumber, @lastOrderedAt, @data, CURRENT_TIMESTAMP)
+    `);
+    for (const supplier of data.suppliers || []) {
+      if (!supplier?.name) continue;
+      insertSupplier.run({
+        name: supplier.name,
+        reference: supplier.reference || "",
+        lastOrderNumber: supplier.lastOrderNumber || "",
+        lastOrderedAt: supplier.lastOrderedAt || "",
+        data: JSON.stringify(supplier)
+      });
+    }
+
+    const insertProduct = db.prepare(`
+      INSERT INTO products (sku, style, supplier_name, last_order_number, last_ordered_at, data, updated_at)
+      VALUES (@sku, @style, @supplierName, @lastOrderNumber, @lastOrderedAt, @data, CURRENT_TIMESTAMP)
+    `);
+    for (const product of data.products || []) {
+      if (!product?.sku) continue;
+      insertProduct.run({
+        sku: product.sku,
+        style: product.style || product.description || "",
+        supplierName: product.supplierName || "",
+        lastOrderNumber: product.lastOrderNumber || "",
+        lastOrderedAt: product.lastOrderedAt || "",
+        data: JSON.stringify(product)
+      });
+    }
+
+    const insertOrder = db.prepare(`
+      INSERT INTO orders (id, order_number, supplier_name, order_date, status, saved_at, data, updated_at)
+      VALUES (@id, @orderNumber, @supplierName, @orderDate, @status, @savedAt, @data, CURRENT_TIMESTAMP)
+    `);
+    for (const order of data.orders || []) {
+      if (!order?.id || !order?.orderNumber) continue;
+      insertOrder.run({
+        id: String(order.id),
+        orderNumber: order.orderNumber,
+        supplierName: order.supplier?.name || "",
+        orderDate: order.orderDate || "",
+        status: order.status || "",
+        savedAt: order.savedAt || new Date().toISOString(),
+        data: JSON.stringify(order)
+      });
+    }
+  });
+  write(dbData);
+}
+
+function readOrderDb() {
+  const db = openOrderSqliteDb();
+  const defaults = emptyOrderDb();
+  const company = parseJson(db.prepare("SELECT value FROM app_settings WHERE key = ?").get("company")?.value, defaults.company);
+  const delivery = parseJson(db.prepare("SELECT value FROM app_settings WHERE key = ?").get("delivery")?.value, defaults.delivery);
+  return {
+    suppliers: db.prepare("SELECT data FROM suppliers ORDER BY name COLLATE NOCASE").all().map(row => parseJson(row.data, null)).filter(Boolean),
+    products: db.prepare("SELECT data FROM products ORDER BY updated_at").all().map(row => parseJson(row.data, null)).filter(Boolean),
+    orders: db.prepare("SELECT data FROM orders ORDER BY saved_at").all().map(row => parseJson(row.data, null)).filter(Boolean),
+    company,
+    delivery
+  };
+}
+
 function writeOrderDb(db) {
-  fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(orderDbPath, JSON.stringify(db, null, 2));
+  writeOrderDbToSqlite(openOrderSqliteDb(), db);
 }
 
 function nextOrderNumber(db) {
@@ -842,49 +993,31 @@ function upsertByKey(items, key, value, patch) {
 }
 
 async function shopifyLookupBySku(sku) {
-  const shop = process.env.SHOPIFY_SHOP;
-  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
-  const version = process.env.SHOPIFY_API_VERSION || "2025-04";
-  if (!shop || !token) return { configured: false, product: null };
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  if (!shop || !clientId || !clientSecret) return { configured: false, product: null };
 
-  const host = shop.includes(".") ? shop : `${shop}.myshopify.com`;
-  const response = await fetch(`https://${host}/admin/api/${version}/graphql.json`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-shopify-access-token": token
-    },
-    body: JSON.stringify({
-      query: `query ProductBySku($query: String!) {
-        productVariants(first: 1, query: $query) {
-          edges {
-            node {
-              sku
-              title
-              price
-              inventoryQuantity
-              image { url }
-              product {
-                title
-                productType
-                vendor
-                featuredImage { url }
-                metafield(namespace: "custom", key: "season") { value }
-              }
-            }
+  const data = await shopifyGraphql(`query ProductBySku($query: String!) {
+    productVariants(first: 1, query: $query) {
+      edges {
+        node {
+          sku
+          title
+          price
+          inventoryQuantity
+          image { url }
+          product {
+            title
+            productType
+            vendor
+            featuredImage { url }
+            metafield(namespace: "custom", key: "season") { value }
           }
         }
-      }`,
-      variables: { query: `sku:${sku}` }
-    })
-  });
+      }
+    }
+  }`, { query: `sku:${sku}` });
 
-  if (!response.ok) {
-    throw new Error(`Shopify lookup failed with ${response.status}`);
-  }
-
-  const payload = await response.json();
-  const node = payload?.data?.productVariants?.edges?.[0]?.node;
+  const node = data?.productVariants?.edges?.[0]?.node;
   if (!node) return { configured: true, product: null };
 
   return {
@@ -916,7 +1049,7 @@ async function handleApi(req, res) {
       company: db.company,
       delivery: db.delivery,
       nextOrderNumber: nextOrderNumber(db),
-      shopifyConfigured: Boolean(process.env.SHOPIFY_SHOP && process.env.SHOPIFY_ADMIN_ACCESS_TOKEN)
+      shopifyConfigured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret)
     });
     return true;
   }
@@ -938,7 +1071,7 @@ async function handleApi(req, res) {
         product,
         source: shopify.product ? "shopify" : savedProduct ? "saved" : null,
         shopifyConfigured: shopify.configured,
-        message: shopify.configured ? "" : "Add SHOPIFY_ADMIN_ACCESS_TOKEN to enable live Shopify lookups."
+        message: shopify.configured ? "" : "Set SHOPIFY_SHOP, SHOPIFY_CLIENT_ID, and SHOPIFY_CLIENT_SECRET to enable live Shopify lookups."
       });
     } catch (error) {
       sendJson(res, 200, {
@@ -1027,6 +1160,16 @@ function serveStatic(req, res) {
 }
 
 const server = http.createServer(async (req, res) => {
+  if (req.method === "OPTIONS" && req.url.startsWith("/api/")) {
+    res.writeHead(204, {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, POST, OPTIONS",
+      "access-control-allow-headers": "content-type, authorization"
+    });
+    res.end();
+    return;
+  }
+
   if (!isAuthorized(req)) {
     requireAuth(res);
     return;

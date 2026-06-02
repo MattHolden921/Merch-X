@@ -24,6 +24,30 @@ http://localhost:3000
 
 Password protection is enabled when `APP_USERNAME` and `APP_PASSWORD` are set. Leave them unset only for local throwaway testing.
 
+## Database
+
+Order forms, suppliers, and saved product details are stored in SQLite.
+
+Local default:
+
+```text
+./data/merch-x.sqlite
+```
+
+On a VPS, keep the database outside the repo and set:
+
+```text
+DATABASE_PATH=/var/lib/merch-x/merch-x.sqlite
+```
+
+The app creates the SQLite schema on startup. If `data/order-form-db.json` exists and the SQLite database is empty, the app imports the prototype JSON data once.
+
+For Hetzner/VPS backups, use SQLite's backup command rather than copying a live database file:
+
+```bash
+sqlite3 /var/lib/merch-x/merch-x.sqlite ".backup '/var/backups/merch-x/merch-x-$(date +%F).sqlite'"
+```
+
 ## Deploy
 
 The simplest live options are:
