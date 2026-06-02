@@ -6,6 +6,8 @@ const path = require("node:path");
 
 const port = Number(process.env.PORT || 3000);
 const publicDir = path.join(__dirname, "public");
+const dataDir = path.join(__dirname, "data");
+const orderDbPath = path.join(dataDir, "order-form-db.json");
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, ".env");
@@ -742,6 +744,256 @@ function requireAuth(res) {
   res.end("Authentication required");
 }
 
+function sendJson(res, status, payload) {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  res.end(JSON.stringify(payload));
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", chunk => {
+      body += chunk;
+      if (body.length > 2_000_000) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      if (!body) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(body));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function emptyOrderDb() {
+  return {
+    suppliers: [],
+    products: [],
+    orders: [],
+    company: {
+      name: "AMG Retail Ltd",
+      department: "Womenswear",
+      billingAddress: "7 Eggleston Court, Riverside Park, Middlesbrough, Cleveland, TS2 1RU",
+      country: "United Kingdom",
+      taxNumber: "TBC",
+      buyerEmail: "Buying@kitandkaboodal.com"
+    },
+    delivery: {
+      name: "Care of Kit and Kaboodal",
+      site: "Torque, Normanton",
+      street: "400 California Drive",
+      city: "Castleford",
+      postcode: "WF10 5QH",
+      country: "United Kingdom"
+    }
+  };
+}
+
+function readOrderDb() {
+  if (!fs.existsSync(orderDbPath)) return emptyOrderDb();
+  try {
+    const parsed = JSON.parse(fs.readFileSync(orderDbPath, "utf8"));
+    return { ...emptyOrderDb(), ...parsed };
+  } catch (error) {
+    console.error("Could not read order database", error);
+    return emptyOrderDb();
+  }
+}
+
+function writeOrderDb(db) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(orderDbPath, JSON.stringify(db, null, 2));
+}
+
+function nextOrderNumber(db) {
+  const year = new Date().getFullYear();
+  const prefix = `PO-${year}-`;
+  const max = db.orders.reduce((highest, order) => {
+    const orderNumber = String(order.orderNumber || "");
+    if (!orderNumber.startsWith(prefix)) return highest;
+    const n = Number(orderNumber.slice(prefix.length));
+    return Number.isFinite(n) ? Math.max(highest, n) : highest;
+  }, 0);
+  return `${prefix}${String(max + 1).padStart(4, "0")}`;
+}
+
+function normalizeSku(sku) {
+  return String(sku || "").trim().toUpperCase();
+}
+
+function upsertByKey(items, key, value, patch) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return;
+  const index = items.findIndex(item => String(item[key] || "").trim().toLowerCase() === normalized);
+  if (index === -1) {
+    items.push(patch);
+  } else {
+    items[index] = { ...items[index], ...patch };
+  }
+}
+
+async function shopifyLookupBySku(sku) {
+  const shop = process.env.SHOPIFY_SHOP;
+  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+  const version = process.env.SHOPIFY_API_VERSION || "2025-04";
+  if (!shop || !token) return { configured: false, product: null };
+
+  const host = shop.includes(".") ? shop : `${shop}.myshopify.com`;
+  const response = await fetch(`https://${host}/admin/api/${version}/graphql.json`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-shopify-access-token": token
+    },
+    body: JSON.stringify({
+      query: `query ProductBySku($query: String!) {
+        productVariants(first: 1, query: $query) {
+          edges {
+            node {
+              sku
+              title
+              price
+              inventoryQuantity
+              image { url }
+              product {
+                title
+                productType
+                vendor
+                featuredImage { url }
+                metafield(namespace: "custom", key: "season") { value }
+              }
+            }
+          }
+        }
+      }`,
+      variables: { query: `sku:${sku}` }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Shopify lookup failed with ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const node = payload?.data?.productVariants?.edges?.[0]?.node;
+  if (!node) return { configured: true, product: null };
+
+  return {
+    configured: true,
+    product: {
+      sku: node.sku || sku,
+      style: node.product?.title || "",
+      variant: node.title || "",
+      category: node.product?.productType || "",
+      supplierName: node.product?.vendor || "",
+      rrp: node.price || "",
+      season: node.product?.metafield?.value || "",
+      imageUrl: node.image?.url || node.product?.featuredImage?.url || "",
+      inventoryQuantity: node.inventoryQuantity ?? null,
+      source: "shopify"
+    }
+  };
+}
+
+async function handleApi(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (req.method === "GET" && url.pathname === "/api/order-form/bootstrap") {
+    const db = readOrderDb();
+    sendJson(res, 200, {
+      suppliers: db.suppliers,
+      products: db.products,
+      orders: db.orders.slice(-20).reverse(),
+      company: db.company,
+      delivery: db.delivery,
+      nextOrderNumber: nextOrderNumber(db),
+      shopifyConfigured: Boolean(process.env.SHOPIFY_SHOP && process.env.SHOPIFY_ADMIN_ACCESS_TOKEN)
+    });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/order-form/sku") {
+    const sku = normalizeSku(url.searchParams.get("sku"));
+    if (!sku) {
+      sendJson(res, 400, { error: "Missing SKU" });
+      return true;
+    }
+
+    const db = readOrderDb();
+    const savedProduct = db.products.find(product => normalizeSku(product.sku) === sku) || null;
+    try {
+      const shopify = await shopifyLookupBySku(sku);
+      const product = shopify.product || savedProduct;
+      sendJson(res, 200, {
+        found: Boolean(product),
+        product,
+        source: shopify.product ? "shopify" : savedProduct ? "saved" : null,
+        shopifyConfigured: shopify.configured,
+        message: shopify.configured ? "" : "Add SHOPIFY_ADMIN_ACCESS_TOKEN to enable live Shopify lookups."
+      });
+    } catch (error) {
+      sendJson(res, 200, {
+        found: Boolean(savedProduct),
+        product: savedProduct,
+        source: savedProduct ? "saved" : null,
+        shopifyConfigured: true,
+        message: error.message
+      });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/order-form/orders") {
+    try {
+      const order = await readJsonBody(req);
+      const db = readOrderDb();
+      const savedOrder = {
+        ...order,
+        id: order.id || `${Date.now()}`,
+        orderNumber: order.orderNumber || nextOrderNumber(db),
+        savedAt: new Date().toISOString()
+      };
+      db.orders = db.orders.filter(item => item.id !== savedOrder.id && item.orderNumber !== savedOrder.orderNumber);
+      db.orders.push(savedOrder);
+
+      if (savedOrder.supplier?.name) {
+        upsertByKey(db.suppliers, "name", savedOrder.supplier.name, {
+          ...savedOrder.supplier,
+          lastOrderNumber: savedOrder.orderNumber,
+          lastOrderedAt: savedOrder.savedAt
+        });
+      }
+
+      for (const line of savedOrder.lines || []) {
+        if (!line.sku) continue;
+        upsertByKey(db.products, "sku", line.sku, {
+          ...line,
+          supplierName: savedOrder.supplier?.name || line.supplierName || "",
+          lastOrderNumber: savedOrder.orderNumber,
+          lastOrderedAt: savedOrder.savedAt
+        });
+      }
+
+      writeOrderDb(db);
+      sendJson(res, 200, { ok: true, order: savedOrder, nextOrderNumber: nextOrderNumber(db) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save order" });
+    }
+    return true;
+  }
+
+  return false;
+}
+
 function serveStatic(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const safePath = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, "");
@@ -774,7 +1026,7 @@ function serveStatic(req, res) {
   });
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   if (!isAuthorized(req)) {
     requireAuth(res);
     return;
@@ -803,6 +1055,12 @@ const server = http.createServer((req, res) => {
     finishGoogleAuth(req, res).catch((error) => {
       sendHtml(res, 500, `<p>Google OAuth failed.</p><pre>${escapeHtml(error.message)}</pre>`);
     });
+    return;
+  }
+
+  if (req.url.startsWith("/api/")) {
+    const handled = await handleApi(req, res);
+    if (!handled) sendJson(res, 404, { error: "Not found" });
     return;
   }
 

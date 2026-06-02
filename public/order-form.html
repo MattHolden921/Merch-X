@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock Order Form</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#fff;--bg2:#f7f7f5;--bg3:#f0efe9;--text:#1a1a18;--text2:#6b6b67;--text3:#a0a09b;--border:rgba(0,0,0,0.12);--border2:rgba(0,0,0,0.22);--danger:#c0392b;--warning:#b8700a;--success:#1e7e4a;--info:#1a5fa8;--r:8px;--rl:12px}
+@media(prefers-color-scheme:dark){:root{--bg:#1e1e1c;--bg2:#2a2a28;--bg3:#333330;--text:#f0efe9;--text2:#a0a09b;--text3:#6b6b67;--border:rgba(255,255,255,0.12);--border2:rgba(255,255,255,0.22);--danger:#e05c4b;--warning:#e09a30;--success:#3dba6e;--info:#5a9fe8}}
+body{min-height:100vh;background:var(--bg3);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:24px 16px 48px;font-size:14px}
+.wrap{max-width:1480px;margin:0 auto}
+.home-link{display:inline-flex;align-items:center;gap:6px;margin-bottom:14px;color:var(--text2);font-size:12px;text-decoration:none}
+.home-link:hover{color:var(--text)}
+.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px}
+h1{font-size:22px;line-height:1.15;font-weight:500;letter-spacing:0;margin-bottom:4px}
+.sub{font-size:13px;color:var(--text2);line-height:1.55;max-width:740px}
+.status-pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--warning);background:var(--bg);border:.5px solid var(--border);border-radius:999px;padding:7px 11px;white-space:nowrap}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;align-items:start}
+.section{background:var(--bg);border:.5px solid var(--border);border-radius:var(--rl);padding:16px;margin-bottom:14px}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+.section-title{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);font-weight:600}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field label{font-size:11px;color:var(--text2);font-weight:600}
+input,select,textarea{font-family:inherit;font-size:13px;border:.5px solid var(--border2);border-radius:var(--r);padding:8px 10px;background:var(--bg);color:var(--text);width:100%;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--info)}
+input[readonly]{background:var(--bg2);color:var(--text2)}
+textarea{min-height:72px;resize:vertical}
+.mini{font-size:11px;color:var(--text3);line-height:1.45}
+.actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;align-items:center}
+button{font-family:inherit;border-radius:var(--r);border:.5px solid var(--border2);background:var(--bg2);color:var(--text);font-size:12px;padding:7px 16px;cursor:pointer}
+button:hover{filter:brightness(.97)}
+button.primary{background:var(--text);color:var(--bg);border-color:var(--text);font-size:14px;padding:10px 28px}
+button.ghost{background:transparent}
+button.small{font-size:12px;padding:6px 10px}
+button:disabled{opacity:.45;cursor:not-allowed}
+.line-card{background:var(--bg2);border:.5px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:10px}
+.line-grid{display:grid;grid-template-columns:72px 1fr 30px;gap:10px;align-items:start}
+.thumb{width:72px;aspect-ratio:1;border:.5px dashed var(--border2);border-radius:var(--r);background:var(--bg);display:flex;align-items:center;justify-content:center;overflow:hidden;color:var(--text3);font-size:11px;text-align:center}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.line-row{display:grid;grid-template-columns:1.4fr 1fr .9fr .75fr .65fr .8fr .8fr;gap:8px;margin-bottom:8px}
+.line-row.second{grid-template-columns:.9fr .9fr .9fr 1fr 1fr}
+.col-label{font-size:10px;color:var(--text3);font-weight:600;margin-bottom:3px}
+.line-row input,.line-row select{font-size:12px;padding:7px 8px}
+.remove{border:none;background:transparent;color:var(--text3);font-size:22px;line-height:1;padding:2px}
+.lookup-state{font-size:11px;color:var(--text3);margin-top:5px;min-height:16px}
+.lookup-state.ok{color:var(--success)}.lookup-state.warn{color:var(--warning)}.lookup-state.err{color:var(--danger)}
+.totals{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:14px;margin-top:14px;border-top:.5px solid var(--border);padding-top:14px}
+.cat-table{width:100%;border-collapse:collapse;font-size:12px}
+.cat-table th{font-size:10px;color:var(--text3);text-align:left;font-weight:600;padding:5px 8px 5px 0;border-bottom:.5px solid var(--border)}
+.cat-table th:not(:first-child),.cat-table td:not(:first-child){text-align:right}
+.cat-table td{padding:6px 8px 6px 0;border-bottom:.5px solid var(--border);color:var(--text2)}
+.total-box{display:flex;flex-direction:column;gap:8px}
+.total-row{display:flex;justify-content:space-between;color:var(--text2);font-size:13px}
+.total-row strong{color:var(--text)}
+.grand{display:flex;justify-content:space-between;border-top:1.5px solid var(--text);padding-top:9px;font-size:18px;font-weight:700}
+.side{position:sticky;top:16px}
+.side-list{display:flex;flex-direction:column;gap:8px}
+.saved-item{border:.5px solid var(--border);border-radius:var(--r);background:var(--bg2);padding:10px;text-align:left}
+.saved-item strong{display:block;font-size:13px;margin-bottom:3px}
+.saved-item span{display:block;font-size:11px;color:var(--text2);line-height:1.45}
+.empty{font-size:12px;color:var(--text3);line-height:1.5}
+.notice{display:none;margin-bottom:14px;border:.5px solid var(--border);border-radius:var(--r);padding:10px 12px;font-size:13px;line-height:1.5;background:var(--bg2);color:var(--text2)}
+.notice.show{display:block}.notice.ok{color:var(--success);border-color:rgba(30,126,74,.4)}.notice.err{color:var(--danger);border-color:rgba(192,57,43,.4)}
+.checks{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.check{display:flex;gap:8px;align-items:flex-start;color:var(--text2);font-size:13px;line-height:1.4}
+.check input{width:auto;margin-top:2px}
+@media(max-width:1080px){.layout{grid-template-columns:1fr}.side{position:static}.grid4{grid-template-columns:1fr 1fr}.line-row,.line-row.second{grid-template-columns:1fr 1fr 1fr}.totals{grid-template-columns:1fr}}
+@media(max-width:680px){body{padding:18px 12px 42px}.topbar{display:block}.status-pill{margin-top:12px}.grid2,.grid3,.grid4{grid-template-columns:1fr}.line-grid{grid-template-columns:1fr}.thumb{width:100%;max-width:160px}.line-row,.line-row.second{grid-template-columns:1fr}.checks{grid-template-columns:1fr}.actions{justify-content:flex-start}}
+@media print{body{background:#fff;padding:0}.home-link,.actions,.side,.notice,button{display:none!important}.wrap{max-width:none}.layout{display:block}.section{break-inside:avoid;border-color:#ddd}.line-card{break-inside:avoid}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home-link" href="/">← Tools home</a>
+  <div class="topbar">
+    <div>
+      <h1>Stock order form</h1>
+      <p class="sub">Create supplier orders, look up SKUs, and save the result so suppliers, products, costs, seasons, and terms can be reused on the next buy.</p>
+    </div>
+    <span class="status-pill" id="shopify-status">Loading</span>
+  </div>
+
+  <div class="notice" id="notice"></div>
+
+  <div class="layout">
+    <form id="order-form">
+      <section class="section">
+        <div class="section-head">
+          <p class="section-title">Order setup</p>
+          <div class="actions">
+            <button type="button" class="ghost small" onclick="newOrder()">New order</button>
+            <button type="button" class="small" onclick="window.print()">Print</button>
+            <button type="submit" class="primary">Save order</button>
+          </div>
+        </div>
+        <div class="grid4">
+          <div class="field"><label>Order number</label><input id="order-number" readonly></div>
+          <div class="field"><label>Order date</label><input id="order-date" type="date"></div>
+          <div class="field"><label>Status</label><select id="order-status"><option>Draft</option><option>Pending approval</option><option>Approved</option><option>Submitted</option><option>Cancelled</option></select></div>
+          <div class="field"><label>Season</label><select id="order-season"><option value="">Select season</option><option>SS26</option><option>AW26</option><option>SS27</option><option>AW27</option></select></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head"><p class="section-title">Supplier details</p><button type="button" class="small" onclick="applySupplier()">Use saved supplier</button></div>
+        <div class="grid2" style="margin-bottom:12px">
+          <div class="field"><label>Saved supplier</label><select id="supplier-picker"><option value="">Select saved supplier</option></select></div>
+          <div class="field"><label>Supplier reference / code</label><input id="sup-ref" placeholder="SUP-00142"></div>
+        </div>
+        <div class="grid3" style="margin-bottom:12px">
+          <div class="field"><label>Supplier name</label><input id="sup-name" placeholder="Company or trader name"></div>
+          <div class="field"><label>Contact name</label><input id="sup-contact" placeholder="Account manager"></div>
+          <div class="field"><label>Email</label><input id="sup-email" type="email" placeholder="supplier@example.com"></div>
+        </div>
+        <div class="grid4">
+          <div class="field"><label>Phone</label><input id="sup-phone" type="tel"></div>
+          <div class="field"><label>City / region</label><input id="sup-city"></div>
+          <div class="field"><label>Country</label><input id="sup-country" list="country-list"></div>
+          <div class="field"><label>Website</label><input id="sup-website" type="url" placeholder="https://"></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <p class="section-title" style="margin-bottom:14px">Buyer / delivery details</p>
+        <div class="grid3" style="margin-bottom:12px">
+          <div class="field"><label>Company name</label><input id="co-name"></div>
+          <div class="field"><label>Department / buyer</label><input id="co-department"></div>
+          <div class="field"><label>Buyer email</label><input id="co-email" type="email"></div>
+        </div>
+        <div class="grid2" style="margin-bottom:12px">
+          <div class="field"><label>Billing address</label><input id="co-billing"></div>
+          <div class="field"><label>VAT / tax number</label><input id="co-tax"></div>
+        </div>
+        <div class="grid4">
+          <div class="field"><label>Delivery name / attention</label><input id="del-name"></div>
+          <div class="field"><label>Building / site</label><input id="del-site"></div>
+          <div class="field"><label>Street address</label><input id="del-street"></div>
+          <div class="field"><label>Town / city</label><input id="del-city"></div>
+          <div class="field"><label>Postcode</label><input id="del-postcode"></div>
+          <div class="field"><label>Country</label><input id="del-country"></div>
+          <div class="field"><label>Required delivery date</label><input id="required-date" type="date"></div>
+          <div class="field"><label>Shipping method</label><select id="shipping-method"><option value="">Select method</option><option>Standard road freight</option><option>Express courier</option><option>Air freight</option><option>Sea freight</option><option>Collect - buyer arranges</option></select></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head"><p class="section-title">Order lines</p><button type="button" class="small" onclick="addLine()">Add line</button></div>
+        <div id="lines-wrap"></div>
+        <div class="totals">
+          <div>
+            <p class="section-title" style="margin-bottom:8px">Spend by category</p>
+            <table class="cat-table">
+              <thead><tr><th>Category</th><th>Units</th><th>Spend</th><th>Est. RRP</th><th>Share</th></tr></thead>
+              <tbody id="cat-body"><tr><td colspan="5" class="empty">Add lines to see category spend.</td></tr></tbody>
+            </table>
+          </div>
+          <div class="total-box">
+            <div class="total-row"><span>Subtotal at cost</span><strong id="subtotal">&pound;0.00</strong></div>
+            <div class="total-row"><span>VAT (20%)</span><strong id="vat">&pound;0.00</strong></div>
+            <div class="grand"><span>Total</span><span id="grand">&pound;0.00</span></div>
+            <div class="total-row"><span>Est. total RRP</span><strong id="rrp-total">&pound;0.00</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <p class="section-title" style="margin-bottom:14px">Terms, quality, and notes</p>
+        <div class="grid3" style="margin-bottom:12px">
+          <div class="field"><label>Payment terms</label><select id="payment-terms"><option value="">Select terms</option><option>Pro forma - full payment upfront</option><option>30% deposit, 70% on dispatch</option><option>Net 30 days</option><option>Net 60 days</option><option>Net 90 days</option><option>Letter of credit</option></select></div>
+          <div class="field"><label>Currency</label><select id="currency"><option>GBP</option><option>USD</option><option>EUR</option><option>Other</option></select></div>
+          <div class="field"><label>Incoterms</label><select id="incoterms"><option value="">Select incoterm</option><option>EXW</option><option>FCA</option><option>FOB</option><option>CIF</option><option>DAP</option><option>DDP</option></select></div>
+        </div>
+        <div class="checks" style="margin-bottom:12px">
+          <label class="check"><input type="checkbox" name="qc" value="Fabric composition / care labels"> Fabric composition / care labels</label>
+          <label class="check"><input type="checkbox" name="qc" value="REACH / chemical compliance"> REACH / chemical compliance</label>
+          <label class="check"><input type="checkbox" name="qc" value="Pre-shipment inspection"> Pre-shipment inspection</label>
+          <label class="check"><input type="checkbox" name="qc" value="Ethical audit / SMETA certificate"> Ethical audit / SMETA certificate</label>
+          <label class="check"><input type="checkbox" name="qc" value="Country of origin documentation"> Country of origin documentation</label>
+          <label class="check"><input type="checkbox" name="qc" value="Barcode / EAN labelling"> Barcode / EAN labelling</label>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Quality notes</label><textarea id="quality-notes" placeholder="Tolerance, packaging, labelling, inspection, or compliance notes"></textarea></div>
+          <div class="field"><label>Special conditions / order notes</label><textarea id="order-notes" placeholder="Anything the supplier or approver should know"></textarea></div>
+        </div>
+      </section>
+    </form>
+
+    <aside class="side">
+      <section class="section">
+        <p class="section-title" style="margin-bottom:10px">Recent orders</p>
+        <div class="side-list" id="recent-orders"><p class="empty">No saved orders yet.</p></div>
+      </section>
+      <section class="section">
+        <p class="section-title" style="margin-bottom:10px">Saved products</p>
+        <p class="mini" style="margin-bottom:10px">Enter a SKU on an order line to prefill from saved orders or Shopify when configured.</p>
+        <div class="side-list" id="saved-products"><p class="empty">No saved products yet.</p></div>
+      </section>
+    </aside>
+  </div>
+</main>
+
+<datalist id="country-list"></datalist>
+
+<script>
+const CATEGORIES=["Tops","Bottoms","Dresses & Jumpsuits","Outerwear","Knitwear","Footwear","Accessories","Bags & Luggage","Jewellery","Swimwear & Beachwear","Lingerie & Nightwear","Sportswear & Activewear","Childrenswear","Menswear","Home & Lifestyle","Other"];
+const SEASONS=["SS26","AW26","SS27","AW27"];
+const COUNTRIES=["Italy","China","United Kingdom","France","Germany","India","Turkey","Spain","Portugal","United States","Vietnam","Thailand","Bangladesh","Netherlands","Poland","Romania","Morocco","Tunisia"];
+const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"});
+let bootstrap={suppliers:[],products:[],orders:[],company:{},delivery:{},nextOrderNumber:""};
+let lineId=0;
+
+const el=id=>document.getElementById(id);
+const val=id=>el(id)?.value?.trim()||"";
+const set=(id,value)=>{if(el(id))el(id).value=value||""};
+const opts=(items,blank)=>`${blank?`<option value="">${blank}</option>`:""}${items.map(item=>`<option>${escapeHtml(item)}</option>`).join("")}`;
+
+function escapeHtml(value){
+  return String(value||"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+}
+
+function notice(text,type="ok"){
+  const box=el("notice");
+  box.textContent=text;
+  box.className=`notice show ${type}`;
+  window.clearTimeout(notice.timer);
+  notice.timer=window.setTimeout(()=>box.className="notice",4200);
+}
+
+async function loadBootstrap(){
+  const response=await fetch("/api/order-form/bootstrap");
+  bootstrap=await response.json();
+  el("shopify-status").textContent=bootstrap.shopifyConfigured?"Shopify lookup active":"Saved SKU lookup active";
+  el("shopify-status").style.color=bootstrap.shopifyConfigured?"var(--success)":"var(--warning)";
+  renderReferenceData();
+  newOrder();
+}
+
+function renderReferenceData(){
+  el("supplier-picker").innerHTML=opts(bootstrap.suppliers.map(s=>s.name).filter(Boolean),"Select saved supplier");
+  el("country-list").innerHTML=COUNTRIES.map(c=>`<option value="${escapeHtml(c)}"></option>`).join("");
+  el("recent-orders").innerHTML=bootstrap.orders.length?bootstrap.orders.map(order=>`
+    <button type="button" class="saved-item" onclick="loadSavedOrder('${escapeHtml(order.id)}')">
+      <strong>${escapeHtml(order.orderNumber)}</strong>
+      <span>${escapeHtml(order.supplier?.name||"No supplier")} · ${escapeHtml(order.status||"Draft")}</span>
+      <span>${escapeHtml((order.lines||[]).length)} lines · ${money.format(Number(order.totals?.grand||0))}</span>
+    </button>`).join(""):'<p class="empty">No saved orders yet.</p>';
+  el("saved-products").innerHTML=bootstrap.products.length?bootstrap.products.slice(-8).reverse().map(product=>`
+    <button type="button" class="saved-item" onclick="addLine(${JSON.stringify(product).replaceAll('"',"&quot;")})">
+      <strong>${escapeHtml(product.sku||"No SKU")}</strong>
+      <span>${escapeHtml(product.style||product.description||"Unnamed product")}</span>
+      <span>${escapeHtml(product.supplierName||"")} ${product.unitCost?`· ${money.format(Number(product.unitCost))}`:""}</span>
+    </button>`).join(""):'<p class="empty">No saved products yet.</p>';
+}
+
+function newOrder(){
+  lineId=0;
+  el("order-form").reset();
+  set("order-number",bootstrap.nextOrderNumber||`PO-${new Date().getFullYear()}-0001`);
+  set("order-date",new Date().toISOString().slice(0,10));
+  set("co-name",bootstrap.company.name);
+  set("co-department",bootstrap.company.department);
+  set("co-email",bootstrap.company.buyerEmail);
+  set("co-billing",bootstrap.company.billingAddress);
+  set("co-tax",bootstrap.company.taxNumber);
+  set("del-name",bootstrap.delivery.name);
+  set("del-site",bootstrap.delivery.site);
+  set("del-street",bootstrap.delivery.street);
+  set("del-city",bootstrap.delivery.city);
+  set("del-postcode",bootstrap.delivery.postcode);
+  set("del-country",bootstrap.delivery.country);
+  el("lines-wrap").innerHTML="";
+  addLine();
+  calc();
+}
+
+function applySupplier(){
+  const supplier=bootstrap.suppliers.find(s=>s.name===val("supplier-picker"));
+  if(!supplier)return;
+  set("sup-name",supplier.name);
+  set("sup-ref",supplier.reference);
+  set("sup-contact",supplier.contact);
+  set("sup-email",supplier.email);
+  set("sup-phone",supplier.phone);
+  set("sup-city",supplier.city);
+  set("sup-country",supplier.country);
+  set("sup-website",supplier.website);
+}
+
+function loadSavedOrder(id){
+  const order=bootstrap.orders.find(item=>item.id===id);
+  if(!order)return;
+  set("order-number",order.orderNumber);
+  set("order-date",order.orderDate);
+  set("order-status",order.status);
+  set("order-season",order.season);
+  Object.entries(order.supplier||{}).forEach(([key,value])=>set(`sup-${key}`,value));
+  set("sup-name",order.supplier?.name);
+  set("sup-ref",order.supplier?.reference);
+  set("co-name",order.company?.name);
+  set("co-department",order.company?.department);
+  set("co-email",order.company?.buyerEmail);
+  set("co-billing",order.company?.billingAddress);
+  set("co-tax",order.company?.taxNumber);
+  set("del-name",order.delivery?.name);
+  set("del-site",order.delivery?.site);
+  set("del-street",order.delivery?.street);
+  set("del-city",order.delivery?.city);
+  set("del-postcode",order.delivery?.postcode);
+  set("del-country",order.delivery?.country);
+  set("required-date",order.delivery?.requiredDate);
+  set("shipping-method",order.delivery?.shippingMethod);
+  set("payment-terms",order.terms?.payment);
+  set("currency",order.terms?.currency);
+  set("incoterms",order.terms?.incoterms);
+  set("quality-notes",order.qualityNotes);
+  set("order-notes",order.notes);
+  document.querySelectorAll('input[name="qc"]').forEach(cb=>cb.checked=(order.checks||[]).includes(cb.value));
+  el("lines-wrap").innerHTML="";
+  lineId=0;
+  (order.lines||[]).forEach(line=>addLine(line));
+  if(!(order.lines||[]).length)addLine();
+  calc();
+  notice(`Loaded ${order.orderNumber}. Save it to update the stored order.`);
+}
+
+function addLine(data={}){
+  const id=++lineId;
+  const card=document.createElement("div");
+  card.className="line-card";
+  card.id=`line-${id}`;
+  card.innerHTML=`
+    <div class="line-grid">
+      <div class="thumb" id="thumb-${id}">${data.imageUrl?`<img src="${escapeHtml(data.imageUrl)}" alt="">`:"Image URL"}</div>
+      <div>
+        <div class="line-row">
+          ${field("style",id,"Style / description","text","Style name or ref",data.style||data.description)}
+          ${selectField("category",id,"Category",CATEGORIES,data.category)}
+          ${field("colour",id,"Colour / fabric","text","Navy / Cotton",data.colour)}
+          ${field("size",id,"Size","text","S/M/L",data.size)}
+          ${field("quantity",id,"Qty","number","0",data.quantity)}
+          ${field("unitCost",id,"Unit cost","number","0.00",data.unitCost)}
+          ${field("rrp",id,"Est. RRP","number","0.00",data.rrp)}
+        </div>
+        <div class="line-row second">
+          ${field("sku",id,"SKU","text","AMG-00421",data.sku)}
+          ${selectField("repeatType",id,"Repeat or new",["New","Repeat","Repeat with variation"],data.repeatType)}
+          ${selectField("season",id,"Season",SEASONS,data.season)}
+          ${field("imageUrl",id,"Image URL","url","https://",data.imageUrl)}
+          <div><div class="col-label">Line total</div><input id="lineTotal-${id}" readonly value="&pound;0.00"><div class="lookup-state" id="lookup-${id}"></div></div>
+        </div>
+      </div>
+      <button type="button" class="remove" onclick="removeLine(${id})" aria-label="Remove line">×</button>
+    </div>`;
+  el("lines-wrap").appendChild(card);
+  ["quantity","unitCost","rrp","category"].forEach(key=>el(`${key}-${id}`).addEventListener("input",calc));
+  el(`sku-${id}`).addEventListener("change",()=>lookupSku(id));
+  el(`imageUrl-${id}`).addEventListener("input",()=>renderThumb(id));
+  calc();
+}
+
+function field(key,id,label,type,placeholder,value=""){
+  const step=type==="number"?' step="0.01" min="0"':"";
+  return `<div><div class="col-label">${label}</div><input id="${key}-${id}" type="${type}" placeholder="${placeholder}" value="${escapeHtml(value)}"${step}></div>`;
+}
+
+function selectField(key,id,label,items,value=""){
+  return `<div><div class="col-label">${label}</div><select id="${key}-${id}"><option value="">Select</option>${items.map(item=>`<option${item===value?" selected":""}>${escapeHtml(item)}</option>`).join("")}</select></div>`;
+}
+
+function removeLine(id){
+  el(`line-${id}`)?.remove();
+  calc();
+}
+
+function renderThumb(id){
+  const url=val(`imageUrl-${id}`);
+  el(`thumb-${id}`).innerHTML=url?`<img src="${escapeHtml(url)}" alt="">`:"Image URL";
+}
+
+async function lookupSku(id){
+  const sku=val(`sku-${id}`);
+  if(!sku)return;
+  const state=el(`lookup-${id}`);
+  state.textContent="Looking up SKU";
+  state.className="lookup-state";
+  const response=await fetch(`/api/order-form/sku?sku=${encodeURIComponent(sku)}`);
+  const result=await response.json();
+  if(result.product){
+    applyProductToLine(id,result.product);
+    state.textContent=`Prefilled from ${result.source}`;
+    state.className="lookup-state ok";
+  }else{
+    state.textContent=result.message||"No matching SKU found";
+    state.className="lookup-state warn";
+  }
+}
+
+function applyProductToLine(id,product){
+  const map={style:"style",category:"category",colour:"colour",size:"size",quantity:"quantity",unitCost:"unitCost",rrp:"rrp",repeatType:"repeatType",season:"season",imageUrl:"imageUrl"};
+  Object.entries(map).forEach(([from,to])=>{if(product[from]!=null&&product[from]!=="")set(`${to}-${id}`,product[from])});
+  if(product.supplierName&&!val("sup-name"))set("sup-name",product.supplierName);
+  renderThumb(id);
+  calc();
+}
+
+function collectLines(){
+  return [...document.querySelectorAll(".line-card")].map(card=>{
+    const id=card.id.replace("line-","");
+    const quantity=Number(val(`quantity-${id}`))||0;
+    const unitCost=Number(val(`unitCost-${id}`))||0;
+    const rrp=Number(val(`rrp-${id}`))||0;
+    return {
+      sku:val(`sku-${id}`),style:val(`style-${id}`),category:val(`category-${id}`),colour:val(`colour-${id}`),size:val(`size-${id}`),
+      quantity,unitCost,rrp,repeatType:val(`repeatType-${id}`),season:val(`season-${id}`),imageUrl:val(`imageUrl-${id}`),
+      lineCost:quantity*unitCost,lineRrp:quantity*rrp
+    };
+  }).filter(line=>line.sku||line.style||line.quantity);
+}
+
+function calc(){
+  const lines=collectLines();
+  let subtotal=0,totalRrp=0;
+  const cats={};
+  lines.forEach(line=>{
+    subtotal+=line.lineCost;
+    totalRrp+=line.lineRrp;
+    if(line.category){
+      cats[line.category]=cats[line.category]||{units:0,spend:0,rrp:0};
+      cats[line.category].units+=line.quantity;
+      cats[line.category].spend+=line.lineCost;
+      cats[line.category].rrp+=line.lineRrp;
+    }
+  });
+  document.querySelectorAll(".line-card").forEach(card=>{
+    const id=card.id.replace("line-","");
+    const quantity=Number(val(`quantity-${id}`))||0;
+    const unitCost=Number(val(`unitCost-${id}`))||0;
+    el(`lineTotal-${id}`).value=money.format(quantity*unitCost);
+  });
+  el("subtotal").textContent=money.format(subtotal);
+  el("vat").textContent=money.format(subtotal*.2);
+  el("grand").textContent=money.format(subtotal*1.2);
+  el("rrp-total").textContent=money.format(totalRrp);
+  const names=Object.keys(cats).sort((a,b)=>cats[b].spend-cats[a].spend);
+  el("cat-body").innerHTML=names.length?names.map(name=>{
+    const cat=cats[name];
+    const share=subtotal?`${((cat.spend/subtotal)*100).toFixed(1)}%`:"0.0%";
+    return `<tr><td>${escapeHtml(name)}</td><td>${cat.units.toLocaleString()}</td><td>${money.format(cat.spend)}</td><td>${money.format(cat.rrp)}</td><td>${share}</td></tr>`;
+  }).join(""):'<tr><td colspan="5" class="empty">Add lines to see category spend.</td></tr>';
+  return {subtotal,vat:subtotal*.2,grand:subtotal*1.2,totalRrp};
+}
+
+function collectOrder(){
+  return {
+    orderNumber:val("order-number"),orderDate:val("order-date"),status:val("order-status"),season:val("order-season"),
+    supplier:{name:val("sup-name"),reference:val("sup-ref"),contact:val("sup-contact"),email:val("sup-email"),phone:val("sup-phone"),city:val("sup-city"),country:val("sup-country"),website:val("sup-website")},
+    company:{name:val("co-name"),department:val("co-department"),buyerEmail:val("co-email"),billingAddress:val("co-billing"),taxNumber:val("co-tax")},
+    delivery:{name:val("del-name"),site:val("del-site"),street:val("del-street"),city:val("del-city"),postcode:val("del-postcode"),country:val("del-country"),requiredDate:val("required-date"),shippingMethod:val("shipping-method")},
+    terms:{payment:val("payment-terms"),currency:val("currency"),incoterms:val("incoterms")},
+    checks:[...document.querySelectorAll('input[name="qc"]:checked')].map(cb=>cb.value),
+    qualityNotes:val("quality-notes"),notes:val("order-notes"),lines:collectLines(),totals:calc()
+  };
+}
+
+el("order-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const order=collectOrder();
+  if(!order.supplier.name){notice("Add a supplier name before saving.","err");return;}
+  if(!order.lines.length){notice("Add at least one order line before saving.","err");return;}
+  const response=await fetch("/api/order-form/orders",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(order)});
+  const result=await response.json();
+  if(!response.ok||!result.ok){notice(result.error||"Could not save order.","err");return;}
+  notice(`${result.order.orderNumber} saved. Supplier and SKU details are now available for future orders.`);
+  await loadBootstrap();
+  loadSavedOrder(result.order.id);
+});
+
+loadBootstrap().catch(error=>notice(error.message,"err"));
+</script>
+</body>
+</html>
