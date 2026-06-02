@@ -4,38 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Collection Reorder Planner</title>
+<link rel="stylesheet" href="/design-system.css">
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#fff;--bg2:#f7f7f5;--bg3:#eceae4;--ink:#181816;--muted:#666660;--soft:#9b9a91;--line:rgba(0,0,0,.13);--line2:rgba(0,0,0,.25);--good:#1e7e4a;--warn:#a76610;--bad:#b13b2e;--info:#1a5f8f;--gold:#b58b16;--r:8px}
-@media(prefers-color-scheme:dark){:root{--bg:#1f1f1d;--bg2:#2b2b28;--bg3:#33332f;--ink:#f1f0ea;--muted:#b4b3aa;--soft:#7e7d74;--line:rgba(255,255,255,.14);--line2:rgba(255,255,255,.27);--good:#42b978;--warn:#d49635;--bad:#e35f50;--info:#64a8d7;--gold:#d2ad3d}}
-body{min-height:100vh;background:var(--bg3);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:22px 16px 48px}
-.wrap{max-width:1680px;margin:0 auto}
-.home{display:inline-flex;align-items:center;gap:6px;margin-bottom:14px;color:var(--muted);font-size:12px;text-decoration:none}
-.home:hover{color:var(--ink)}
-.head{display:grid;grid-template-columns:minmax(280px,1fr) auto;gap:16px;align-items:start;margin-bottom:16px}
-h1{font-size:24px;font-weight:600;letter-spacing:0;margin-bottom:5px}
-.sub{font-size:13px;color:var(--muted);line-height:1.55;max-width:850px}
-.actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
-button,.select,input{font:inherit}
-.btn{height:34px;border:.5px solid var(--line2);background:var(--bg);color:var(--ink);border-radius:var(--r);padding:0 12px;font-size:12px;cursor:pointer}
-.btn:hover{background:var(--bg2)}
-.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-.btn:disabled{opacity:.45;cursor:not-allowed}
-.panel{background:var(--bg);border:.5px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:14px}
 .connect{display:grid;grid-template-columns:1.2fr 1fr;gap:12px;align-items:start}
-.notes{font-size:12px;color:var(--muted);line-height:1.7}
-.notes b{color:var(--ink);font-weight:600}
-.notes code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;color:var(--ink);background:var(--bg2);border-radius:5px;padding:2px 5px}
-.status{font-size:12px;line-height:1.5;color:var(--muted)}
-.status strong{color:var(--ink)}
-.status.ok{color:var(--good)}.status.warn{color:var(--warn)}.status.err{color:var(--bad)}
 .toolbar{display:grid;grid-template-columns:minmax(220px,1.7fr) repeat(6,minmax(135px,1fr));gap:10px;align-items:end}
-.field label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:5px}
-.select,input{width:100%;height:32px;border:.5px solid var(--line2);border-radius:var(--r);background:var(--bg2);color:var(--ink);padding:0 9px;font-size:12px}
 .cards{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px}
-.metric{background:var(--bg);border:.5px solid var(--line);border-radius:var(--r);padding:12px}
-.metric label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:5px}
-.metric span{font-size:20px;font-weight:600}
 .metric small{display:block;font-size:11px;color:var(--muted);margin-top:2px;min-height:16px}
 .workspace{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:14px;align-items:start}
 .workspace.visual-active{grid-template-columns:1fr}
@@ -52,8 +25,7 @@ tr:last-child td{border-bottom:0}
 .thumb img{width:100%;height:100%;object-fit:contain;display:block}
 .title{font-size:13px;color:var(--ink);font-weight:600;line-height:1.3}
 .meta{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
-.chip{font-size:10px;color:var(--muted);background:var(--bg2);border-radius:999px;padding:3px 7px}
-.move{display:inline-flex;align-items:center;justify-content:center;min-width:42px;height:24px;border-radius:999px;font-size:11px;font-weight:700;background:var(--bg2);color:var(--muted)}
+.move{display:inline-flex;align-items:center;justify-content:center;min-width:42px;height:24px;border-radius:var(--r);font-size:11px;font-weight:700;background:var(--bg2);color:var(--muted)}
 .move.up{background:rgba(30,126,74,.12);color:var(--good)}
 .move.down{background:rgba(177,59,46,.12);color:var(--bad)}
 .score{font-weight:700;color:var(--ink)}
