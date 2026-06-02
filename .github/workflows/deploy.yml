@@ -19,6 +19,14 @@ jobs:
           script: |
             set -e
             cd /opt/merch-x
-            git pull --ff-only
+            git fetch origin main
+            git reset --hard origin/main
+            sudo apt-get update
+            sudo apt-get install -y build-essential python3 make g++ sqlite3
+            sudo mkdir -p /var/lib/merch-x /var/backups/merch-x
+            sudo chown -R "$USER":"$USER" /var/lib/merch-x /var/backups/merch-x
+            if ! grep -q '^DATABASE_PATH=' /opt/merch-x/.env; then
+              printf '\nDATABASE_PATH=/var/lib/merch-x/merch-x.sqlite\n' >> /opt/merch-x/.env
+            fi
             npm install --omit=dev
             sudo systemctl restart merch-x
