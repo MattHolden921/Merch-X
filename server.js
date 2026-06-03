@@ -1424,6 +1424,12 @@ function incrementIssuedSku(value) {
   return `${parsed.prefix}${String(parsed.number + 1).padStart(parsed.width, "0")}`;
 }
 
+function decrementIssuedSku(value) {
+  const parsed = parseIssuedSku(value);
+  if (!parsed) return "";
+  return `${parsed.prefix}${String(Math.max(0, parsed.number - 1)).padStart(parsed.width, "0")}`;
+}
+
 function compareIssuedSku(a, b) {
   const parsedA = parseIssuedSku(a);
   const parsedB = parseIssuedSku(b);
@@ -1446,20 +1452,24 @@ function highestIssuedSku(dbData, storedSku = "") {
 function getLastIssuedSku(dbData) {
   const db = openOrderSqliteDb();
   const storedSku = db.prepare("SELECT value FROM app_settings WHERE key = ?").get("lastIssuedSku")?.value || "";
-  const sku = highestIssuedSku(dbData, storedSku);
-  if (sku) reserveIssuedSku(sku, { source: "lastIssuedSku" });
-  return sku;
+  return highestIssuedSku(dbData, storedSku);
 }
 
-function setLastIssuedSku(sku) {
+function writeLastIssuedSkuSetting(sku) {
   const normalized = normalizeSku(sku);
-  if (!parseIssuedSku(normalized)) return;
-  reserveIssuedSku(normalized, { source: "issue" });
+  if (!parseIssuedSku(normalized)) return "";
   openOrderSqliteDb().prepare(`
     INSERT INTO app_settings (key, value, updated_at)
     VALUES ('lastIssuedSku', ?, CURRENT_TIMESTAMP)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
   `).run(normalized);
+  return normalized;
+}
+
+function setLastIssuedSku(sku) {
+  const normalized = writeLastIssuedSkuSetting(sku);
+  if (!normalized) return;
+  reserveIssuedSku(normalized, { source: "issue" });
 }
 
 function normalizeSku(sku) {
@@ -1664,13 +1674,9 @@ async function handleApi(req, res) {
         .filter(candidate => parseIssuedSku(candidate)?.prefix === parsed.prefix)
         .reduce((current, candidate) => compareIssuedSku(candidate, current) > 0 ? normalizeSku(candidate) : current, "");
       if (highest) {
-        db.prepare(`
-          INSERT INTO app_settings (key, value, updated_at)
-          VALUES ('lastIssuedSku', ?, CURRENT_TIMESTAMP)
-          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-        `).run(highest);
+        writeLastIssuedSkuSetting(highest);
       } else {
-        db.prepare("DELETE FROM app_settings WHERE key = 'lastIssuedSku'").run();
+        writeLastIssuedSkuSetting(decrementIssuedSku(sku));
       }
     }
     sendJson(res, 200, { ok: true, deleted: Boolean(deleted), sku });
