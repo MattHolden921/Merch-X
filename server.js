@@ -46,7 +46,7 @@ function sendJson(res, status, payload) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
     "access-control-allow-headers": "content-type, authorization"
   });
   res.end(JSON.stringify(payload));
@@ -1265,6 +1265,13 @@ function openOrderSqliteDb() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS issued_skus (
+      sku TEXT PRIMARY KEY,
+      issued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      data TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS orders (
       id TEXT PRIMARY KEY,
       order_number TEXT NOT NULL UNIQUE,
@@ -1293,6 +1300,7 @@ function openOrderSqliteDb() {
 
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_gid ON collection_reorder_audit(collection_gid);
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_applied ON collection_reorder_audit(applied_at);
+    CREATE INDEX IF NOT EXISTS idx_issued_skus_issued_at ON issued_skus(issued_at);
   `);
   importOrderJsonIfNeeded(orderSqliteDb);
   return orderSqliteDb;
@@ -1429,10 +1437,7 @@ function highestIssuedSku(dbData, storedSku = "") {
   const stored = parseIssuedSku(storedSku);
   const prefix = stored?.prefix || "AMG-";
   const candidates = [storedSku];
-  for (const product of dbData.products || []) candidates.push(product.sku);
-  for (const order of dbData.orders || []) {
-    for (const line of order.lines || []) candidates.push(line.sku);
-  }
+  for (const row of readIssuedSkuRows()) candidates.push(row.sku);
   return candidates
     .filter((sku) => parseIssuedSku(sku)?.prefix === prefix)
     .reduce((highest, sku) => compareIssuedSku(sku, highest) > 0 ? normalizeSku(sku) : highest, stored ? normalizeSku(storedSku) : "");
@@ -1441,12 +1446,15 @@ function highestIssuedSku(dbData, storedSku = "") {
 function getLastIssuedSku(dbData) {
   const db = openOrderSqliteDb();
   const storedSku = db.prepare("SELECT value FROM app_settings WHERE key = ?").get("lastIssuedSku")?.value || "";
-  return highestIssuedSku(dbData, storedSku);
+  const sku = highestIssuedSku(dbData, storedSku);
+  if (sku) reserveIssuedSku(sku, { source: "lastIssuedSku" });
+  return sku;
 }
 
 function setLastIssuedSku(sku) {
   const normalized = normalizeSku(sku);
   if (!parseIssuedSku(normalized)) return;
+  reserveIssuedSku(normalized, { source: "issue" });
   openOrderSqliteDb().prepare(`
     INSERT INTO app_settings (key, value, updated_at)
     VALUES ('lastIssuedSku', ?, CURRENT_TIMESTAMP)
@@ -1456,6 +1464,96 @@ function setLastIssuedSku(sku) {
 
 function normalizeSku(sku) {
   return String(sku || "").trim().toUpperCase();
+}
+
+function readIssuedSkuRows() {
+  return openOrderSqliteDb().prepare("SELECT sku, issued_at AS issuedAt, data FROM issued_skus ORDER BY issued_at DESC").all()
+    .map(row => ({ ...row, data: parseJson(row.data, {}) }));
+}
+
+function reserveIssuedSku(sku, data = {}) {
+  const normalized = normalizeSku(sku);
+  if (!parseIssuedSku(normalized)) return;
+  openOrderSqliteDb().prepare(`
+    INSERT INTO issued_skus (sku, data, issued_at, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(sku) DO UPDATE SET
+      data = COALESCE(issued_skus.data, excluded.data),
+      updated_at = CURRENT_TIMESTAMP
+  `).run(normalized, JSON.stringify(data || {}));
+}
+
+function isNonShopifySavedProduct(product) {
+  if (!product?.sku) return false;
+  return String(product.source || "").trim().toLowerCase() !== "shopify";
+}
+
+function savedLocalSkuRows(dbData) {
+  const productRows = (dbData.products || [])
+    .filter(isNonShopifySavedProduct)
+    .map((product) => {
+      const sku = normalizeSku(product.sku);
+      return {
+      sku: product.sku || "",
+      buyingCode: product.buyingCode || product.supplierSku || "",
+      style: product.style || product.description || "",
+      category: product.category || "",
+      colour: product.colour || product.color || "",
+      size: product.size || "",
+      season: product.season || "",
+      supplierName: product.supplierName || "",
+      repeatType: product.repeatType || "",
+      quantity: Number(product.quantity || 0),
+      unitCostEur: Number(product.unitCostEur || 0),
+      unitCostGbp: Number(product.unitCostGbp || product.unitCost || 0),
+      rrp: Number(product.rrp || 0),
+      exitRetail: Number(product.exitRetail || 0),
+      imageUrl: product.imageUrl || "",
+      lastOrderNumber: product.lastOrderNumber || "",
+      lastOrderedAt: product.lastOrderedAt || "",
+      source: product.source || "saved",
+      status: "Saved product",
+      canDelete: false,
+      data: product,
+      normalizedSku: sku
+    };
+    });
+  const savedSkuSet = new Set(productRows.map(product => product.normalizedSku));
+  const issuedRows = readIssuedSkuRows()
+    .filter(row => !savedSkuSet.has(normalizeSku(row.sku)))
+    .map(row => ({
+      sku: row.sku,
+      buyingCode: "",
+      style: "",
+      category: "",
+      colour: "",
+      size: "",
+      season: "",
+      supplierName: "",
+      repeatType: "",
+      quantity: 0,
+      unitCostEur: 0,
+      unitCostGbp: 0,
+      rrp: 0,
+      exitRetail: 0,
+      imageUrl: "",
+      lastOrderNumber: "",
+      lastOrderedAt: row.issuedAt || "",
+      source: "issued",
+      status: "Issued only",
+      canDelete: true,
+      data: { sku: row.sku, issuedAt: row.issuedAt, ...(row.data || {}) },
+      normalizedSku: normalizeSku(row.sku)
+    }));
+  return [...productRows, ...issuedRows]
+    .sort((a, b) => compareIssuedSku(b.sku, a.sku) || String(a.sku).localeCompare(String(b.sku)));
+}
+
+function skuHasAttachedData(dbData, sku) {
+  const normalized = normalizeSku(sku);
+  if (!normalized) return false;
+  if ((dbData.products || []).some(product => normalizeSku(product.sku) === normalized)) return true;
+  return (dbData.orders || []).some(order => (order.lines || []).some(line => normalizeSku(line.sku) === normalized));
 }
 
 function upsertByKey(items, key, value, patch) {
@@ -1532,6 +1630,53 @@ async function handleApi(req, res) {
     return true;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/order-form/local-skus") {
+    const db = readOrderDb();
+    const lastIssuedSku = getLastIssuedSku(db);
+    const products = savedLocalSkuRows(db);
+    sendJson(res, 200, {
+      products,
+      count: products.length,
+      lastIssuedSku,
+      generatedAt: new Date().toISOString()
+    });
+    return true;
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/order-form/local-skus") {
+    const sku = normalizeSku(url.searchParams.get("sku"));
+    if (!sku) {
+      sendJson(res, 400, { error: "Missing SKU" });
+      return true;
+    }
+    const dbData = readOrderDb();
+    if (skuHasAttachedData(dbData, sku)) {
+      sendJson(res, 409, { error: "This SKU has saved product or order data attached, so it cannot be deleted." });
+      return true;
+    }
+    const db = openOrderSqliteDb();
+    const deleted = db.prepare("DELETE FROM issued_skus WHERE sku = ?").run(sku).changes;
+    const parsed = parseIssuedSku(sku);
+    if (parsed) {
+      const candidates = [];
+      for (const row of readIssuedSkuRows()) candidates.push(row.sku);
+      const highest = candidates
+        .filter(candidate => parseIssuedSku(candidate)?.prefix === parsed.prefix)
+        .reduce((current, candidate) => compareIssuedSku(candidate, current) > 0 ? normalizeSku(candidate) : current, "");
+      if (highest) {
+        db.prepare(`
+          INSERT INTO app_settings (key, value, updated_at)
+          VALUES ('lastIssuedSku', ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+        `).run(highest);
+      } else {
+        db.prepare("DELETE FROM app_settings WHERE key = 'lastIssuedSku'").run();
+      }
+    }
+    sendJson(res, 200, { ok: true, deleted: Boolean(deleted), sku });
+    return true;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/order-form/next-sku") {
     try {
       const body = await readJsonBody(req);
@@ -1540,7 +1685,7 @@ async function handleApi(req, res) {
       const requestedSku = normalizeSku(body.currentSku);
       const requested = parseIssuedSku(requestedSku);
       const stored = parseIssuedSku(storedSku);
-      const baseline = requested && (!stored || requested.prefix !== stored.prefix || requested.number > stored.number) ? requestedSku : storedSku;
+      const baseline = requested && (!stored || (requested.prefix === stored.prefix && requested.number > stored.number)) ? requestedSku : storedSku;
       const nextSku = incrementIssuedSku(baseline);
       setLastIssuedSku(nextSku);
       sendJson(res, 200, { sku: nextSku, previousSku: baseline || "" });

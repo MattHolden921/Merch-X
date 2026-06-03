@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local SKU Register</title>
+<link rel="stylesheet" href="design-system.css">
+<style>
+.wrap{max-width:1500px}
+.toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 180px 160px;gap:10px;align-items:end}
+.metric-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.table-wrap{overflow:auto}
+.sku-table{width:100%;border-collapse:collapse;font-size:12px;min-width:1180px}
+.sku-table th{position:sticky;top:0;z-index:1;background:var(--bg2);font-size:10px;color:var(--soft);text-align:left;font-weight:600;padding:8px;border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+.sku-table td{padding:8px;border-bottom:.5px solid var(--line);vertical-align:top;color:var(--muted)}
+.sku-table td.num{text-align:right;white-space:nowrap}
+.sku{font-family:var(--ds-font-mono);font-weight:700;color:var(--ink)}
+.thumb{width:46px;aspect-ratio:3/4;border:1px solid var(--line);border-radius:var(--r);background:var(--bg2);display:flex;align-items:center;justify-content:center;overflow:hidden;color:var(--soft);font-size:10px}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.style-name{font-weight:650;color:var(--ink);min-width:180px}
+.muted{color:var(--soft)}
+details summary{cursor:pointer;color:var(--ds-action);font-weight:650}
+pre{margin-top:8px;max-width:460px;max-height:220px;overflow:auto;background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);padding:8px;font-size:11px;line-height:1.45;color:var(--ink)}
+.empty-state{padding:28px;color:var(--soft);text-align:center}
+.btn.danger{color:var(--bad);border-color:rgba(185,28,28,.45)}
+.btn.danger:hover{background:rgba(185,28,28,.08)}
+@media(max-width:760px){.toolbar,.metric-strip{grid-template-columns:1fr}.head{display:block}.actions{margin-top:12px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>Local SKU register</h1>
+      <p class="sub">Saved product data for SKUs that are held locally rather than marked as Shopify-sourced. Use this to review new product SKUs before they are created in Shopify.</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="order-form.html">Order form</a>
+      <button class="btn primary" type="button" onclick="loadSkus()">Refresh</button>
+    </div>
+  </section>
+
+  <section class="metric-strip" aria-label="SKU register summary">
+    <div class="metric"><label>Local SKUs</label><span id="count">0</span><small id="count-note">Loading</small></div>
+    <div class="metric"><label>Last issued SKU</label><span id="last-sku">-</span><small>From the order form database</small></div>
+    <div class="metric"><label>Images attached</label><span id="image-count">0</span><small>Rows with saved image data</small></div>
+  </section>
+
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label>Search</label><input id="search" placeholder="SKU, style, buying code, supplier, category"></div>
+      <div class="field"><label>Supplier</label><select class="select" id="supplier-filter"><option value="">All suppliers</option></select></div>
+      <div class="field"><label>Image</label><select class="select" id="image-filter"><option value="">All rows</option><option value="with">With image</option><option value="without">No image</option></select></div>
+    </div>
+  </section>
+
+  <section class="panel table-wrap">
+    <table class="sku-table">
+      <thead>
+        <tr>
+          <th>Image</th>
+          <th>SKU</th>
+          <th>Buying code</th>
+          <th>Style</th>
+          <th>Supplier</th>
+          <th>Category</th>
+          <th>Colour</th>
+          <th>Size</th>
+          <th>Season</th>
+          <th>Qty</th>
+          <th>Cost EUR</th>
+          <th>Cost GBP</th>
+          <th>RRP</th>
+          <th>Last order</th>
+          <th>Status</th>
+          <th>Data</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="sku-body"><tr><td colspan="17" class="empty-state">Loading local SKUs.</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"});
+const eur=new Intl.NumberFormat("en-GB",{style:"currency",currency:"EUR"});
+const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
+let products=[];
+
+const el=id=>document.getElementById(id);
+const escapeHtml=value=>String(value||"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+
+async function apiFetch(path,options){
+  let lastError;
+  for(const origin of API_ORIGINS){
+    try{
+      const response=await fetch(`${origin}${path}`,options);
+      if(response.ok||response.status>=400)return response;
+      lastError=new Error(`API returned ${response.status}`);
+    }catch(error){
+      lastError=error;
+    }
+  }
+  throw lastError||new Error("API unavailable");
+}
+
+function formatDate(value){
+  if(!value)return "";
+  const date=new Date(value);
+  return Number.isNaN(date.getTime())?value:date.toLocaleDateString("en-GB");
+}
+
+function productText(product){
+  return [product.sku,product.buyingCode,product.style,product.supplierName,product.category,product.colour,product.size,product.season,product.lastOrderNumber].join(" ").toLowerCase();
+}
+
+function filteredProducts(){
+  const search=el("search").value.trim().toLowerCase();
+  const supplier=el("supplier-filter").value;
+  const image=el("image-filter").value;
+  return products.filter(product=>{
+    if(search&&!productText(product).includes(search))return false;
+    if(supplier&&product.supplierName!==supplier)return false;
+    if(image==="with"&&!product.imageUrl)return false;
+    if(image==="without"&&product.imageUrl)return false;
+    return true;
+  });
+}
+
+function renderFilters(){
+  const suppliers=[...new Set(products.map(product=>product.supplierName).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  el("supplier-filter").innerHTML=`<option value="">All suppliers</option>${suppliers.map(supplier=>`<option>${escapeHtml(supplier)}</option>`).join("")}`;
+}
+
+function renderTable(){
+  const rows=filteredProducts();
+  el("count").textContent=rows.length.toLocaleString("en-GB");
+  el("count-note").textContent=`${products.length.toLocaleString("en-GB")} saved locally`;
+  el("image-count").textContent=products.filter(product=>product.imageUrl).length.toLocaleString("en-GB");
+  el("sku-body").innerHTML=rows.length?rows.map(product=>`
+    <tr>
+      <td><div class="thumb">${product.imageUrl?`<img src="${escapeHtml(product.imageUrl)}" alt="">`:"No image"}</div></td>
+      <td><span class="sku">${escapeHtml(product.sku)}</span></td>
+      <td>${escapeHtml(product.buyingCode)}</td>
+      <td><div class="style-name">${escapeHtml(product.style||"Issued only")}</div><div class="muted">${escapeHtml(product.repeatType)}</div></td>
+      <td>${escapeHtml(product.supplierName)}</td>
+      <td>${escapeHtml(product.category)}</td>
+      <td>${escapeHtml(product.colour)}</td>
+      <td>${escapeHtml(product.size)}</td>
+      <td>${escapeHtml(product.season)}</td>
+      <td class="num">${Number(product.quantity||0).toLocaleString("en-GB")}</td>
+      <td class="num">${product.unitCostEur?eur.format(product.unitCostEur):""}</td>
+      <td class="num">${product.unitCostGbp?money.format(product.unitCostGbp):""}</td>
+      <td class="num">${product.rrp?money.format(product.rrp):""}</td>
+      <td>${escapeHtml(product.lastOrderNumber)}<div class="muted">${escapeHtml(formatDate(product.lastOrderedAt))}</div></td>
+      <td>${escapeHtml(product.status||"Saved product")}</td>
+      <td><details><summary>View</summary><pre>${escapeHtml(JSON.stringify(product.data,null,2))}</pre></details></td>
+      <td>${product.canDelete?`<button class="btn danger" type="button" onclick="deleteSku('${escapeHtml(product.sku)}')">Delete</button>`:`<span class="muted">Locked</span>`}</td>
+    </tr>`).join(""):`<tr><td colspan="17" class="empty-state">No local SKUs match the current filters.</td></tr>`;
+}
+
+async function loadSkus(){
+  el("sku-body").innerHTML='<tr><td colspan="17" class="empty-state">Loading local SKUs.</td></tr>';
+  const response=await apiFetch("/api/order-form/local-skus");
+  const data=await response.json();
+  if(!response.ok){
+    el("sku-body").innerHTML=`<tr><td colspan="17" class="empty-state">${escapeHtml(data.error||"Could not load local SKUs.")}</td></tr>`;
+    return;
+  }
+  products=data.products||[];
+  el("last-sku").textContent=data.lastIssuedSku||"-";
+  renderFilters();
+  renderTable();
+}
+
+async function deleteSku(sku){
+  const product=products.find(item=>item.sku===sku);
+  if(!product?.canDelete)return;
+  if(!confirm(`Delete unused SKU ${sku}? This is only allowed when no product data is attached.`))return;
+  const response=await apiFetch(`/api/order-form/local-skus?sku=${encodeURIComponent(sku)}`,{method:"DELETE"});
+  const result=await response.json();
+  if(!response.ok){
+    alert(result.error||"Could not delete SKU.");
+    return;
+  }
+  await loadSkus();
+}
+
+["search","supplier-filter","image-filter"].forEach(id=>el(id).addEventListener("input",renderTable));
+loadSkus().catch(error=>{
+  el("sku-body").innerHTML=`<tr><td colspan="17" class="empty-state">${escapeHtml(error.message)}</td></tr>`;
+});
+</script>
+</body>
+</html>
