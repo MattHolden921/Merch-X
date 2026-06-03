@@ -308,6 +308,10 @@ function normalizeCollection(collection) {
   };
 }
 
+function collectionNumericId(collectionId) {
+  return String(collectionId || "").replace(/^gid:\/\/shopify\/Collection\//, "");
+}
+
 function emptyGaMetric() {
   return { views: 0, adds: 0, purchases: 0, revenue: 0 };
 }
@@ -594,7 +598,10 @@ async function fetchCollectionPlanner(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const days = Math.max(1, Math.min(90, Number(url.searchParams.get("days") || 30)));
   const collectionId = url.searchParams.get("collectionId") || "";
-  const collectionLimit = Math.max(10, Math.min(100, Number(url.searchParams.get("collectionLimit") || 60)));
+  const collectionLimitParam = url.searchParams.get("collectionLimit") || "all";
+  const fetchAllCollections = collectionLimitParam === "all";
+  const collectionLimit = fetchAllCollections ? Infinity : Math.max(10, Math.min(250, Number(collectionLimitParam || 60)));
+  const minCollectionProducts = Math.max(0, Math.min(10_000, Number(url.searchParams.get("minCollectionProducts") || 0)));
   const productLimitParam = url.searchParams.get("productLimit") || "120";
   const fetchAllProducts = productLimitParam === "all";
   const productLimit = fetchAllProducts ? Infinity : Math.max(12, Math.min(250, Number(productLimitParam || 120)));
@@ -608,8 +615,8 @@ async function fetchCollectionPlanner(req, res) {
   }
 
   const collectionsQuery = `
-    query PlannerCollections($limit: Int!) {
-      collections(first: $limit, sortKey: UPDATED_AT, reverse: true) {
+    query PlannerCollections($limit: Int!, $cursor: String) {
+      collections(first: $limit, after: $cursor, sortKey: UPDATED_AT, reverse: true) {
         nodes {
           id
           title
@@ -619,6 +626,7 @@ async function fetchCollectionPlanner(req, res) {
           productsCount { count }
           image { url altText }
         }
+        pageInfo { hasNextPage endCursor }
       }
     }
   `;
@@ -665,8 +673,19 @@ async function fetchCollectionPlanner(req, res) {
   `;
 
   try {
-    const collectionData = await shopifyGraphql(collectionsQuery, { limit: collectionLimit });
-    const collections = collectionData.collections.nodes.map(normalizeCollection);
+    const allCollections = [];
+    let collectionCursor = null;
+    let hasMoreCollections = true;
+    while (hasMoreCollections && allCollections.length < collectionLimit) {
+      const remaining = fetchAllCollections ? 250 : Math.min(250, collectionLimit - allCollections.length);
+      const collectionData = await shopifyGraphql(collectionsQuery, { limit: remaining, cursor: collectionCursor });
+      allCollections.push(...collectionData.collections.nodes.map(normalizeCollection));
+      hasMoreCollections = Boolean(collectionData.collections.pageInfo.hasNextPage);
+      collectionCursor = collectionData.collections.pageInfo.endCursor;
+    }
+    const totalCollections = allCollections.length;
+    const filteredCollections = allCollections.filter((collection) => collection.productsCount >= minCollectionProducts);
+    let collections = mergeCollectionReorderAudit(filteredCollections);
     let selectedCollection = null;
     let products = [];
     let gaAvailable = false;
@@ -684,7 +703,7 @@ async function fetchCollectionPlanner(req, res) {
           return;
         }
 
-        selectedCollection = normalizeCollection(productData.collection);
+        selectedCollection = mergeCollectionReorderAudit([normalizeCollection(productData.collection)])[0];
         const positionOffset = products.length;
         products.push(...productData.collection.products.nodes.map((product, index) => ({
           ...normalizeProduct(product, orderMetrics),
@@ -712,12 +731,337 @@ async function fetchCollectionPlanner(req, res) {
       gaAvailable,
       gaMessage,
       collections,
+      totalCollections,
+      minCollectionProducts,
       selectedCollection,
       products
     });
   } catch (error) {
     sendJson(res, 502, { configured: true, message: error.message });
   }
+}
+
+function collectionReorderAuditMap() {
+  const db = openOrderSqliteDb();
+  const rows = db.prepare(`
+    SELECT collection_id, collection_gid, collection_title, collection_handle, applied_at, total_products, total_moves, strategy, scope
+    FROM collection_reorder_audit
+    ORDER BY applied_at DESC
+  `).all();
+  const latest = new Map();
+  for (const row of rows) {
+    if (latest.has(row.collection_gid)) continue;
+    latest.set(row.collection_gid, {
+      collectionId: row.collection_gid,
+      legacyCollectionId: row.collection_id,
+      collectionTitle: row.collection_title,
+      collectionHandle: row.collection_handle,
+      appliedAt: row.applied_at,
+      totalProducts: row.total_products,
+      totalMoves: row.total_moves,
+      strategy: row.strategy,
+      scope: row.scope
+    });
+  }
+  return latest;
+}
+
+function mergeCollectionReorderAudit(collections) {
+  const audit = collectionReorderAuditMap();
+  return collections.map((collection) => ({
+    ...collection,
+    lastReorder: audit.get(collection.id) || null
+  }));
+}
+
+function recordCollectionReorder(job) {
+  const db = openOrderSqliteDb();
+  const appliedAt = job.finishedAt || new Date().toISOString();
+  db.prepare(`
+    INSERT INTO collection_reorder_audit (
+      id,
+      collection_id,
+      collection_gid,
+      collection_title,
+      collection_handle,
+      applied_at,
+      total_products,
+      total_moves,
+      strategy,
+      scope,
+      data
+    ) VALUES (
+      @id,
+      @collectionId,
+      @collectionGid,
+      @collectionTitle,
+      @collectionHandle,
+      @appliedAt,
+      @totalProducts,
+      @totalMoves,
+      @strategy,
+      @scope,
+      @data
+    )
+  `).run({
+    id: job.id,
+    collectionId: collectionNumericId(job.collectionId),
+    collectionGid: job.collectionId,
+    collectionTitle: job.collectionTitle || "",
+    collectionHandle: job.collectionHandle || "",
+    appliedAt,
+    totalProducts: job.totalProducts || 0,
+    totalMoves: job.totalMoves || 0,
+    strategy: job.strategy || "",
+    scope: job.scope || "",
+    data: JSON.stringify(publicCollectionReorderJob(job))
+  });
+}
+
+const collectionReorderJobs = new Map();
+
+function publicCollectionReorderJob(job) {
+  if (!job) return null;
+  return {
+    id: job.id,
+    status: job.status,
+    collectionId: job.collectionId,
+    collectionTitle: job.collectionTitle,
+    collectionHandle: job.collectionHandle,
+    strategy: job.strategy,
+    scope: job.scope,
+    totalProducts: job.totalProducts,
+    totalMoves: job.totalMoves,
+    processedMoves: job.processedMoves,
+    batchesCompleted: job.batchesCompleted,
+    batchesSubmitted: job.batchesSubmitted,
+    shopifyJobs: job.shopifyJobs,
+    message: job.message,
+    error: job.error,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt
+  };
+}
+
+async function fetchCollectionApplyState(collectionId) {
+  const query = `
+    query CollectionApplyState($id: ID!, $limit: Int!, $cursor: String) {
+      collection(id: $id) {
+        id
+        title
+        handle
+        sortOrder
+        productsCount { count }
+        products(first: $limit, after: $cursor) {
+          nodes { id }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  `;
+  let collection = null;
+  const productIds = [];
+  let cursor = null;
+  let hasNextPage = true;
+  while (hasNextPage) {
+    const data = await shopifyGraphql(query, { id: collectionId, limit: 250, cursor });
+    if (!data.collection) return null;
+    collection = data.collection;
+    productIds.push(...data.collection.products.nodes.map((product) => product.id));
+    hasNextPage = Boolean(data.collection.products.pageInfo.hasNextPage);
+    cursor = data.collection.products.pageInfo.endCursor;
+  }
+  return { collection: normalizeCollection(collection), productIds };
+}
+
+function uniqueIds(ids) {
+  const seen = new Set();
+  return (ids || []).filter((id) => {
+    const value = String(id || "").trim();
+    if (!value || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
+function sameIdSet(left, right) {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((id) => rightSet.has(id));
+}
+
+function nextCollectionMoveBatch(currentOrder, targetOrder, limit = 250) {
+  const moves = [];
+  for (let index = 0; index < targetOrder.length && moves.length < limit; index += 1) {
+    const wantedId = targetOrder[index];
+    if (currentOrder[index] === wantedId) continue;
+    const currentIndex = currentOrder.indexOf(wantedId);
+    if (currentIndex === -1) continue;
+    currentOrder.splice(currentIndex, 1);
+    currentOrder.splice(index, 0, wantedId);
+    moves.push({ id: wantedId, newPosition: String(index) });
+  }
+  return moves;
+}
+
+async function submitCollectionReorderBatch(collectionId, moves) {
+  const mutation = `
+    mutation CollectionReorderProducts($id: ID!, $moves: [MoveInput!]!) {
+      collectionReorderProducts(id: $id, moves: $moves) {
+        job { id done }
+        userErrors { field message }
+      }
+    }
+  `;
+  const data = await shopifyGraphql(mutation, { id: collectionId, moves });
+  const payload = data.collectionReorderProducts;
+  const errors = payload.userErrors || [];
+  if (errors.length) {
+    throw new Error(errors.map((error) => error.message).join("; "));
+  }
+  return payload.job || null;
+}
+
+async function pollShopifyJob(jobId) {
+  if (!jobId) return;
+  const query = `
+    query ShopifyJob($id: ID!) {
+      job(id: $id) { id done }
+    }
+  `;
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    const data = await shopifyGraphql(query, { id: jobId });
+    if (data.job?.done) return;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  throw new Error(`Shopify reorder job did not finish in time: ${jobId}`);
+}
+
+async function runCollectionReorderJob(job) {
+  try {
+    job.status = "running";
+    job.message = "Checking the live Shopify collection order...";
+    const applyState = await fetchCollectionApplyState(job.collectionId);
+    if (!applyState) throw new Error("Collection not found in Shopify.");
+    if (applyState.collection.sortOrder !== "MANUAL") {
+      throw new Error("Can't reorder products unless the collection sort order is MANUAL.");
+    }
+
+    const targetProductIds = uniqueIds(job.targetProductIds);
+    if (targetProductIds.length !== job.targetProductIds.length) {
+      throw new Error("Suggested order contains duplicate or blank product IDs.");
+    }
+    if (!sameIdSet(applyState.productIds, targetProductIds)) {
+      throw new Error("Suggested order does not match the live collection products. Sync the full collection again before applying.");
+    }
+
+    const currentOrder = [...applyState.productIds];
+    const targetOrder = [...targetProductIds];
+    job.totalProducts = targetOrder.length;
+    job.totalMoves = 0;
+    while (true) {
+      const previewOrder = [...currentOrder];
+      const moves = nextCollectionMoveBatch(previewOrder, targetOrder, 250);
+      if (!moves.length) break;
+      job.totalMoves += moves.length;
+      currentOrder.splice(0, currentOrder.length, ...previewOrder);
+    }
+
+    currentOrder.splice(0, currentOrder.length, ...applyState.productIds);
+    if (!job.totalMoves) {
+      job.status = "complete";
+      job.message = "Shopify collection already matches the suggested order.";
+      job.finishedAt = new Date().toISOString();
+      return;
+    }
+
+    while (true) {
+      const moves = nextCollectionMoveBatch(currentOrder, targetOrder, 250);
+      if (!moves.length) break;
+      job.message = `Submitting Shopify reorder batch ${job.batchesSubmitted + 1}...`;
+      const shopifyJob = await submitCollectionReorderBatch(job.collectionId, moves);
+      job.batchesSubmitted += 1;
+      if (shopifyJob?.id) {
+        job.shopifyJobs.push(shopifyJob.id);
+        job.message = `Waiting for Shopify batch ${job.batchesSubmitted} to finish...`;
+        await pollShopifyJob(shopifyJob.id);
+      }
+      job.processedMoves += moves.length;
+      job.batchesCompleted += 1;
+      job.message = `Applied ${job.processedMoves.toLocaleString("en-GB")} of ${job.totalMoves.toLocaleString("en-GB")} moves.`;
+    }
+
+    job.status = "complete";
+    job.message = `Applied ${job.totalMoves.toLocaleString("en-GB")} product moves to Shopify.`;
+    job.finishedAt = new Date().toISOString();
+    recordCollectionReorder(job);
+  } catch (error) {
+    job.status = "error";
+    job.error = error.message;
+    job.message = error.message;
+    job.finishedAt = new Date().toISOString();
+  }
+}
+
+async function startCollectionReorder(req, res) {
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  if (!shop || !clientId || !clientSecret) {
+    sendJson(res, 200, {
+      configured: false,
+      message: "Set SHOPIFY_SHOP, SHOPIFY_CLIENT_ID, and SHOPIFY_CLIENT_SECRET to apply Shopify collection order."
+    });
+    return;
+  }
+
+  const body = await readJsonBody(req);
+  const collectionId = String(body.collectionId || "").trim();
+  const collectionTitle = String(body.collectionTitle || "").trim();
+  const collectionHandle = String(body.collectionHandle || "").trim();
+  const targetProductIds = uniqueIds(body.targetProductIds);
+  const confirmText = String(body.confirmText || "").trim().toUpperCase();
+
+  if (!collectionId || !targetProductIds.length) {
+    sendJson(res, 400, { message: "Missing collection or suggested product order." });
+    return;
+  }
+  if (confirmText !== "APPLY") {
+    sendJson(res, 400, { message: "Type APPLY to confirm the Shopify reorder." });
+    return;
+  }
+
+  const job = {
+    id: crypto.randomUUID(),
+    status: "queued",
+    collectionId,
+    collectionTitle,
+    collectionHandle,
+    targetProductIds,
+    strategy: String(body.strategy || "").trim(),
+    scope: String(body.scope || "").trim(),
+    totalProducts: targetProductIds.length,
+    totalMoves: 0,
+    processedMoves: 0,
+    batchesCompleted: 0,
+    batchesSubmitted: 0,
+    shopifyJobs: [],
+    message: "Queued Shopify collection reorder.",
+    error: "",
+    startedAt: new Date().toISOString(),
+    finishedAt: ""
+  };
+  collectionReorderJobs.set(job.id, job);
+  runCollectionReorderJob(job);
+  sendJson(res, 202, { configured: true, job: publicCollectionReorderJob(job) });
+}
+
+function getCollectionReorderJob(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const job = collectionReorderJobs.get(url.searchParams.get("id"));
+  if (!job) {
+    sendJson(res, 404, { message: "Reorder job not found. If the server restarted, sync the collection and check Shopify before applying again." });
+    return;
+  }
+  sendJson(res, 200, { job: publicCollectionReorderJob(job) });
 }
 
 function timingSafeEqual(a, b) {
@@ -865,6 +1209,24 @@ function openOrderSqliteDb() {
       data TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS collection_reorder_audit (
+      id TEXT PRIMARY KEY,
+      collection_id TEXT NOT NULL,
+      collection_gid TEXT NOT NULL,
+      collection_title TEXT NOT NULL,
+      collection_handle TEXT,
+      applied_at TEXT NOT NULL,
+      total_products INTEGER DEFAULT 0,
+      total_moves INTEGER DEFAULT 0,
+      strategy TEXT,
+      scope TEXT,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_gid ON collection_reorder_audit(collection_gid);
+    CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_applied ON collection_reorder_audit(applied_at);
   `);
   importOrderJsonIfNeeded(orderSqliteDb);
   return orderSqliteDb;
@@ -1186,6 +1548,18 @@ const server = http.createServer(async (req, res) => {
     fetchCollectionPlanner(req, res).catch((error) => {
       sendJson(res, 500, { message: error.message });
     });
+    return;
+  }
+
+  if (req.method === "POST" && req.url.startsWith("/api/shopify-collection-reorder/start")) {
+    startCollectionReorder(req, res).catch((error) => {
+      sendJson(res, 500, { message: error.message });
+    });
+    return;
+  }
+
+  if (req.method === "GET" && req.url.startsWith("/api/shopify-collection-reorder/status")) {
+    getCollectionReorderJob(req, res);
     return;
   }
 
