@@ -104,7 +104,7 @@ function shopifyConfig() {
   const rawShop = process.env.SHOPIFY_SHOP || process.env.SHOPIFY_STORE_DOMAIN || process.env.SHOPIFY_SHOP_DOMAIN || "";
   const clientId = process.env.SHOPIFY_CLIENT_ID || "";
   const clientSecret = process.env.SHOPIFY_CLIENT_SECRET || "";
-  const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-04";
+  const apiVersion = process.env.SHOPIFY_API_VERSION || "2026-04";
   const shop = rawShop.replace(/^https?:\/\//, "").replace(/\/+$/, "").replace(/\.myshopify\.com$/i, "");
   const domain = `${shop}.myshopify.com`;
   return { shop, domain, clientId, clientSecret, apiVersion };
@@ -236,12 +236,15 @@ async function shopifyGraphql(query, variables) {
   const json = response.json;
   if (!response.ok || json.errors) {
     const detail = json.errors ? JSON.stringify(json.errors) : response.statusText;
-    throw new Error(`Shopify API error: ${detail}`);
+    throw new Error(`Shopify API error (${response.status} ${response.statusText}, ${domain}, ${apiVersion}): ${detail}`);
   }
   return json.data;
 }
 
 function productSeason(product) {
+  const metafieldSeason = product.seasonMetafield?.value || product.metafield?.value || "";
+  if (metafieldSeason) return String(metafieldSeason).trim();
+
   const joined = product.tags.join(" ");
   const match = joined.match(/\b(?:SS|AW)\s?\d{2,4}\b/i);
   return match ? match[0].replace(/\s+/, "").toUpperCase() : "";
@@ -316,7 +319,44 @@ function emptyGaMetric() {
   return { views: 0, adds: 0, purchases: 0, revenue: 0 };
 }
 
-async function fetchGaMetrics(days) {
+function isoDateOnly(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function dateRangeFromDays(days) {
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - Math.max(1, Number(days || 14)));
+  return { startDate: isoDateOnly(start), endDate: isoDateOnly(end) };
+}
+
+function parseDateRange(url, fallbackDays = 14) {
+  const requestedStart = url.searchParams.get("startDate") || "";
+  const requestedEnd = url.searchParams.get("endDate") || "";
+  const validDate = /^\d{4}-\d{2}-\d{2}$/;
+  if (!validDate.test(requestedStart) || !validDate.test(requestedEnd)) {
+    return dateRangeFromDays(fallbackDays);
+  }
+
+  const start = new Date(`${requestedStart}T00:00:00.000Z`);
+  const end = new Date(`${requestedEnd}T00:00:00.000Z`);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) {
+    return dateRangeFromDays(fallbackDays);
+  }
+
+  const maxEnd = new Date(start);
+  maxEnd.setUTCDate(maxEnd.getUTCDate() + 365);
+  if (end > maxEnd) end.setTime(maxEnd.getTime());
+  return { startDate: isoDateOnly(start), endDate: isoDateOnly(end) };
+}
+
+function orderQueryForRange(range) {
+  const endExclusive = new Date(`${range.endDate}T00:00:00.000Z`);
+  endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+  return `created_at:>=${range.startDate}T00:00:00Z created_at:<${endExclusive.toISOString()}`;
+}
+
+async function fetchGaMetrics(range) {
   const { propertyId, oauthRefreshToken, credentials } = gaConfig();
   if (!propertyId || (!oauthRefreshToken && !credentials)) {
     return { available: false, message: "Set GA4_PROPERTY_ID and connect Google OAuth to add Analytics ecommerce metrics.", metrics: [] };
@@ -329,7 +369,7 @@ async function fetchGaMetrics(days) {
       authorization: `Bearer ${await googleAccessToken()}`
     },
     body: JSON.stringify({
-      dateRanges: [{ startDate: `${days}daysAgo`, endDate: "today" }],
+      dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
       dimensions: [{ name: "itemId" }, { name: "itemName" }],
       metrics: [
         { name: "itemsViewed" },
@@ -400,11 +440,11 @@ function mergeGaMetrics(products, gaRows) {
   });
 }
 
-async function fetchOrderMetrics(days) {
+async function fetchOrderMetrics(range) {
   const metrics = new Map();
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   let cursor = null;
   let hasNextPage = true;
+  const orderQuery = orderQueryForRange(range);
   const query = `
     query MerchOrders($cursor: String, $query: String!) {
       orders(first: 100, after: $cursor, query: $query, sortKey: CREATED_AT, reverse: true) {
@@ -422,7 +462,7 @@ async function fetchOrderMetrics(days) {
     }
   `;
   while (hasNextPage) {
-    const data = await shopifyGraphql(query, { cursor, query: `created_at:>=${since}` });
+    const data = await shopifyGraphql(query, { cursor, query: orderQuery });
     const orders = data.orders;
     for (const order of orders.nodes) {
       for (const item of order.lineItems.nodes) {
@@ -531,25 +571,30 @@ async function fetchShopifyMerchandising(req, res) {
   }
   const url = new URL(req.url, `http://${req.headers.host}`);
   const days = Math.max(1, Math.min(90, Number(url.searchParams.get("days") || 14)));
-  const limit = Math.max(12, Math.min(250, Number(url.searchParams.get("limit") || 120)));
+  const dateRange = parseDateRange(url, days);
+  const limitParam = url.searchParams.get("limit") || "all";
+  const fetchAllProducts = limitParam === "all";
+  const productLimit = fetchAllProducts ? Infinity : Math.max(12, Math.min(250, Number(limitParam || 120)));
   let orderMetrics = new Map();
   let ordersAvailable = true;
   try {
-    orderMetrics = await fetchOrderMetrics(days);
+    orderMetrics = await fetchOrderMetrics(dateRange);
   } catch {
     ordersAvailable = false;
   }
   const query = `
-    query MerchProducts($limit: Int!) {
-      products(first: $limit, sortKey: UPDATED_AT, reverse: true) {
+    query MerchProducts($limit: Int!, $cursor: String, $productQuery: String!) {
+      products(first: $limit, after: $cursor, query: $productQuery, sortKey: UPDATED_AT, reverse: true) {
         nodes {
           id
           legacyResourceId
+          status
           title
           handle
           vendor
           productType
           tags
+          seasonMetafield: metafield(namespace: "custom", key: "season") { value }
           featuredImage { url altText }
           images(first: 1) { nodes { url altText } }
           variants(first: 100) {
@@ -563,23 +608,42 @@ async function fetchShopifyMerchandising(req, res) {
             }
           }
         }
+        pageInfo { hasNextPage endCursor }
       }
     }
   `;
   try {
-    const data = await shopifyGraphql(query, { limit });
+    const productQuery = "status:active,draft";
+    const countData = await shopifyGraphql(`
+      query MerchProductCount($productQuery: String!) {
+        productsCount(query: $productQuery, limit: null) { count }
+      }
+    `, { productQuery });
+    const totalProducts = Number(countData.productsCount?.count || 0);
+    const rawProducts = [];
+    let cursor = null;
+    let hasNextPage = true;
+    while (hasNextPage && rawProducts.length < productLimit) {
+      const remaining = fetchAllProducts ? 250 : Math.min(250, productLimit - rawProducts.length);
+      const data = await shopifyGraphql(query, { limit: remaining, cursor, productQuery });
+      rawProducts.push(...data.products.nodes);
+      hasNextPage = Boolean(data.products.pageInfo.hasNextPage);
+      cursor = data.products.pageInfo.endCursor;
+    }
     let gaAvailable = false;
     let gaMessage = "";
-    let products = data.products.nodes.map((product) => normalizeProduct(product, orderMetrics));
+    let products = rawProducts
+      .filter((product) => product.status === "ACTIVE" || product.status === "DRAFT")
+      .map((product) => normalizeProduct(product, orderMetrics));
     try {
-      const ga = await fetchGaMetrics(days);
+      const ga = await fetchGaMetrics(dateRange);
       gaAvailable = ga.available;
       gaMessage = ga.message;
       products = mergeGaMetrics(products, ga.metrics);
     } catch (error) {
       gaMessage = error.message;
     }
-    sendJson(res, 200, { configured: true, syncedAt: new Date().toISOString(), days, ordersAvailable, gaAvailable, gaMessage, products });
+    sendJson(res, 200, { configured: true, syncedAt: new Date().toISOString(), days, dateRange, ordersAvailable, gaAvailable, gaMessage, totalProducts, products });
   } catch (error) {
     sendJson(res, 502, { configured: true, message: error.message });
   }
@@ -597,6 +661,7 @@ async function fetchCollectionPlanner(req, res) {
 
   const url = new URL(req.url, `http://${req.headers.host}`);
   const days = Math.max(1, Math.min(90, Number(url.searchParams.get("days") || 30)));
+  const dateRange = dateRangeFromDays(days);
   const collectionId = url.searchParams.get("collectionId") || "";
   const collectionLimitParam = url.searchParams.get("collectionLimit") || "all";
   const fetchAllCollections = collectionLimitParam === "all";
@@ -609,7 +674,7 @@ async function fetchCollectionPlanner(req, res) {
   let ordersAvailable = true;
 
   try {
-    orderMetrics = await fetchOrderMetrics(days);
+    orderMetrics = await fetchOrderMetrics(dateRange);
   } catch {
     ordersAvailable = false;
   }
@@ -650,6 +715,7 @@ async function fetchCollectionPlanner(req, res) {
             vendor
             productType
             tags
+            seasonMetafield: metafield(namespace: "custom", key: "season") { value }
             createdAt
             publishedAt
             updatedAt
@@ -714,7 +780,7 @@ async function fetchCollectionPlanner(req, res) {
       }
 
       try {
-        const ga = await fetchGaMetrics(days);
+        const ga = await fetchGaMetrics(dateRange);
         gaAvailable = ga.available;
         gaMessage = ga.message;
         products = mergeGaMetrics(products, ga.metrics);
