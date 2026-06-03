@@ -1176,7 +1176,7 @@ function readJsonBody(req) {
     let body = "";
     req.on("data", chunk => {
       body += chunk;
-      if (body.length > 2_000_000) {
+      if (body.length > 6_000_000) {
         reject(new Error("Request body too large"));
         req.destroy();
       }
@@ -1405,6 +1405,55 @@ function nextOrderNumber(db) {
   return `${prefix}${String(max + 1).padStart(4, "0")}`;
 }
 
+function parseIssuedSku(value) {
+  const match = String(value || "").trim().toUpperCase().match(/^(.*?)(\d+)$/);
+  if (!match) return null;
+  return { prefix: match[1], number: Number(match[2]), width: match[2].length, sku: `${match[1]}${match[2]}` };
+}
+
+function incrementIssuedSku(value) {
+  const parsed = parseIssuedSku(value) || { prefix: "AMG-", number: 0, width: 5 };
+  return `${parsed.prefix}${String(parsed.number + 1).padStart(parsed.width, "0")}`;
+}
+
+function compareIssuedSku(a, b) {
+  const parsedA = parseIssuedSku(a);
+  const parsedB = parseIssuedSku(b);
+  if (!parsedA) return parsedB ? -1 : 0;
+  if (!parsedB) return 1;
+  if (parsedA.prefix === parsedB.prefix) return parsedA.number - parsedB.number;
+  return parsedA.sku.localeCompare(parsedB.sku);
+}
+
+function highestIssuedSku(dbData, storedSku = "") {
+  const stored = parseIssuedSku(storedSku);
+  const prefix = stored?.prefix || "AMG-";
+  const candidates = [storedSku];
+  for (const product of dbData.products || []) candidates.push(product.sku);
+  for (const order of dbData.orders || []) {
+    for (const line of order.lines || []) candidates.push(line.sku);
+  }
+  return candidates
+    .filter((sku) => parseIssuedSku(sku)?.prefix === prefix)
+    .reduce((highest, sku) => compareIssuedSku(sku, highest) > 0 ? normalizeSku(sku) : highest, stored ? normalizeSku(storedSku) : "");
+}
+
+function getLastIssuedSku(dbData) {
+  const db = openOrderSqliteDb();
+  const storedSku = db.prepare("SELECT value FROM app_settings WHERE key = ?").get("lastIssuedSku")?.value || "";
+  return highestIssuedSku(dbData, storedSku);
+}
+
+function setLastIssuedSku(sku) {
+  const normalized = normalizeSku(sku);
+  if (!parseIssuedSku(normalized)) return;
+  openOrderSqliteDb().prepare(`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES ('lastIssuedSku', ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+  `).run(normalized);
+}
+
 function normalizeSku(sku) {
   return String(sku || "").trim().toUpperCase();
 }
@@ -1472,13 +1521,32 @@ async function handleApi(req, res) {
     const db = readOrderDb();
     sendJson(res, 200, {
       suppliers: db.suppliers,
-      products: db.products,
+      products: [],
       orders: db.orders.slice(-20).reverse(),
       company: db.company,
       delivery: db.delivery,
       nextOrderNumber: nextOrderNumber(db),
+      lastIssuedSku: getLastIssuedSku(db),
       shopifyConfigured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret)
     });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/order-form/next-sku") {
+    try {
+      const body = await readJsonBody(req);
+      const dbData = readOrderDb();
+      const storedSku = getLastIssuedSku(dbData);
+      const requestedSku = normalizeSku(body.currentSku);
+      const requested = parseIssuedSku(requestedSku);
+      const stored = parseIssuedSku(storedSku);
+      const baseline = requested && (!stored || requested.prefix !== stored.prefix || requested.number > stored.number) ? requestedSku : storedSku;
+      const nextSku = incrementIssuedSku(baseline);
+      setLastIssuedSku(nextSku);
+      sendJson(res, 200, { sku: nextSku, previousSku: baseline || "" });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not issue SKU" });
+    }
     return true;
   }
 
@@ -1544,7 +1612,9 @@ async function handleApi(req, res) {
         });
       }
 
+      const lastIssuedSku = highestIssuedSku(db, getLastIssuedSku(db));
       writeOrderDb(db);
+      setLastIssuedSku(lastIssuedSku);
       sendJson(res, 200, { ok: true, order: savedOrder, nextOrderNumber: nextOrderNumber(db) });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not save order" });
