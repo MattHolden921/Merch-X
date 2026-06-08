@@ -1420,7 +1420,7 @@ function parseIssuedSku(value) {
 }
 
 function incrementIssuedSku(value) {
-  const parsed = parseIssuedSku(value) || { prefix: "AMG-", number: 0, width: 5 };
+  const parsed = parseIssuedSku(value) || { prefix: "", number: 0, width: 5 };
   return `${parsed.prefix}${String(parsed.number + 1).padStart(parsed.width, "0")}`;
 }
 
@@ -1441,7 +1441,7 @@ function compareIssuedSku(a, b) {
 
 function highestIssuedSku(dbData, storedSku = "") {
   const stored = parseIssuedSku(storedSku);
-  const prefix = stored?.prefix || "AMG-";
+  const prefix = stored?.prefix || "";
   const candidates = [storedSku];
   for (const row of readIssuedSkuRows()) candidates.push(row.sku);
   return candidates

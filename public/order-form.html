@@ -432,7 +432,7 @@ function field(key,id,label,type,placeholder,value=""){
 }
 
 function skuField(id,value=""){
-  return `<div><div class="col-label">SKU</div><div class="sku-field"><input id="sku-${id}" type="text" placeholder="AMG-00421" value="${escapeHtml(value)}"><button class="btn" type="button" title="Issue next SKU" onclick="issueSku(${id})">+</button></div></div>`;
+  return `<div><div class="col-label">SKU</div><div class="sku-field"><input id="sku-${id}" type="text" placeholder="15101" value="${escapeHtml(value)}"><button class="btn" type="button" title="Issue next SKU" onclick="issueSku(${id})">+</button></div></div>`;
 }
 
 function selectField(key,id,label,items,value=""){
