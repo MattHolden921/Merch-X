@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orders</title>
+<link rel="stylesheet" href="design-system.css">
+<style>
+.wrap{max-width:1560px}
+.head{align-items:center}
+.status-pill{white-space:nowrap}
+.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 190px 190px 160px;gap:10px;align-items:end}
+.toolbar .field{margin-bottom:0}
+.layout{display:grid;grid-template-columns:430px minmax(0,1fr);gap:14px;align-items:start}
+.layout>*{min-width:0}
+.order-list{display:flex;flex-direction:column;gap:8px;max-height:calc(100vh - 284px);overflow:auto;padding-right:2px}
+.order-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;width:100%;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);padding:10px;text-align:left;cursor:pointer}
+.order-row:hover,.order-row.active{border-color:var(--ds-action);background:var(--ds-bg-muted)}
+.order-main{min-width:0}
+.order-main strong{display:block;font-size:13px;margin-bottom:3px}
+.order-main span,.order-side span{display:block;font-size:11px;color:var(--ds-text-muted);line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.order-side{text-align:right;min-width:112px}
+.badge{display:inline-flex;align-items:center;min-height:20px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:2px 7px;font-size:10px;font-weight:650;color:var(--ds-text-muted);background:var(--ds-bg-muted);white-space:nowrap}
+.badge.good{color:var(--ds-good);border-color:rgba(21,128,61,.35)}
+.badge.warn{color:var(--ds-warn);border-color:rgba(180,83,9,.35)}
+.badge.bad{color:var(--ds-bad);border-color:rgba(185,28,28,.35)}
+.badge.info{color:var(--ds-info);border-color:rgba(37,99,235,.35)}
+.detail-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;margin-bottom:14px}
+.detail-title h2{font-size:20px;font-weight:650;margin-bottom:4px}
+.detail-title p{font-size:12px;color:var(--ds-text-muted);line-height:1.55}
+.summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px}
+.summary-item{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:9px 10px;min-width:0}
+.summary-item label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);margin-bottom:4px}
+.summary-item strong{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workflow-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.work-panel{min-width:0;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);padding:12px}
+.work-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.work-head h3{font-size:13px;font-weight:650}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.field{min-width:0;margin-bottom:10px}
+.field:last-child{margin-bottom:0}
+textarea{min-height:70px;resize:vertical}
+.activity{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto}
+.event{border-top:1px solid var(--ds-line);padding-top:8px;font-size:12px;color:var(--ds-text-muted);line-height:1.5}
+.event:first-child{border-top:0;padding-top:0}
+.event strong{display:block;color:var(--ds-text);font-size:12px}
+.invoice-group{border-top:1px solid var(--ds-line);margin-top:12px;padding-top:12px}
+.invoice-create{display:none;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px;margin-bottom:12px}
+.invoice-create.open{display:block}
+.invoice-form{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end}
+.invoice-totals{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.invoice-total{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:8px 9px}
+.invoice-total label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);margin-bottom:3px}
+.invoice-total strong{font-size:14px}
+.invoice-table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
+.invoice-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.invoice-table th{font-size:9px;text-transform:uppercase;letter-spacing:0;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:6px 4px;border-bottom:1px solid var(--ds-line)}
+.invoice-table td{font-size:11px;color:var(--ds-text-muted);padding:6px 4px;border-bottom:1px solid var(--ds-line);vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+.invoice-table tr:last-child td{border-bottom:0}
+.invoice-table a{font-weight:600}
+.invoice-table input[type="checkbox"]{width:16px;min-height:16px}
+.invoice-table th:nth-child(1),.invoice-table td:nth-child(1){width:24%}
+.invoice-table th:nth-child(2),.invoice-table td:nth-child(2){width:30px;text-align:center}
+.invoice-table th:nth-child(3),.invoice-table td:nth-child(3){width:70px}
+.invoice-table th:nth-child(4),.invoice-table td:nth-child(4){width:52px}
+.invoice-table th:nth-child(5),.invoice-table td:nth-child(5){width:68px}
+.invoice-table th:nth-child(6),.invoice-table td:nth-child(6),.invoice-table th:nth-child(7),.invoice-table td:nth-child(7),.invoice-table th:nth-child(8),.invoice-table td:nth-child(8){width:34px;text-align:center}
+.invoice-table .badge{font-size:9px;padding:2px 4px;max-width:60px;overflow:hidden;text-overflow:ellipsis}
+.invoice-row-actions{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
+.mini-btn{border:1px solid var(--ds-line-strong);border-radius:var(--ds-radius);background:var(--ds-bg-surface);color:var(--ds-text-muted);font-size:10px;line-height:1;padding:4px 5px;cursor:pointer}
+.mini-btn:hover{color:var(--ds-text);background:var(--ds-bg-muted)}
+.mini-btn.danger{color:var(--ds-bad)}
+.file-icon{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--ds-line-strong);border-radius:var(--ds-radius);background:var(--ds-bg-muted);text-decoration:none;position:relative}
+.file-icon::before{content:"";width:10px;height:13px;border:1.5px solid currentColor;border-radius:1px;background:transparent}
+.file-icon::after{content:"";position:absolute;top:6px;right:7px;width:4px;height:4px;border-top:1.5px solid currentColor;border-right:1.5px solid currentColor;background:var(--ds-bg-muted)}
+.file-icon.empty{opacity:.35;pointer-events:none}
+.invoice-checks{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--ds-text-muted)}
+.invoice-checks label{display:inline-flex;align-items:center;gap:6px}
+.invoice-checks input{width:auto;min-height:0}
+.file-input{padding:6px 8px;min-height:34px}
+.empty-state{padding:38px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.6}
+.line-table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius)}
+.line-table{width:100%;border-collapse:collapse;min-width:780px}
+.line-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:8px;border-bottom:1px solid var(--ds-line)}
+.line-table td{font-size:12px;color:var(--ds-text-muted);padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:top}
+.line-table tr:last-child td{border-bottom:0}
+.num{text-align:right;white-space:nowrap}
+@media(max-width:1180px){.layout{grid-template-columns:1fr}.order-list{max-height:none}.metric-grid,.summary-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:760px){.toolbar,.workflow-grid,.grid2,.grid3,.invoice-form,.invoice-totals{grid-template-columns:1fr}.metric-grid,.summary-grid{grid-template-columns:1fr}.detail-head{grid-template-columns:1fr}.actions{justify-content:flex-start}.order-row{grid-template-columns:1fr}.order-side{text-align:left;display:flex;gap:6px;flex-wrap:wrap;min-width:0}.order-side span{display:inline-flex;width:auto}.badge{max-width:100%}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>Orders</h1>
+      <p class="sub">Manage purchase order approval, payment, and intake from the saved stock order forms.</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="order-form.html">New order</a>
+      <button type="button" class="btn primary" id="refresh-btn">Refresh</button>
+    </div>
+  </section>
+
+  <section class="metric-grid" id="metrics"></section>
+
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label>Search</label><input id="search" placeholder="Order, supplier, buyer, SKU"></div>
+      <div class="field"><label>Status</label><select class="select" id="status-filter"></select></div>
+      <div class="field"><label>Owner</label><select class="select" id="owner-filter"></select></div>
+      <div class="field"><label>Viewing as</label><select class="select" id="role-filter"><option>Buyer</option><option>Buying Director</option><option>FD / Finance</option><option>Merchandising</option></select></div>
+    </div>
+  </section>
+
+  <section class="layout">
+    <aside class="panel">
+      <div class="section-head">
+        <p class="section-title">Order list</p>
+        <span class="pill" id="order-count">0 orders</span>
+      </div>
+      <div class="order-list" id="order-list"></div>
+    </aside>
+
+    <section id="detail"></section>
+  </section>
+</main>
+
+<script>
+const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"});
+const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
+const approvalStatuses=["Not requested","Pending director approval","Approved","Changes requested","Rejected"];
+const paymentStatuses=["Not due","Awaiting invoice","Ready to pay","Part paid","Paid","Overdue"];
+const intakeStatuses=["Not confirmed","Confirmed","In production","Shipped","Delayed","Part received","Received"];
+const invoiceTypes=["Deposit invoice","Balance invoice","Full invoice","Credit note","Other"];
+const invoiceStatuses=["Awaiting FD","Sent to FD","Paid","Query"];
+const owners=["Buyer","Buying Director","FD / Finance","Merchandising","Supplier"];
+let state={orders:[],selectedId:"",selected:null,events:[],invoices:[],metrics:null,editingInvoiceId:"",invoiceEditorOpen:false};
+
+const el=id=>document.getElementById(id);
+const val=id=>el(id)?.value?.trim()||"";
+
+async function apiFetch(path,options){
+  let lastError;
+  for(const origin of API_ORIGINS){
+    try{
+      const response=await fetch(`${origin}${path}`,options);
+      if(response.ok||response.status>=400)return response;
+      lastError=new Error(`API returned ${response.status}`);
+    }catch(error){
+      lastError=error;
+    }
+  }
+  throw lastError||new Error("API unavailable");
+}
+
+function escapeHtml(value){
+  return String(value||"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+}
+
+function attr(value){
+  return escapeHtml(value).replaceAll("`","&#96;");
+}
+
+function formatDate(value){
+  if(!value)return "";
+  const date=new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime())?value:dateFmt.format(date);
+}
+
+function options(items,value,blank){
+  return `${blank?`<option value="">${escapeHtml(blank)}</option>`:""}${items.map(item=>`<option${item===value?" selected":""}>${escapeHtml(item)}</option>`).join("")}`;
+}
+
+function badgeClass(value){
+  if(["Approved","Paid","Received","Payment complete"].includes(value))return"good";
+  if(["Pending director approval","Ready to pay","Part paid","Shipped","Confirmed","In production","Awaiting approval","Sent to FD"].includes(value))return"info";
+  if(["Changes requested","Awaiting invoice","Delayed","Overdue","Rejected","Query"].includes(value))return value==="Overdue"||value==="Rejected"?"bad":"warn";
+  return "";
+}
+
+function metric(label,value,small){
+  return `<div class="metric"><label>${escapeHtml(label)}</label><span>${escapeHtml(value)}</span><small>${escapeHtml(small)}</small></div>`;
+}
+
+function renderMetrics(){
+  const m=state.metrics||{totalOrders:0,awaitingApproval:0,readyToPay:0,intakeRisk:0};
+  el("metrics").innerHTML=[
+    metric("Orders",m.totalOrders,"saved purchase orders"),
+    metric("Approval",m.awaitingApproval,"awaiting director"),
+    metric("Payment",m.readyToPay,"ready, part-paid, or overdue"),
+    metric("Intake risk",m.intakeRisk,"delayed or past ETA")
+  ].join("");
+}
+
+function recalcMetrics(){
+  const todayIso=new Date().toISOString().slice(0,10);
+  state.metrics={
+    totalOrders:state.orders.length,
+    awaitingApproval:state.orders.filter(order=>order.workflow.approvalStatus==="Pending director approval").length,
+    readyToPay:state.orders.filter(order=>["Ready to pay","Overdue","Part paid"].includes(order.workflow.paymentStatus)).length,
+    intakeRisk:state.orders.filter(order=>order.workflow.intakeStatus==="Delayed"||(order.workflow.intakeEtaDate&&order.workflow.intakeEtaDate<todayIso&&order.workflow.intakeStatus!=="Received")).length
+  };
+}
+
+function filterOrders(){
+  const search=val("search").toLowerCase();
+  const status=val("status-filter");
+  const owner=val("owner-filter");
+  return state.orders.filter(order=>{
+    const haystack=[
+      order.orderNumber,order.supplierName,order.buyerName,order.buyerEmail,order.compositeStatus,
+      ...(order.categories||[]),...(order.order?.lines||[]).flatMap(line=>[line.sku,line.style,line.buyingCode])
+    ].join(" ").toLowerCase();
+    return (!search||haystack.includes(search))&&(!status||order.compositeStatus===status)&&(!owner||order.workflow.nextActionOwner===owner);
+  });
+}
+
+function renderFilters(){
+  const statuses=[...new Set(state.orders.map(order=>order.compositeStatus).filter(Boolean))].sort();
+  const activeOwners=[...new Set(state.orders.map(order=>order.workflow.nextActionOwner).filter(Boolean))].sort();
+  el("status-filter").innerHTML=options(statuses,val("status-filter"),"All statuses");
+  el("owner-filter").innerHTML=options(activeOwners,val("owner-filter"),"All owners");
+}
+
+function renderOrders(){
+  const orders=filterOrders();
+  el("order-count").textContent=`${orders.length} order${orders.length===1?"":"s"}`;
+  el("order-list").innerHTML=orders.length?orders.map(order=>`
+    <button type="button" class="order-row ${order.id===state.selectedId?"active":""}" onclick="selectOrder('${attr(order.id)}')">
+      <span class="order-main">
+        <strong>${escapeHtml(order.orderNumber||"No order number")}</strong>
+        <span>${escapeHtml(order.supplierName||"No supplier")} &middot; ${escapeHtml(order.buyerName||"No buyer")}</span>
+        <span>${escapeHtml(order.workflow.nextActionOwner||"No owner")} &middot; ${escapeHtml(order.workflow.nextAction||"No next action")}</span>
+      </span>
+      <span class="order-side">
+        <span class="badge ${badgeClass(order.compositeStatus)}">${escapeHtml(order.compositeStatus)}</span>
+        <span>${money.format(order.total||0)}</span>
+        <span>${formatDate(order.requiredDate)||"No intake date"}</span>
+      </span>
+    </button>`).join(""):`<p class="empty-state">No orders match the current filters.</p>`;
+}
+
+function summaryItem(label,value){
+  return `<div class="summary-item"><label>${escapeHtml(label)}</label><strong>${escapeHtml(value||"-")}</strong></div>`;
+}
+
+function input(id,label,value,type="text"){
+  return `<div class="field"><label>${escapeHtml(label)}</label><input id="${id}" type="${type}" value="${attr(value||"")}"></div>`;
+}
+
+function select(id,label,items,value){
+  return `<div class="field"><label>${escapeHtml(label)}</label><select class="select" id="${id}">${options(items,value)}</select></div>`;
+}
+
+function textarea(id,label,value){
+  return `<div class="field"><label>${escapeHtml(label)}</label><textarea id="${id}">${escapeHtml(value||"")}</textarea></div>`;
+}
+
+function renderLineTable(order){
+  const lines=order.order?.lines||[];
+  if(!lines.length)return "";
+  return `<section class="work-panel" style="margin-top:14px">
+    <div class="work-head"><h3>Order lines</h3><span class="pill">${lines.length} lines</span></div>
+    <div class="line-table-wrap"><table class="line-table">
+      <thead><tr><th>SKU</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Line cost</th></tr></thead>
+      <tbody>${lines.map(line=>`<tr>
+        <td>${escapeHtml(line.sku||"")}</td>
+        <td>${escapeHtml(line.style||line.description||"")}</td>
+        <td>${escapeHtml(line.category||"")}</td>
+        <td>${escapeHtml(line.colour||line.color||"")}</td>
+        <td class="num">${Number(line.quantity||0).toLocaleString("en-GB")}</td>
+        <td class="num">${money.format(Number(line.unitCostGbp||line.unitCost||0))}</td>
+        <td class="num">${money.format(Number(line.lineCost||0))}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+  </section>`;
+}
+
+function renderEvents(){
+  const events=state.events||[];
+  return events.length?events.map(event=>`
+    <div class="event">
+      <strong>${escapeHtml(event.message)}</strong>
+      <span>${escapeHtml(event.actorName||"Team")} &middot; ${escapeHtml(new Date(event.createdAt).toLocaleString("en-GB"))}</span>
+    </div>`).join(""):`<p class="empty">No activity yet.</p>`;
+}
+
+function renderInvoiceGroup(order){
+  const invoices=state.invoices||[];
+  const totals=invoiceTotals(order,invoices);
+  const editing=invoices.find(invoice=>invoice.id===state.editingInvoiceId)||null;
+  const formInvoice=editing||{};
+  const formOpen=state.invoiceEditorOpen||Boolean(editing);
+  return `<div class="invoice-group">
+    <div class="work-head"><h3>Invoices</h3><div class="actions"><span class="pill">${invoices.length} invoice${invoices.length===1?"":"s"}</span><button type="button" class="btn" onclick="toggleCreateInvoice()">${editing?"Edit invoice":"Create invoice"}</button></div></div>
+    <div class="invoice-totals">
+      <div class="invoice-total"><label>Total due</label><strong>${money.format(totals.due)}</strong></div>
+      <div class="invoice-total"><label>Paid</label><strong>${money.format(totals.paid)}</strong></div>
+      <div class="invoice-total"><label>Outstanding</label><strong>${money.format(totals.outstanding)}</strong></div>
+    </div>
+    <div class="invoice-table-wrap">${renderInvoiceTable(invoices)}</div>
+    <div class="invoice-create ${formOpen?"open":""}" id="invoice-create">
+      <div class="invoice-form">
+        ${select("invoice-type","Invoice type",invoiceTypes,formInvoice.invoiceType||"Deposit invoice")}
+        ${input("invoice-number","Invoice number",formInvoice.invoiceNumber||"","text")}
+        ${input("invoice-amount","Amount",formInvoice.amount||order.total||0,"number")}
+        ${input("invoice-date","Invoice date",formInvoice.invoiceDate||"","date")}
+        ${input("invoice-due","Due date",formInvoice.dueDate||"","date")}
+        <div class="field"><label>Invoice file</label><input class="file-input" id="invoice-file" type="file" accept=".pdf,image/*"></div>
+        <div class="field"><label>Status</label><select class="select" id="invoice-status">${options(invoiceStatuses,formInvoice.status||"Awaiting FD")}</select></div>
+        <div class="field"><label>Checks</label><div class="invoice-checks"><label><input id="invoice-received" type="checkbox" ${formInvoice.id?(formInvoice.isReceived?"checked":""):"checked"}> Received</label><label><input id="invoice-sent" type="checkbox" ${formInvoice.sentToFd?"checked":""}> Sent to FD</label><label><input id="invoice-paid" type="checkbox" ${formInvoice.status==="Paid"?"checked":""}> Paid</label></div></div>
+        ${input("invoice-notes","Invoice notes",formInvoice.notes||"","text")}
+      </div>
+      <div class="actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn primary" onclick="saveInvoice()">${editing?"Save invoice":"Upload invoice"}</button>${editing?`<button type="button" class="btn" onclick="cancelInvoiceEdit()">Cancel</button>`:""}</div>
+    </div>
+  </div>`;
+}
+
+function invoiceTotals(order,invoices){
+  const due=invoices.length?invoices.reduce((total,invoice)=>total+Number(invoice.amount||0),0):Number(order.total||0);
+  const paid=invoices.filter(invoice=>invoice.status==="Paid").reduce((total,invoice)=>total+Number(invoice.amount||0),0);
+  return {due,paid,outstanding:Math.max(0,due-paid)};
+}
+
+function renderInvoiceTable(invoices){
+  if(!invoices.length)return `<p class="empty" style="padding:10px">No invoices uploaded yet.</p>`;
+  return `<table class="invoice-table">
+    <thead><tr><th>Invoice</th><th>Doc</th><th class="num">Amount</th><th>Due</th><th>Status</th><th>Rec</th><th>Sent</th><th>Paid</th></tr></thead>
+    <tbody>${invoices.map(renderInvoiceRow).join("")}</tbody>
+  </table>`;
+}
+
+function renderInvoiceRow(invoice){
+  const fileLink=invoice.fileData?`<a class="file-icon" href="${attr(invoice.fileData)}" download="${attr(invoice.fileName||"invoice")}" target="_blank" title="${attr(invoice.fileName||"Open invoice")}" aria-label="Open invoice"></a>`:`<span class="file-icon empty" title="No file attached" aria-label="No file attached"></span>`;
+  return `<tr>
+    <td><strong title="${attr(invoice.invoiceType||"")}">${escapeHtml(invoice.invoiceNumber||invoice.invoiceType||"Invoice")}</strong><div class="invoice-row-actions"><button type="button" class="mini-btn" onclick="editInvoice('${attr(invoice.id)}')">Edit</button><button type="button" class="mini-btn danger" onclick="deleteInvoice('${attr(invoice.id)}')">Delete</button></div></td>
+    <td>${fileLink}</td>
+    <td class="num">${money.format(Number(invoice.amount||0))} ${escapeHtml(invoice.currency||"")}</td>
+    <td>${formatDate(invoice.dueDate)||"-"}</td>
+    <td><span class="badge ${badgeClass(invoice.status)}">${escapeHtml(invoice.status||"Awaiting FD")}</span></td>
+    <td><input type="checkbox" ${invoice.isReceived?"checked":""} onchange="toggleInvoice('${attr(invoice.id)}','isReceived',this.checked)" aria-label="Received"></td>
+    <td><input type="checkbox" ${invoice.sentToFd?"checked":""} onchange="toggleInvoice('${attr(invoice.id)}','sentToFd',this.checked)" aria-label="Sent to FD"></td>
+    <td><input type="checkbox" ${invoice.status==="Paid"?"checked":""} onchange="toggleInvoice('${attr(invoice.id)}','paid',this.checked)" aria-label="Paid"></td>
+  </tr>`;
+}
+
+function renderDetail(){
+  const order=state.selected;
+  if(!order){
+    el("detail").innerHTML=`<section class="panel"><p class="empty-state">Select an order to manage its workflow.</p></section>`;
+    return;
+  }
+  const w=order.workflow;
+  el("detail").innerHTML=`
+    <section class="panel">
+      <div class="detail-head">
+        <div class="detail-title">
+          <h2>${escapeHtml(order.orderNumber)}</h2>
+          <p>${escapeHtml(order.supplierName||"No supplier")} &middot; ${escapeHtml(order.season||"No season")} &middot; ${escapeHtml(order.lineCount)} lines &middot; ${escapeHtml(order.units)} units</p>
+        </div>
+        <div class="actions">
+          <span class="badge ${badgeClass(order.compositeStatus)}">${escapeHtml(order.compositeStatus)}</span>
+          <a class="btn" href="order-form.html">Open form</a>
+        </div>
+      </div>
+      <div class="summary-grid">
+        ${summaryItem("Value",money.format(order.total||0))}
+        ${summaryItem("Order date",formatDate(order.orderDate))}
+        ${summaryItem("Required date",formatDate(order.requiredDate))}
+        ${summaryItem("Payment terms",order.paymentTerms)}
+        ${summaryItem("Incoterms",order.incoterms)}
+      </div>
+      <div class="grid3">
+        ${input("actor-name","Updated by",localStorage.getItem("ordersActorName")||"")}
+        ${select("next-owner","Next owner",owners,w.nextActionOwner)}
+        ${input("next-action","Next action",w.nextAction)}
+      </div>
+      <div class="actions" style="justify-content:flex-start;margin-top:10px">
+        <button type="button" class="btn primary" onclick="saveNextAction()">Save next action</button>
+      </div>
+    </section>
+
+    <section class="workflow-grid">
+      <div class="work-panel">
+        <div class="work-head"><h3>Buying Director</h3><span class="badge ${badgeClass(w.approvalStatus)}">${escapeHtml(w.approvalStatus)}</span></div>
+        <div class="grid2">
+          ${select("approval-status","Approval status",approvalStatuses,w.approvalStatus)}
+          ${input("approval-by","Decision by",w.approvalBy)}
+          ${input("approval-date","Decision date",w.approvalDecidedAt,"date")}
+        </div>
+        ${textarea("approval-notes","Approval notes",w.approvalNotes)}
+        <button type="button" class="btn primary" onclick="saveApproval()">Save approval</button>
+      </div>
+
+      <div class="work-panel">
+        <div class="work-head"><h3>FD / Finance</h3><span class="badge ${badgeClass(w.paymentStatus)}">${escapeHtml(w.paymentStatus)}</span></div>
+        <div class="grid2">
+          ${select("payment-status","Payment status",paymentStatuses,w.paymentStatus)}
+          ${input("payment-type","Payment type",w.paymentType)}
+          ${input("payment-due","Due date",w.paymentDueDate,"date")}
+          ${input("payment-paid","Paid date",w.paymentPaidDate,"date")}
+        </div>
+        ${textarea("payment-notes","Payment notes",w.paymentNotes)}
+        <button type="button" class="btn primary" onclick="savePayment()">Save payment</button>
+        ${renderInvoiceGroup(order)}
+      </div>
+
+      <div class="work-panel">
+        <div class="work-head"><h3>Merchandising</h3><span class="badge ${badgeClass(w.intakeStatus)}">${escapeHtml(w.intakeStatus)}</span></div>
+        <div class="grid2">
+          ${select("intake-status","Intake status",intakeStatuses,w.intakeStatus)}
+          ${input("intake-eta","ETA warehouse",w.intakeEtaDate,"date")}
+          ${input("intake-confirmed","Supplier confirmed",w.intakeConfirmedDate,"date")}
+          ${input("intake-actual","Actual intake",w.intakeActualDate,"date")}
+          ${input("intake-ref","Shipment reference",w.intakeReference)}
+        </div>
+        ${textarea("intake-notes","Intake notes",w.intakeNotes)}
+        <button type="button" class="btn primary" onclick="saveIntake()">Save intake</button>
+      </div>
+
+      <div class="work-panel">
+        <div class="work-head"><h3>Activity</h3><span class="pill">${state.events.length} events</span></div>
+        ${textarea("activity-note","Add note","")}
+        <div class="actions" style="justify-content:flex-start;margin-bottom:12px"><button type="button" class="btn primary" onclick="addNote()">Add note</button></div>
+        <div class="activity" id="activity">${renderEvents()}</div>
+      </div>
+    </section>
+    ${renderLineTable(order)}`;
+  el("actor-name").addEventListener("input",()=>localStorage.setItem("ordersActorName",val("actor-name")));
+}
+
+function today(){
+  return new Date().toISOString().slice(0,10);
+}
+
+async function saveWorkflow(section,patch){
+  if(!state.selectedId)return;
+  localStorage.setItem("ordersActorName",val("actor-name"));
+  const response=await apiFetch("/api/orders/workflow",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,section,actorName:val("actor-name"),patch})});
+  const result=await response.json();
+  if(!response.ok||!result.ok)throw new Error(result.error||"Could not save workflow");
+  state.selected=result.order;
+  state.events=result.events||[];
+  state.invoices=result.invoices||state.invoices||[];
+  const index=state.orders.findIndex(order=>order.id===result.order.id);
+  if(index!==-1)state.orders[index]=result.order;
+  recalcMetrics();
+  renderFilters();
+  renderMetrics();
+  renderOrders();
+  renderDetail();
+}
+
+async function saveNextAction(){
+  await saveWorkflow("next action",{nextActionOwner:val("next-owner"),nextAction:val("next-action")}).catch(showError);
+}
+
+async function saveApproval(){
+  const status=val("approval-status");
+  await saveWorkflow("approval",{
+    approvalStatus:status,
+    approvalBy:val("approval-by"),
+    approvalDecidedAt:val("approval-date")||(["Approved","Changes requested","Rejected"].includes(status)?today():""),
+    approvalNotes:val("approval-notes")
+  }).catch(showError);
+}
+
+async function savePayment(){
+  const status=val("payment-status");
+  await saveWorkflow("payment",{
+    paymentStatus:status,
+    paymentType:val("payment-type"),
+    paymentDueDate:val("payment-due"),
+    paymentPaidDate:val("payment-paid")||(status==="Paid"?today():""),
+    paymentNotes:val("payment-notes")
+  }).catch(showError);
+}
+
+function toggleCreateInvoice(){
+  if(state.editingInvoiceId){
+    cancelInvoiceEdit();
+    return;
+  }
+  state.invoiceEditorOpen=!state.invoiceEditorOpen;
+  renderDetail();
+}
+
+function editInvoice(id){
+  state.editingInvoiceId=id;
+  state.invoiceEditorOpen=true;
+  renderDetail();
+}
+
+function cancelInvoiceEdit(){
+  state.editingInvoiceId="";
+  state.invoiceEditorOpen=false;
+  renderDetail();
+}
+
+function readFileAsDataUrl(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(reader.result);
+    reader.onerror=()=>reject(new Error("Could not read invoice file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function saveInvoice(){
+  if(!state.selectedId)return;
+  const editing=(state.invoices||[]).find(invoice=>invoice.id===state.editingInvoiceId)||null;
+  const file=el("invoice-file")?.files?.[0]||null;
+  if(file&&file.size>12_000_000){
+    showError(new Error("Choose an invoice under 12 MB."));
+    return;
+  }
+  if(!file&&!editing?.fileName&&!val("invoice-number")){
+    showError(new Error("Upload an invoice file or add an invoice number."));
+    return;
+  }
+  const sentToFd=Boolean(el("invoice-sent")?.checked);
+  const paid=Boolean(el("invoice-paid")?.checked);
+  const fileData=file?await readFileAsDataUrl(file):"";
+  await saveInvoicePayload({
+    id:state.editingInvoiceId||"",
+    invoiceType:val("invoice-type"),
+    invoiceNumber:val("invoice-number"),
+    invoiceDate:val("invoice-date"),
+    dueDate:val("invoice-due"),
+    amount:val("invoice-amount"),
+    currency:state.selected?.currency||"GBP",
+    isReceived:Boolean(el("invoice-received")?.checked)||Boolean(file),
+    sentToFd,
+    status:paid?"Paid":sentToFd?"Sent to FD":val("invoice-status"),
+    fileName:file?.name||"",
+    mimeType:file?.type||"",
+    fileData,
+    notes:val("invoice-notes")
+  }).catch(showError);
+}
+
+async function deleteInvoice(id){
+  const invoice=(state.invoices||[]).find(item=>item.id===id);
+  if(!invoice)return;
+  if(!window.confirm(`Delete invoice ${invoice.invoiceNumber||invoice.invoiceType||"invoice"}?`))return;
+  localStorage.setItem("ordersActorName",val("actor-name"));
+  const response=await apiFetch("/api/orders/invoices/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,actorName:val("actor-name"),invoiceId:id})});
+  const result=await response.json();
+  if(!response.ok||!result.ok){showError(new Error(result.error||"Could not delete invoice"));return;}
+  state.selected=result.order;
+  state.invoices=result.invoices||[];
+  state.events=result.events||[];
+  if(state.editingInvoiceId===id)state.editingInvoiceId="";
+  state.invoiceEditorOpen=false;
+  const index=state.orders.findIndex(order=>order.id===result.order.id);
+  if(index!==-1)state.orders[index]=result.order;
+  recalcMetrics();
+  renderFilters();
+  renderMetrics();
+  renderOrders();
+  renderDetail();
+}
+
+async function toggleInvoice(id,key,checked){
+  const invoice=(state.invoices||[]).find(item=>item.id===id);
+  if(!invoice)return;
+  const patch={...invoice,[key]:checked};
+  if(key==="paid"){
+    patch.status=checked?"Paid":invoice.sentToFd?"Sent to FD":"Awaiting FD";
+    patch.sentToFd=checked?true:invoice.sentToFd;
+    patch.isReceived=checked?true:invoice.isReceived;
+  }
+  if(key==="sentToFd"&&checked&&patch.status==="Awaiting FD")patch.status="Sent to FD";
+  if(key==="sentToFd"&&!checked&&patch.status==="Sent to FD")patch.status="Awaiting FD";
+  await saveInvoicePayload(patch).catch(showError);
+}
+
+async function saveInvoicePayload(invoice){
+  localStorage.setItem("ordersActorName",val("actor-name"));
+  const response=await apiFetch("/api/orders/invoices",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,actorName:val("actor-name"),invoice})});
+  const result=await response.json();
+  if(!response.ok||!result.ok)throw new Error(result.error||"Could not save invoice");
+  state.selected=result.order;
+  state.invoices=result.invoices||[];
+  state.events=result.events||[];
+  state.editingInvoiceId="";
+  state.invoiceEditorOpen=false;
+  const index=state.orders.findIndex(order=>order.id===result.order.id);
+  if(index!==-1)state.orders[index]=result.order;
+  recalcMetrics();
+  renderFilters();
+  renderMetrics();
+  renderOrders();
+  renderDetail();
+}
+
+async function saveIntake(){
+  const status=val("intake-status");
+  await saveWorkflow("intake",{
+    intakeStatus:status,
+    intakeEtaDate:val("intake-eta"),
+    intakeConfirmedDate:val("intake-confirmed"),
+    intakeActualDate:val("intake-actual")||(status==="Received"?today():""),
+    intakeReference:val("intake-ref"),
+    intakeNotes:val("intake-notes")
+  }).catch(showError);
+}
+
+async function addNote(){
+  if(!state.selectedId||!val("activity-note"))return;
+  localStorage.setItem("ordersActorName",val("actor-name"));
+  const response=await apiFetch("/api/orders/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,actorName:val("actor-name"),message:val("activity-note")})});
+  const result=await response.json();
+  if(!response.ok||!result.ok){showError(new Error(result.error||"Could not add note"));return;}
+  state.events=result.events||[];
+  el("activity-note").value="";
+  renderDetail();
+}
+
+function showError(error){
+  el("detail").insertAdjacentHTML("afterbegin",`<div class="status err" style="margin-bottom:10px">${escapeHtml(error.message)}</div>`);
+}
+
+async function selectOrder(id){
+  state.selectedId=id;
+  state.editingInvoiceId="";
+  state.invoiceEditorOpen=false;
+  renderOrders();
+  el("detail").innerHTML=`<section class="panel"><p class="empty-state">Loading order...</p></section>`;
+  const response=await apiFetch(`/api/orders/detail?id=${encodeURIComponent(id)}`);
+  const result=await response.json();
+  if(!response.ok){throw new Error(result.error||"Could not load order");}
+  state.selected=result.order;
+  state.events=result.events||[];
+  state.invoices=result.invoices||[];
+  const index=state.orders.findIndex(order=>order.id===id);
+  if(index!==-1)state.orders[index]=result.order;
+  renderOrders();
+  renderDetail();
+}
+
+async function loadWorkspace(){
+  el("detail").innerHTML=`<section class="panel"><p class="empty-state">Loading orders...</p></section>`;
+  const response=await apiFetch("/api/orders/workspace");
+  const data=await response.json();
+  state.orders=data.orders||[];
+  state.metrics=data.metrics||{};
+  renderMetrics();
+  renderFilters();
+  renderOrders();
+  if(state.orders.length){
+    await selectOrder(state.selectedId&&state.orders.some(order=>order.id===state.selectedId)?state.selectedId:state.orders[0].id);
+  }else{
+    renderDetail();
+  }
+}
+
+["search","status-filter","owner-filter","role-filter"].forEach(id=>el(id).addEventListener("input",renderOrders));
+el("refresh-btn").addEventListener("click",()=>loadWorkspace().catch(showError));
+loadWorkspace().catch(error=>{
+  renderMetrics();
+  el("order-list").innerHTML="";
+  el("detail").innerHTML=`<section class="panel"><p class="empty-state">${escapeHtml(error.message)}</p></section>`;
+});
+</script>
+</body>
+</html>

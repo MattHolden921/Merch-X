@@ -1176,7 +1176,7 @@ function readJsonBody(req) {
     let body = "";
     req.on("data", chunk => {
       body += chunk;
-      if (body.length > 6_000_000) {
+      if (body.length > 18_000_000) {
         reject(new Error("Request body too large"));
         req.destroy();
       }
@@ -1237,6 +1237,7 @@ function openOrderSqliteDb() {
   orderSqliteDb = new Database(sqliteDbPath);
   orderSqliteDb.pragma("journal_mode = WAL");
   orderSqliteDb.pragma("foreign_keys = ON");
+  orderSqliteDb.pragma("busy_timeout = 5000");
   orderSqliteDb.exec(`
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
@@ -1283,6 +1284,62 @@ function openOrderSqliteDb() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS order_workflows (
+      order_id TEXT PRIMARY KEY,
+      approval_status TEXT NOT NULL DEFAULT 'Not requested',
+      approval_by TEXT,
+      approval_decided_at TEXT,
+      approval_notes TEXT,
+      payment_status TEXT NOT NULL DEFAULT 'Not due',
+      payment_type TEXT,
+      payment_amount REAL DEFAULT 0,
+      payment_due_date TEXT,
+      payment_paid_date TEXT,
+      payment_reference TEXT,
+      payment_notes TEXT,
+      intake_status TEXT NOT NULL DEFAULT 'Not confirmed',
+      intake_eta_date TEXT,
+      intake_confirmed_date TEXT,
+      intake_actual_date TEXT,
+      intake_reference TEXT,
+      intake_notes TEXT,
+      next_action_owner TEXT,
+      next_action TEXT,
+      data TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS order_events (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      actor_name TEXT,
+      message TEXT NOT NULL,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS order_invoices (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      invoice_type TEXT,
+      invoice_number TEXT,
+      invoice_date TEXT,
+      due_date TEXT,
+      amount REAL DEFAULT 0,
+      currency TEXT,
+      is_received INTEGER DEFAULT 0,
+      sent_to_fd INTEGER DEFAULT 0,
+      status TEXT,
+      file_name TEXT,
+      mime_type TEXT,
+      file_data TEXT,
+      notes TEXT,
+      uploaded_by TEXT,
+      uploaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS collection_reorder_audit (
       id TEXT PRIMARY KEY,
       collection_id TEXT NOT NULL,
@@ -1301,6 +1358,8 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_gid ON collection_reorder_audit(collection_gid);
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_applied ON collection_reorder_audit(applied_at);
     CREATE INDEX IF NOT EXISTS idx_issued_skus_issued_at ON issued_skus(issued_at);
+    CREATE INDEX IF NOT EXISTS idx_order_events_order_created ON order_events(order_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_order_invoices_order ON order_invoices(order_id, updated_at);
   `);
   importOrderJsonIfNeeded(orderSqliteDb);
   return orderSqliteDb;
@@ -1577,6 +1636,605 @@ function upsertByKey(items, key, value, patch) {
   }
 }
 
+const workflowFields = {
+  approvalStatus: "approval_status",
+  approvalBy: "approval_by",
+  approvalDecidedAt: "approval_decided_at",
+  approvalNotes: "approval_notes",
+  paymentStatus: "payment_status",
+  paymentType: "payment_type",
+  paymentAmount: "payment_amount",
+  paymentDueDate: "payment_due_date",
+  paymentPaidDate: "payment_paid_date",
+  paymentReference: "payment_reference",
+  paymentNotes: "payment_notes",
+  intakeStatus: "intake_status",
+  intakeEtaDate: "intake_eta_date",
+  intakeConfirmedDate: "intake_confirmed_date",
+  intakeActualDate: "intake_actual_date",
+  intakeReference: "intake_reference",
+  intakeNotes: "intake_notes",
+  nextActionOwner: "next_action_owner",
+  nextAction: "next_action"
+};
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeWorkflowValue(key, value) {
+  if (key === "paymentAmount") return Number(value || 0);
+  return value == null ? "" : String(value).trim();
+}
+
+function workflowPatchForOrderStatus(status, currentWorkflow = {}) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "pending approval" || normalized === "submitted") {
+    return { approvalStatus: "Pending director approval", nextActionOwner: "Buying Director", nextAction: "Review order for approval" };
+  }
+  if (normalized === "approved") {
+    return {
+      approvalStatus: "Approved",
+      approvalDecidedAt: currentWorkflow.approvalDecidedAt || todayIsoDate(),
+      paymentStatus: ["Paid", "Part paid", "Ready to pay", "Overdue"].includes(currentWorkflow.paymentStatus) ? currentWorkflow.paymentStatus : "Awaiting invoice",
+      nextActionOwner: "Buyer",
+      nextAction: "Upload supplier invoice for FD"
+    };
+  }
+  if (normalized === "changes requested") {
+    return { approvalStatus: "Changes requested", nextActionOwner: "Buyer", nextAction: "Update order and resubmit" };
+  }
+  if (normalized === "rejected") {
+    return { approvalStatus: "Rejected", nextActionOwner: "Buyer", nextAction: "Review rejected order" };
+  }
+  if (normalized === "payment pending") {
+    return { paymentStatus: "Ready to pay", nextActionOwner: "FD / Finance", nextAction: "Arrange supplier payment" };
+  }
+  if (normalized === "paid") {
+    return { paymentStatus: "Paid", paymentPaidDate: currentWorkflow.paymentPaidDate || todayIsoDate(), nextActionOwner: "Merchandising", nextAction: "Track intake date" };
+  }
+  if (normalized === "in production") {
+    return { intakeStatus: "In production", nextActionOwner: "Merchandising", nextAction: "Track supplier production and ETA" };
+  }
+  if (normalized === "shipped") {
+    return { intakeStatus: "Shipped", nextActionOwner: "Merchandising", nextAction: "Track shipment to warehouse" };
+  }
+  if (normalized === "received") {
+    return { intakeStatus: "Received", intakeActualDate: currentWorkflow.intakeActualDate || todayIsoDate(), nextActionOwner: "Merchandising", nextAction: "Close intake checks" };
+  }
+  if (normalized === "draft") {
+    return { approvalStatus: "Not requested", paymentStatus: "Not due", nextActionOwner: "Buyer", nextAction: "Prepare or submit order" };
+  }
+  return {};
+}
+
+function orderStatusForWorkflowPatch(section, workflow) {
+  if (section === "approval") {
+    if (workflow.approvalStatus === "Pending director approval") return "Pending approval";
+    if (workflow.approvalStatus === "Approved") return "Approved";
+    if (workflow.approvalStatus === "Changes requested") return "Changes requested";
+    if (workflow.approvalStatus === "Rejected") return "Rejected";
+    if (workflow.approvalStatus === "Not requested") return "Draft";
+  }
+  if (section === "payment") {
+    if (["Ready to pay", "Part paid", "Overdue"].includes(workflow.paymentStatus)) return "Payment pending";
+    if (workflow.paymentStatus === "Paid") return "Paid";
+  }
+  if (section === "intake") {
+    if (["In production", "Shipped", "Received"].includes(workflow.intakeStatus)) return workflow.intakeStatus;
+  }
+  return "";
+}
+
+function orderStatusFromWorkflow(workflow) {
+  if (!workflow) return "";
+  if (workflow.intakeStatus === "Received") return "Received";
+  if (workflow.intakeStatus === "Shipped") return "Shipped";
+  if (workflow.intakeStatus === "In production") return "In production";
+  if (workflow.paymentStatus === "Paid") return "Paid";
+  if (["Ready to pay", "Part paid", "Overdue"].includes(workflow.paymentStatus)) return "Payment pending";
+  if (workflow.approvalStatus === "Approved") return "Approved";
+  if (workflow.approvalStatus === "Pending director approval") return "Pending approval";
+  if (workflow.approvalStatus === "Changes requested") return "Changes requested";
+  if (workflow.approvalStatus === "Rejected") return "Rejected";
+  if (workflow.approvalStatus === "Not requested") return "Draft";
+  return "";
+}
+
+function defaultWorkflowForOrder(order) {
+  const status = String(order?.status || "").toLowerCase();
+  const isApproved = status === "approved";
+  const isPending = status.includes("approval") || status === "submitted";
+  const paymentType = order?.terms?.payment || order?.supplier?.paymentType || "";
+  const paymentAmount = Number(order?.totals?.grand || order?.totals?.subtotal || 0);
+  const requiredDate = order?.delivery?.requiredDate || "";
+  return {
+    approvalStatus: isApproved ? "Approved" : isPending ? "Pending director approval" : "Not requested",
+    approvalBy: "",
+    approvalDecidedAt: isApproved ? order?.savedAt?.slice(0, 10) || "" : "",
+    approvalNotes: "",
+    paymentStatus: isApproved ? "Awaiting invoice" : "Not due",
+    paymentType,
+    paymentAmount,
+    paymentDueDate: "",
+    paymentPaidDate: "",
+    paymentReference: "",
+    paymentNotes: "",
+    intakeStatus: requiredDate ? "Not confirmed" : "Not confirmed",
+    intakeEtaDate: requiredDate,
+    intakeConfirmedDate: "",
+    intakeActualDate: "",
+    intakeReference: "",
+    intakeNotes: "",
+    nextActionOwner: isPending ? "Buying Director" : isApproved ? "FD / Finance" : "Buyer",
+    nextAction: isPending ? "Review order for approval" : isApproved ? "Confirm invoice and payment plan" : "Prepare or submit order",
+    data: {},
+    updatedAt: order?.savedAt || new Date().toISOString()
+  };
+}
+
+function workflowFromRow(row, order) {
+  const defaults = defaultWorkflowForOrder(order);
+  if (!row) return defaults;
+  return {
+    ...defaults,
+    approvalStatus: row.approval_status || defaults.approvalStatus,
+    approvalBy: row.approval_by || "",
+    approvalDecidedAt: row.approval_decided_at || "",
+    approvalNotes: row.approval_notes || "",
+    paymentStatus: row.payment_status || defaults.paymentStatus,
+    paymentType: row.payment_type || defaults.paymentType,
+    paymentAmount: Number(row.payment_amount || defaults.paymentAmount || 0),
+    paymentDueDate: row.payment_due_date || "",
+    paymentPaidDate: row.payment_paid_date || "",
+    paymentReference: row.payment_reference || "",
+    paymentNotes: row.payment_notes || "",
+    intakeStatus: row.intake_status || defaults.intakeStatus,
+    intakeEtaDate: row.intake_eta_date || defaults.intakeEtaDate,
+    intakeConfirmedDate: row.intake_confirmed_date || "",
+    intakeActualDate: row.intake_actual_date || "",
+    intakeReference: row.intake_reference || "",
+    intakeNotes: row.intake_notes || "",
+    nextActionOwner: row.next_action_owner || defaults.nextActionOwner,
+    nextAction: row.next_action || defaults.nextAction,
+    data: parseJson(row.data, {}),
+    updatedAt: row.updated_at || defaults.updatedAt
+  };
+}
+
+function readOrderWorkflowMap() {
+  const rows = openOrderSqliteDb().prepare("SELECT * FROM order_workflows").all();
+  return new Map(rows.map(row => [String(row.order_id), row]));
+}
+
+function readOrderEvents(orderId, limit = 40) {
+  return openOrderSqliteDb().prepare(`
+    SELECT id, order_id AS orderId, event_type AS eventType, actor_name AS actorName, message, data, created_at AS createdAt
+    FROM order_events
+    WHERE order_id = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(String(orderId), limit).map(row => ({ ...row, data: parseJson(row.data, {}) }));
+}
+
+function orderCompositeStatus(order, workflow) {
+  if (String(order?.status || "").toLowerCase() === "cancelled") return "Cancelled";
+  if (workflow.intakeStatus === "Received") return "Received";
+  if (workflow.intakeStatus === "Part received") return "Part received";
+  if (workflow.intakeStatus === "Shipped") return "Shipped";
+  if (workflow.paymentStatus === "Paid") return "Payment complete";
+  if (workflow.paymentStatus === "Ready to pay" || workflow.paymentStatus === "Part paid" || workflow.paymentStatus === "Overdue") return "Payment";
+  if (workflow.approvalStatus === "Approved") return "Approved";
+  if (workflow.approvalStatus === "Pending director approval") return "Awaiting approval";
+  if (workflow.approvalStatus === "Changes requested") return "Changes requested";
+  return order?.status || "Draft";
+}
+
+function publicManagedOrder(order, workflowRow) {
+  const workflow = workflowFromRow(workflowRow, order);
+  const lines = order.lines || [];
+  const units = lines.reduce((total, line) => total + Number(line.quantity || 0), 0);
+  const categories = [...new Set(lines.map(line => line.category).filter(Boolean))];
+  return {
+    id: String(order.id || ""),
+    orderNumber: order.orderNumber || "",
+    orderDate: order.orderDate || "",
+    savedAt: order.savedAt || "",
+    supplierName: order.supplier?.name || "",
+    supplierReference: order.supplier?.reference || "",
+    buyerName: order.company?.department || "",
+    buyerEmail: order.company?.buyerEmail || "",
+    status: order.status || "Draft",
+    compositeStatus: orderCompositeStatus(order, workflow),
+    season: order.season || "",
+    total: Number(order.totals?.grand || 0),
+    subtotal: Number(order.totals?.subtotal || 0),
+    currency: order.terms?.currency || "GBP",
+    paymentTerms: order.terms?.payment || "",
+    requiredDate: order.delivery?.requiredDate || "",
+    shippingMethod: order.delivery?.shippingMethod || "",
+    incoterms: order.terms?.incoterms || "",
+    lineCount: lines.length,
+    units,
+    categories,
+    invoices: invoiceSummary(order.id),
+    workflow,
+    order
+  };
+}
+
+function orderWorkflowMetrics(orders) {
+  const today = todayIsoDate();
+  return {
+    totalOrders: orders.length,
+    awaitingApproval: orders.filter(order => order.workflow.approvalStatus === "Pending director approval").length,
+    readyToPay: orders.filter(order => ["Ready to pay", "Overdue", "Part paid"].includes(order.workflow.paymentStatus)).length,
+    intakeRisk: orders.filter(order => order.workflow.intakeStatus === "Delayed" || (order.workflow.intakeEtaDate && order.workflow.intakeEtaDate < today && order.workflow.intakeStatus !== "Received")).length
+  };
+}
+
+function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") {
+  const db = openOrderSqliteDb();
+  const currentRow = db.prepare("SELECT * FROM order_workflows WHERE order_id = ?").get(String(order.id));
+  const current = workflowFromRow(currentRow, order);
+  const clean = {};
+  for (const key of Object.keys(workflowFields)) {
+    if (Object.prototype.hasOwnProperty.call(patch || {}, key)) clean[key] = normalizeWorkflowValue(key, patch[key]);
+  }
+  const next = { ...current, ...clean };
+  db.prepare(`
+    INSERT INTO order_workflows (
+      order_id, approval_status, approval_by, approval_decided_at, approval_notes,
+      payment_status, payment_type, payment_amount, payment_due_date, payment_paid_date, payment_reference, payment_notes,
+      intake_status, intake_eta_date, intake_confirmed_date, intake_actual_date, intake_reference, intake_notes,
+      next_action_owner, next_action, data, updated_at
+    ) VALUES (
+      @orderId, @approvalStatus, @approvalBy, @approvalDecidedAt, @approvalNotes,
+      @paymentStatus, @paymentType, @paymentAmount, @paymentDueDate, @paymentPaidDate, @paymentReference, @paymentNotes,
+      @intakeStatus, @intakeEtaDate, @intakeConfirmedDate, @intakeActualDate, @intakeReference, @intakeNotes,
+      @nextActionOwner, @nextAction, @data, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(order_id) DO UPDATE SET
+      approval_status = excluded.approval_status,
+      approval_by = excluded.approval_by,
+      approval_decided_at = excluded.approval_decided_at,
+      approval_notes = excluded.approval_notes,
+      payment_status = excluded.payment_status,
+      payment_type = excluded.payment_type,
+      payment_amount = excluded.payment_amount,
+      payment_due_date = excluded.payment_due_date,
+      payment_paid_date = excluded.payment_paid_date,
+      payment_reference = excluded.payment_reference,
+      payment_notes = excluded.payment_notes,
+      intake_status = excluded.intake_status,
+      intake_eta_date = excluded.intake_eta_date,
+      intake_confirmed_date = excluded.intake_confirmed_date,
+      intake_actual_date = excluded.intake_actual_date,
+      intake_reference = excluded.intake_reference,
+      intake_notes = excluded.intake_notes,
+      next_action_owner = excluded.next_action_owner,
+      next_action = excluded.next_action,
+      data = excluded.data,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    orderId: String(order.id),
+    ...next,
+    data: JSON.stringify(next.data || {})
+  });
+  recordOrderEvent(order.id, section, actorName, `${section.replace(/^\w/, char => char.toUpperCase())} updated`, clean);
+  return workflowFromRow(db.prepare("SELECT * FROM order_workflows WHERE order_id = ?").get(String(order.id)), order);
+}
+
+function recordOrderEvent(orderId, eventType, actorName, message, data = {}) {
+  openOrderSqliteDb().prepare(`
+    INSERT INTO order_events (id, order_id, event_type, actor_name, message, data, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `).run(crypto.randomUUID(), String(orderId), eventType || "note", actorName || "", message || "Updated", JSON.stringify(data || {}));
+}
+
+function updateStoredOrderStatus(orderId, status) {
+  if (!status) return null;
+  const db = openOrderSqliteDb();
+  const row = db.prepare("SELECT data FROM orders WHERE id = ?").get(String(orderId));
+  const order = parseJson(row?.data, null);
+  if (!order) return null;
+  order.status = status;
+  db.prepare(`
+    UPDATE orders
+    SET status = ?, data = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(status, JSON.stringify(order), String(orderId));
+  return order;
+}
+
+function syncOrderStatusFromWorkflowRow(order, workflowRow) {
+  if (!workflowRow) return order;
+  const workflow = workflowFromRow(workflowRow, order);
+  const status = orderStatusFromWorkflow(workflow);
+  if (!status || status === order.status) return order;
+  return updateStoredOrderStatus(order.id, status) || { ...order, status };
+}
+
+function syncWorkflowFromOrderStatus(savedOrder) {
+  const db = openOrderSqliteDb();
+  const row = db.prepare("SELECT * FROM order_workflows WHERE order_id = ?").get(String(savedOrder.id));
+  const current = workflowFromRow(row, savedOrder);
+  const patch = workflowPatchForOrderStatus(savedOrder.status, current);
+  const changes = Object.entries(patch).filter(([key, value]) => value !== "" && current[key] !== value);
+  if (!changes.length) return current;
+  return writeOrderWorkflow(savedOrder, patch, "Order form", "status");
+}
+
+function invoiceFromRow(row, includeFile = true) {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    invoiceType: row.invoice_type || "",
+    invoiceNumber: row.invoice_number || "",
+    invoiceDate: row.invoice_date || "",
+    dueDate: row.due_date || "",
+    amount: Number(row.amount || 0),
+    currency: row.currency || "GBP",
+    isReceived: Boolean(row.is_received),
+    sentToFd: Boolean(row.sent_to_fd),
+    status: row.status || "Awaiting FD",
+    fileName: row.file_name || "",
+    mimeType: row.mime_type || "",
+    fileData: includeFile ? row.file_data || "" : "",
+    notes: row.notes || "",
+    uploadedBy: row.uploaded_by || "",
+    uploadedAt: row.uploaded_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readOrderInvoices(orderId, includeFiles = true) {
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM order_invoices
+    WHERE order_id = ?
+    ORDER BY uploaded_at DESC, updated_at DESC
+  `).all(String(orderId)).map(row => invoiceFromRow(row, includeFiles));
+}
+
+function invoiceSummary(orderId) {
+  const invoices = readOrderInvoices(orderId, false);
+  const totalDue = invoices.reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+  const totalPaid = invoices
+    .filter(invoice => invoice.status === "Paid")
+    .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+  return {
+    count: invoices.length,
+    sentToFd: invoices.filter(invoice => invoice.sentToFd).length,
+    received: invoices.filter(invoice => invoice.isReceived).length,
+    paid: invoices.filter(invoice => invoice.status === "Paid").length,
+    totalDue,
+    totalPaid,
+    outstanding: Math.max(0, totalDue - totalPaid)
+  };
+}
+
+function saveOrderInvoice(order, body) {
+  const db = openOrderSqliteDb();
+  const invoice = body.invoice || {};
+  const id = String(invoice.id || crypto.randomUUID());
+  const existing = db.prepare("SELECT * FROM order_invoices WHERE id = ? AND order_id = ?").get(id, String(order.id));
+  const existingInvoice = existing ? invoiceFromRow(existing) : {};
+  const fileData = invoice.fileData || existingInvoice.fileData || "";
+  const fileName = invoice.fileName || existingInvoice.fileName || "";
+  const mimeType = invoice.mimeType || existingInvoice.mimeType || "";
+  db.prepare(`
+    INSERT INTO order_invoices (
+      id, order_id, invoice_type, invoice_number, invoice_date, due_date, amount, currency,
+      is_received, sent_to_fd, status, file_name, mime_type, file_data, notes, uploaded_by, uploaded_at, updated_at
+    ) VALUES (
+      @id, @orderId, @invoiceType, @invoiceNumber, @invoiceDate, @dueDate, @amount, @currency,
+      @isReceived, @sentToFd, @status, @fileName, @mimeType, @fileData, @notes, @uploadedBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      invoice_type = excluded.invoice_type,
+      invoice_number = excluded.invoice_number,
+      invoice_date = excluded.invoice_date,
+      due_date = excluded.due_date,
+      amount = excluded.amount,
+      currency = excluded.currency,
+      is_received = excluded.is_received,
+      sent_to_fd = excluded.sent_to_fd,
+      status = excluded.status,
+      file_name = excluded.file_name,
+      mime_type = excluded.mime_type,
+      file_data = excluded.file_data,
+      notes = excluded.notes,
+      uploaded_by = excluded.uploaded_by,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    id,
+    orderId: String(order.id),
+    invoiceType: String(invoice.invoiceType || "").trim(),
+    invoiceNumber: String(invoice.invoiceNumber || "").trim(),
+    invoiceDate: String(invoice.invoiceDate || "").trim(),
+    dueDate: String(invoice.dueDate || "").trim(),
+    amount: Number(invoice.amount || 0),
+    currency: String(invoice.currency || order.terms?.currency || "GBP").trim(),
+    isReceived: invoice.isReceived ? 1 : 0,
+    sentToFd: invoice.sentToFd ? 1 : 0,
+    status: String(invoice.status || (invoice.sentToFd ? "Sent to FD" : "Awaiting FD")).trim(),
+    fileName,
+    mimeType,
+    fileData,
+    notes: String(invoice.notes || "").trim(),
+    uploadedBy: String(body.actorName || invoice.uploadedBy || "").trim()
+  });
+
+  const action = invoice.sentToFd ? "Invoice uploaded and sent to FD" : "Invoice uploaded";
+  recordOrderEvent(order.id, "invoice", body.actorName || "", action, { invoiceId: id, invoiceNumber: invoice.invoiceNumber || "", fileName });
+  syncPaymentWorkflowFromInvoices(order, body.actorName || "");
+
+  return readOrderInvoices(order.id);
+}
+
+function syncPaymentWorkflowFromInvoices(order, actorName = "") {
+  const invoices = readOrderInvoices(order.id, false);
+  const current = workflowFromRow(openOrderSqliteDb().prepare("SELECT * FROM order_workflows WHERE order_id = ?").get(String(order.id)), order);
+  if (!invoices.length) {
+    if (["Paid", "Part paid", "Ready to pay", "Overdue"].includes(current.paymentStatus)) {
+      writeOrderWorkflow(order, {
+        paymentStatus: order.status === "Approved" ? "Awaiting invoice" : "Not due",
+        paymentAmount: Number(order.totals?.grand || 0),
+        paymentPaidDate: "",
+        nextActionOwner: order.status === "Approved" ? "Buyer" : current.nextActionOwner,
+        nextAction: order.status === "Approved" ? "Upload supplier invoice for FD" : current.nextAction
+      }, actorName, "invoice");
+      if (order.status === "Paid" || order.status === "Payment pending") updateStoredOrderStatus(order.id, "Approved");
+    }
+    return;
+  }
+
+  const totals = invoiceSummary(order.id);
+  const allPaid = totals.paid === totals.count;
+  const somePaid = totals.paid > 0;
+  const anySent = totals.sentToFd > 0;
+  if (allPaid) {
+    writeOrderWorkflow(order, {
+      paymentStatus: "Paid",
+      paymentAmount: totals.totalDue,
+      paymentPaidDate: todayIsoDate(),
+      nextActionOwner: "Merchandising",
+      nextAction: "Track intake date"
+    }, actorName, "invoice");
+    updateStoredOrderStatus(order.id, "Paid");
+  } else if (somePaid) {
+    writeOrderWorkflow(order, {
+      paymentStatus: "Part paid",
+      paymentAmount: totals.totalDue,
+      paymentPaidDate: todayIsoDate(),
+      nextActionOwner: "FD / Finance",
+      nextAction: "Pay remaining supplier invoice"
+    }, actorName, "invoice");
+    updateStoredOrderStatus(order.id, "Payment pending");
+  } else if (anySent) {
+    writeOrderWorkflow(order, {
+      paymentStatus: "Ready to pay",
+      paymentAmount: totals.totalDue,
+      nextActionOwner: "FD / Finance",
+      nextAction: "Pay supplier invoice"
+    }, actorName, "invoice");
+    updateStoredOrderStatus(order.id, "Payment pending");
+  } else if (["Paid", "Part paid", "Ready to pay", "Overdue"].includes(current.paymentStatus)) {
+    writeOrderWorkflow(order, {
+      paymentStatus: "Awaiting invoice",
+      paymentAmount: totals.totalDue,
+      paymentPaidDate: "",
+      nextActionOwner: "Buyer",
+      nextAction: "Send invoice to FD"
+    }, actorName, "invoice");
+    updateStoredOrderStatus(order.id, "Approved");
+  }
+}
+
+function deleteOrderInvoice(order, body) {
+  const invoiceId = String(body.invoiceId || "");
+  if (!invoiceId) throw new Error("Missing invoice");
+  const db = openOrderSqliteDb();
+  const invoice = db.prepare("SELECT * FROM order_invoices WHERE id = ? AND order_id = ?").get(invoiceId, String(order.id));
+  if (!invoice) throw new Error("Invoice not found");
+  db.prepare("DELETE FROM order_invoices WHERE id = ? AND order_id = ?").run(invoiceId, String(order.id));
+  recordOrderEvent(order.id, "invoice", body.actorName || "", "Invoice deleted", { invoiceId, invoiceNumber: invoice.invoice_number || "", fileName: invoice.file_name || "" });
+  syncPaymentWorkflowFromInvoices(order, body.actorName || "");
+  return readOrderInvoices(order.id);
+}
+
+function friendlyShopifyLookupMessage(error) {
+  const message = String(error?.message || error || "");
+  if (/EACCES|EPERM|ENETUNREACH|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND/i.test(message)) {
+    return "Shopify lookup is unavailable from this local session. Saved SKU data will still be used if it exists, or you can enter the product details manually.";
+  }
+  return message || "Shopify lookup is unavailable. Saved SKU data will still be used if it exists.";
+}
+
+function existingByNormalized(items, key, value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return null;
+  return items.find(item => String(item[key] || "").trim().toLowerCase() === normalized) || null;
+}
+
+function saveOrderFormOrder(dbData, savedOrder) {
+  const sqlite = openOrderSqliteDb();
+  const supplierPatch = savedOrder.supplier?.name ? {
+    ...(existingByNormalized(dbData.suppliers || [], "name", savedOrder.supplier.name) || {}),
+    ...savedOrder.supplier,
+    lastOrderNumber: savedOrder.orderNumber,
+    lastOrderedAt: savedOrder.savedAt
+  } : null;
+  const productPatches = (savedOrder.lines || [])
+    .filter(line => line.sku)
+    .map(line => ({
+      ...(existingByNormalized(dbData.products || [], "sku", line.sku) || {}),
+      ...line,
+      supplierName: savedOrder.supplier?.name || line.supplierName || "",
+      lastOrderNumber: savedOrder.orderNumber,
+      lastOrderedAt: savedOrder.savedAt
+    }));
+
+  const write = sqlite.transaction(() => {
+    sqlite.prepare("DELETE FROM orders WHERE id = ? OR order_number = ?").run(String(savedOrder.id), savedOrder.orderNumber);
+    sqlite.prepare(`
+      INSERT INTO orders (id, order_number, supplier_name, order_date, status, saved_at, data, updated_at)
+      VALUES (@id, @orderNumber, @supplierName, @orderDate, @status, @savedAt, @data, CURRENT_TIMESTAMP)
+    `).run({
+      id: String(savedOrder.id),
+      orderNumber: savedOrder.orderNumber,
+      supplierName: savedOrder.supplier?.name || "",
+      orderDate: savedOrder.orderDate || "",
+      status: savedOrder.status || "",
+      savedAt: savedOrder.savedAt,
+      data: JSON.stringify(savedOrder)
+    });
+
+    if (supplierPatch?.name) {
+      sqlite.prepare(`
+        INSERT INTO suppliers (name, reference, last_order_number, last_ordered_at, data, updated_at)
+        VALUES (@name, @reference, @lastOrderNumber, @lastOrderedAt, @data, CURRENT_TIMESTAMP)
+        ON CONFLICT(name) DO UPDATE SET
+          reference = excluded.reference,
+          last_order_number = excluded.last_order_number,
+          last_ordered_at = excluded.last_ordered_at,
+          data = excluded.data,
+          updated_at = CURRENT_TIMESTAMP
+      `).run({
+        name: supplierPatch.name,
+        reference: supplierPatch.reference || "",
+        lastOrderNumber: supplierPatch.lastOrderNumber || "",
+        lastOrderedAt: supplierPatch.lastOrderedAt || "",
+        data: JSON.stringify(supplierPatch)
+      });
+    }
+
+    const upsertProduct = sqlite.prepare(`
+      INSERT INTO products (sku, style, supplier_name, last_order_number, last_ordered_at, data, updated_at)
+      VALUES (@sku, @style, @supplierName, @lastOrderNumber, @lastOrderedAt, @data, CURRENT_TIMESTAMP)
+      ON CONFLICT(sku) DO UPDATE SET
+        style = excluded.style,
+        supplier_name = excluded.supplier_name,
+        last_order_number = excluded.last_order_number,
+        last_ordered_at = excluded.last_ordered_at,
+        data = excluded.data,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+    for (const product of productPatches) {
+      upsertProduct.run({
+        sku: product.sku,
+        style: product.style || product.description || "",
+        supplierName: product.supplierName || "",
+        lastOrderNumber: product.lastOrderNumber || "",
+        lastOrderedAt: product.lastOrderedAt || "",
+        data: JSON.stringify(product)
+      });
+    }
+  });
+  write();
+}
+
 async function shopifyLookupBySku(sku) {
   const { shop, clientId, clientSecret } = shopifyConfig();
   if (!shop || !clientId || !clientSecret) return { configured: false, product: null };
@@ -1627,13 +2285,15 @@ async function handleApi(req, res) {
 
   if (req.method === "GET" && url.pathname === "/api/order-form/bootstrap") {
     const db = readOrderDb();
+    const workflows = readOrderWorkflowMap();
+    const orders = db.orders.map(order => syncOrderStatusFromWorkflowRow(order, workflows.get(String(order.id))));
     sendJson(res, 200, {
       suppliers: db.suppliers,
       products: [],
-      orders: db.orders.slice(-20).reverse(),
+      orders: orders.slice(-20).reverse(),
       company: db.company,
       delivery: db.delivery,
-      nextOrderNumber: nextOrderNumber(db),
+      nextOrderNumber: nextOrderNumber({ ...db, orders }),
       lastIssuedSku: getLastIssuedSku(db),
       shopifyConfigured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret)
     });
@@ -1726,7 +2386,7 @@ async function handleApi(req, res) {
         product: savedProduct,
         source: savedProduct ? "saved" : null,
         shopifyConfigured: true,
-        message: error.message
+        message: friendlyShopifyLookupMessage(error)
       });
     }
     return true;
@@ -1742,33 +2402,153 @@ async function handleApi(req, res) {
         orderNumber: order.orderNumber || nextOrderNumber(db),
         savedAt: new Date().toISOString()
       };
-      db.orders = db.orders.filter(item => item.id !== savedOrder.id && item.orderNumber !== savedOrder.orderNumber);
-      db.orders.push(savedOrder);
-
-      if (savedOrder.supplier?.name) {
-        upsertByKey(db.suppliers, "name", savedOrder.supplier.name, {
-          ...savedOrder.supplier,
-          lastOrderNumber: savedOrder.orderNumber,
-          lastOrderedAt: savedOrder.savedAt
-        });
-      }
-
-      for (const line of savedOrder.lines || []) {
-        if (!line.sku) continue;
-        upsertByKey(db.products, "sku", line.sku, {
-          ...line,
-          supplierName: savedOrder.supplier?.name || line.supplierName || "",
-          lastOrderNumber: savedOrder.orderNumber,
-          lastOrderedAt: savedOrder.savedAt
-        });
-      }
-
       const lastIssuedSku = highestIssuedSku(db, getLastIssuedSku(db));
-      writeOrderDb(db);
+      saveOrderFormOrder(db, savedOrder);
+      syncWorkflowFromOrderStatus(savedOrder);
       setLastIssuedSku(lastIssuedSku);
-      sendJson(res, 200, { ok: true, order: savedOrder, nextOrderNumber: nextOrderNumber(db) });
+      const refreshed = readOrderDb();
+      sendJson(res, 200, { ok: true, order: savedOrder, nextOrderNumber: nextOrderNumber(refreshed) });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not save order" });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/orders/workspace") {
+    const db = readOrderDb();
+    const workflows = readOrderWorkflowMap();
+    const orders = db.orders
+      .map(order => {
+        const workflow = workflows.get(String(order.id));
+        return publicManagedOrder(syncOrderStatusFromWorkflowRow(order, workflow), workflow);
+      })
+      .sort((a, b) => String(b.orderDate || b.savedAt).localeCompare(String(a.orderDate || a.savedAt)));
+    sendJson(res, 200, {
+      orders,
+      metrics: orderWorkflowMetrics(orders),
+      authMode: "shared-password",
+      googleWorkspaceReady: true,
+      generatedAt: new Date().toISOString()
+    });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/orders/detail") {
+    const orderId = String(url.searchParams.get("id") || "");
+    const db = readOrderDb();
+    const order = db.orders.find(item => String(item.id) === orderId);
+    if (!order) {
+      sendJson(res, 404, { error: "Order not found" });
+      return true;
+    }
+    const workflow = readOrderWorkflowMap().get(orderId);
+    const syncedOrder = syncOrderStatusFromWorkflowRow(order, workflow);
+    sendJson(res, 200, {
+      order: publicManagedOrder(syncedOrder, workflow),
+      events: readOrderEvents(orderId),
+      invoices: readOrderInvoices(orderId)
+    });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/workflow") {
+    try {
+      const body = await readJsonBody(req);
+      const orderId = String(body.orderId || "");
+      const db = readOrderDb();
+      const order = db.orders.find(item => String(item.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      const workflow = writeOrderWorkflow(order, body.patch || {}, body.actorName || "", body.section || "workflow");
+      const status = orderStatusForWorkflowPatch(body.section || "", workflow);
+      const updatedOrder = status ? updateStoredOrderStatus(order.id, status) || order : order;
+      const publicOrder = publicManagedOrder(updatedOrder, null);
+      publicOrder.workflow = workflow;
+      publicOrder.compositeStatus = orderCompositeStatus(updatedOrder, workflow);
+      sendJson(res, 200, {
+        ok: true,
+        order: publicOrder,
+        workflow,
+        events: readOrderEvents(orderId),
+        invoices: readOrderInvoices(orderId)
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not update order workflow" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/invoices") {
+    try {
+      const body = await readJsonBody(req);
+      const orderId = String(body.orderId || "");
+      const db = readOrderDb();
+      const order = db.orders.find(item => String(item.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      const invoices = saveOrderInvoice(order, body);
+      const refreshedOrder = readOrderDb().orders.find(item => String(item.id) === orderId) || order;
+      const workflow = readOrderWorkflowMap().get(orderId);
+      sendJson(res, 200, {
+        ok: true,
+        order: publicManagedOrder(refreshedOrder, workflow),
+        invoices,
+        events: readOrderEvents(orderId)
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save invoice" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/invoices/delete") {
+    try {
+      const body = await readJsonBody(req);
+      const orderId = String(body.orderId || "");
+      const db = readOrderDb();
+      const order = db.orders.find(item => String(item.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      const invoices = deleteOrderInvoice(order, body);
+      const refreshedOrder = readOrderDb().orders.find(item => String(item.id) === orderId) || order;
+      const workflow = readOrderWorkflowMap().get(orderId);
+      sendJson(res, 200, {
+        ok: true,
+        order: publicManagedOrder(refreshedOrder, workflow),
+        invoices,
+        events: readOrderEvents(orderId)
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not delete invoice" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/events") {
+    try {
+      const body = await readJsonBody(req);
+      const orderId = String(body.orderId || "");
+      const message = String(body.message || "").trim();
+      if (!orderId || !message) {
+        sendJson(res, 400, { error: "Choose an order and add a note." });
+        return true;
+      }
+      const db = readOrderDb();
+      const order = db.orders.find(item => String(item.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      recordOrderEvent(orderId, "note", body.actorName || "", message);
+      sendJson(res, 200, { ok: true, events: readOrderEvents(orderId) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not add note" });
     }
     return true;
   }
