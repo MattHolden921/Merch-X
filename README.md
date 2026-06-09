@@ -43,6 +43,8 @@ UPLOADS_DIR=/var/lib/merch-x/uploads
 
 The app creates the SQLite schema on startup. If `data/order-form-db.json` exists and the SQLite database is empty, the app imports the prototype JSON data once.
 
+Order form SKU issuing starts from `ORDER_FORM_INITIAL_SKU` (`15100` by default) and skips any SKU already saved locally when the sequence reaches it.
+
 Local uploaded files default to:
 
 ```text

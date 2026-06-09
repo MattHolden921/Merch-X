@@ -1710,12 +1710,6 @@ function incrementIssuedSku(value) {
   return `${parsed.prefix}${String(parsed.number + 1).padStart(parsed.width, "0")}`;
 }
 
-function decrementIssuedSku(value) {
-  const parsed = parseIssuedSku(value);
-  if (!parsed) return "";
-  return `${parsed.prefix}${String(Math.max(0, parsed.number - 1)).padStart(parsed.width, "0")}`;
-}
-
 function compareIssuedSku(a, b) {
   const parsedA = parseIssuedSku(a);
   const parsedB = parseIssuedSku(b);
@@ -1725,20 +1719,63 @@ function compareIssuedSku(a, b) {
   return parsedA.sku.localeCompare(parsedB.sku);
 }
 
-function highestIssuedSku(dbData, storedSku = "") {
-  const stored = parseIssuedSku(storedSku);
-  const prefix = stored?.prefix || "";
-  const candidates = [storedSku];
-  for (const row of readIssuedSkuRows()) candidates.push(row.sku);
-  return candidates
-    .filter((sku) => parseIssuedSku(sku)?.prefix === prefix)
-    .reduce((highest, sku) => compareIssuedSku(sku, highest) > 0 ? normalizeSku(sku) : highest, stored ? normalizeSku(storedSku) : "");
+function initialIssuedSku() {
+  const configured = normalizeSku(process.env.ORDER_FORM_INITIAL_SKU || "15100");
+  return parseIssuedSku(configured) ? configured : "15100";
+}
+
+function knownSkuSet(dbData = {}) {
+  const known = new Set();
+  const add = (sku) => {
+    const normalized = normalizeSku(sku);
+    if (normalized) known.add(normalized);
+  };
+
+  for (const row of readIssuedSkuRows()) add(row.sku);
+  for (const product of dbData.products || []) add(product.sku);
+  for (const order of dbData.orders || []) {
+    for (const line of order.lines || []) add(line.sku);
+  }
+
+  return known;
+}
+
+function sequentialIssuedSkuCursor(dbData = {}) {
+  const start = initialIssuedSku();
+  const parsedStart = parseIssuedSku(start);
+  if (!parsedStart) return "";
+
+  const known = knownSkuSet(dbData);
+  let cursor = start;
+  for (let attempts = 0; attempts < 100000; attempts += 1) {
+    const next = incrementIssuedSku(cursor);
+    const parsedNext = parseIssuedSku(next);
+    if (!parsedNext || parsedNext.prefix !== parsedStart.prefix || !known.has(normalizeSku(next))) break;
+    cursor = next;
+  }
+  return cursor;
+}
+
+function nextAvailableIssuedSku(dbData = {}, baselineSku = "") {
+  const baseline = parseIssuedSku(baselineSku) ? normalizeSku(baselineSku) : initialIssuedSku();
+  const baselinePrefix = parseIssuedSku(baseline)?.prefix || "";
+  const known = knownSkuSet(dbData);
+  let candidate = incrementIssuedSku(baseline);
+
+  for (let attempts = 0; attempts < 100000; attempts += 1) {
+    const parsedCandidate = parseIssuedSku(candidate);
+    if (!parsedCandidate || parsedCandidate.prefix !== baselinePrefix) {
+      throw new Error("Could not issue the next SKU in the configured sequence.");
+    }
+    if (!known.has(normalizeSku(candidate))) return candidate;
+    candidate = incrementIssuedSku(candidate);
+  }
+
+  throw new Error("Could not find an unused SKU in the configured sequence.");
 }
 
 function getLastIssuedSku(dbData) {
-  const db = openOrderSqliteDb();
-  const storedSku = db.prepare("SELECT value FROM app_settings WHERE key = ?").get("lastIssuedSku")?.value || "";
-  return highestIssuedSku(dbData, storedSku);
+  return sequentialIssuedSkuCursor(dbData);
 }
 
 function writeLastIssuedSkuSetting(sku) {
@@ -2619,33 +2656,17 @@ async function handleApi(req, res) {
     }
     const db = openOrderSqliteDb();
     const deleted = db.prepare("DELETE FROM issued_skus WHERE sku = ?").run(sku).changes;
-    const parsed = parseIssuedSku(sku);
-    if (parsed) {
-      const candidates = [];
-      for (const row of readIssuedSkuRows()) candidates.push(row.sku);
-      const highest = candidates
-        .filter(candidate => parseIssuedSku(candidate)?.prefix === parsed.prefix)
-        .reduce((current, candidate) => compareIssuedSku(candidate, current) > 0 ? normalizeSku(candidate) : current, "");
-      if (highest) {
-        writeLastIssuedSkuSetting(highest);
-      } else {
-        writeLastIssuedSkuSetting(decrementIssuedSku(sku));
-      }
-    }
+    writeLastIssuedSkuSetting(getLastIssuedSku(readOrderDb()));
     sendJson(res, 200, { ok: true, deleted: Boolean(deleted), sku });
     return true;
   }
 
   if (req.method === "POST" && url.pathname === "/api/order-form/next-sku") {
     try {
-      const body = await readJsonBody(req);
+      await readJsonBody(req);
       const dbData = readOrderDb();
-      const storedSku = getLastIssuedSku(dbData);
-      const requestedSku = normalizeSku(body.currentSku);
-      const requested = parseIssuedSku(requestedSku);
-      const stored = parseIssuedSku(storedSku);
-      const baseline = requested && (!stored || (requested.prefix === stored.prefix && requested.number > stored.number)) ? requestedSku : storedSku;
-      const nextSku = incrementIssuedSku(baseline);
+      const baseline = getLastIssuedSku(dbData);
+      const nextSku = nextAvailableIssuedSku(dbData, baseline);
       setLastIssuedSku(nextSku);
       sendJson(res, 200, { sku: nextSku, previousSku: baseline || "" });
     } catch (error) {
@@ -2712,11 +2733,10 @@ async function handleApi(req, res) {
         orderNumber: order.orderNumber || nextOrderNumber(db),
         savedAt: new Date().toISOString()
       };
-      const lastIssuedSku = highestIssuedSku(db, getLastIssuedSku(db));
       savedOrder = saveOrderFormOrder(db, savedOrder);
       syncWorkflowFromOrderStatus(savedOrder);
-      setLastIssuedSku(lastIssuedSku);
       const refreshed = readOrderDb();
+      writeLastIssuedSkuSetting(getLastIssuedSku(refreshed));
       sendJson(res, 200, { ok: true, order: savedOrder, nextOrderNumber: nextOrderNumber(refreshed) });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not save order" });
