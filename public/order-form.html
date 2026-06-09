@@ -484,9 +484,25 @@ async function handleImageUpload(id,event){
   state.className="lookup-state";
   try{
     const imageData=await compressImageFile(file);
-    set(`imageUrl-${id}`,imageData);
+    state.textContent="Uploading image";
+    const response=await apiFetch("/api/order-form/image",{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({
+        orderNumber:val("order-number"),
+        lineId:id,
+        sku:val(`sku-${id}`),
+        buyingCode:val(`buyingCode-${id}`),
+        fileName:file.name,
+        mimeType:"image/jpeg",
+        imageData
+      })
+    });
+    const result=await response.json();
+    if(!response.ok||!result.imageUrl)throw new Error(result.error||"Could not upload that image.");
+    set(`imageUrl-${id}`,result.imageUrl);
     renderThumb(id);
-    state.textContent=`Image ready (${Math.round(imageData.length/1024)} KB)`;
+    state.textContent=`Image uploaded (${Math.round(Number(result.fileSize||0)/1024)} KB)`;
     state.className="lookup-state ok";
   }catch(error){
     state.textContent="";

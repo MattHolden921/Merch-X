@@ -119,6 +119,61 @@ function writeInvoiceUpload(order, invoiceId, invoice) {
   };
 }
 
+function isDataUrl(value) {
+  return /^data:/i.test(String(value || ""));
+}
+
+function writeImageUpload(folderParts, image) {
+  const parsed = parseDataUrl(image?.imageData || image?.imageUrl || "");
+  if (!parsed) return null;
+  if (!String(parsed.mimeType || "").startsWith("image/")) throw new Error("Choose an image file.");
+  if (parsed.buffer.length > 4_000_000) throw new Error("Choose an image under 4 MB after compression.");
+  const folder = folderParts.map(part => safeSegment(part, "item"));
+  const ext = extensionForMime(image.mimeType || parsed.mimeType, image.fileName);
+  const fileName = `${safeSegment(image.label, "image")}-${crypto.randomUUID()}${ext}`;
+  const relativePath = path.join(...folder, fileName);
+  const absolutePath = absoluteUploadPath(relativePath);
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  fs.writeFileSync(absolutePath, parsed.buffer);
+  return {
+    imageUrl: publicUploadUrl(relativePath),
+    filePath: relativePath.replace(/\\/g, "/"),
+    fileSize: parsed.buffer.length,
+    mimeType: image.mimeType || parsed.mimeType || "image/jpeg",
+    fileName
+  };
+}
+
+function writeOrderLineImageUpload(order, line, index, imageData = "") {
+  return writeImageUpload(["order-images", order.orderNumber || order.id || "drafts"], {
+    imageData: imageData || line.imageUrl,
+    fileName: line.imageFileName || "",
+    mimeType: line.imageMimeType || "",
+    label: line.sku || line.buyingCode || `line-${index + 1}`
+  });
+}
+
+function writeProductImageUpload(product, imageData = "") {
+  return writeImageUpload(["product-images", product.sku || "product"], {
+    imageData: imageData || product.imageUrl,
+    fileName: product.imageFileName || "",
+    mimeType: product.imageMimeType || "",
+    label: product.sku || product.style || "product"
+  });
+}
+
+function materializeOrderImages(order) {
+  let changed = false;
+  const lines = (order.lines || []).map((line, index) => {
+    if (!isDataUrl(line.imageUrl)) return line;
+    const stored = writeOrderLineImageUpload(order, line, index);
+    if (!stored) return line;
+    changed = true;
+    return { ...line, imageUrl: stored.imageUrl };
+  });
+  return changed ? { ...order, lines } : order;
+}
+
 function removeUploadFile(relativePath) {
   if (!relativePath) return;
   try {
@@ -1449,6 +1504,7 @@ function openOrderSqliteDb() {
   }
   migrateInvoiceFilesToDisk(orderSqliteDb);
   importOrderJsonIfNeeded(orderSqliteDb);
+  migrateOrderImagesToDisk(orderSqliteDb);
   return orderSqliteDb;
 }
 
@@ -1506,6 +1562,40 @@ function migrateInvoiceFilesToDisk(db) {
       mimeType: stored.mimeType,
       filePath: stored.filePath,
       fileSize: stored.fileSize
+    });
+  }
+}
+
+function migrateOrderImagesToDisk(db) {
+  const orderRows = db.prepare("SELECT id, data FROM orders WHERE data LIKE '%data:image/%'").all();
+  const updateOrder = db.prepare("UPDATE orders SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+  for (const row of orderRows) {
+    const order = parseJson(row.data, null);
+    if (!order) continue;
+    const migrated = materializeOrderImages(order);
+    if (migrated !== order) updateOrder.run(JSON.stringify(migrated), row.id);
+  }
+
+  const productRows = db.prepare("SELECT sku, data FROM products WHERE data LIKE '%data:image/%'").all();
+  const updateProduct = db.prepare(`
+    UPDATE products
+    SET data = @data,
+        style = @style,
+        supplier_name = @supplierName,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE sku = @sku
+  `);
+  for (const row of productRows) {
+    const product = parseJson(row.data, null);
+    if (!product || !isDataUrl(product.imageUrl)) continue;
+    const stored = writeProductImageUpload(product);
+    if (!stored) continue;
+    const migrated = { ...product, imageUrl: stored.imageUrl };
+    updateProduct.run({
+      sku: row.sku,
+      data: JSON.stringify(migrated),
+      style: migrated.style || migrated.description || "",
+      supplierName: migrated.supplierName || ""
     });
   }
 }
@@ -2359,36 +2449,37 @@ function existingByNormalized(items, key, value) {
 
 function saveOrderFormOrder(dbData, savedOrder) {
   const sqlite = openOrderSqliteDb();
-  const supplierPatch = savedOrder.supplier?.name ? {
-    ...(existingByNormalized(dbData.suppliers || [], "name", savedOrder.supplier.name) || {}),
-    ...savedOrder.supplier,
-    lastOrderNumber: savedOrder.orderNumber,
-    lastOrderedAt: savedOrder.savedAt
+  const storedOrder = materializeOrderImages(savedOrder);
+  const supplierPatch = storedOrder.supplier?.name ? {
+    ...(existingByNormalized(dbData.suppliers || [], "name", storedOrder.supplier.name) || {}),
+    ...storedOrder.supplier,
+    lastOrderNumber: storedOrder.orderNumber,
+    lastOrderedAt: storedOrder.savedAt
   } : null;
-  const productPatches = (savedOrder.lines || [])
+  const productPatches = (storedOrder.lines || [])
     .filter(line => line.sku)
     .map(line => ({
       ...(existingByNormalized(dbData.products || [], "sku", line.sku) || {}),
       ...line,
-      supplierName: savedOrder.supplier?.name || line.supplierName || "",
-      lastOrderNumber: savedOrder.orderNumber,
-      lastOrderedAt: savedOrder.savedAt
+      supplierName: storedOrder.supplier?.name || line.supplierName || "",
+      lastOrderNumber: storedOrder.orderNumber,
+      lastOrderedAt: storedOrder.savedAt
     }));
 
   const write = sqlite.transaction(() => {
-    sqlite.prepare("DELETE FROM orders WHERE id = ? OR order_number = ?").run(String(savedOrder.id), savedOrder.orderNumber);
+    sqlite.prepare("DELETE FROM orders WHERE id = ? OR order_number = ?").run(String(storedOrder.id), storedOrder.orderNumber);
     sqlite.prepare(`
       INSERT INTO orders (id, order_number, supplier_name, order_date, status, saved_at, data, archived_at, updated_at)
       VALUES (@id, @orderNumber, @supplierName, @orderDate, @status, @savedAt, @data, @archivedAt, CURRENT_TIMESTAMP)
     `).run({
-      id: String(savedOrder.id),
-      orderNumber: savedOrder.orderNumber,
-      supplierName: savedOrder.supplier?.name || "",
-      orderDate: savedOrder.orderDate || "",
-      status: savedOrder.status || "",
-      savedAt: savedOrder.savedAt,
-      data: JSON.stringify(savedOrder),
-      archivedAt: savedOrder.archivedAt || ""
+      id: String(storedOrder.id),
+      orderNumber: storedOrder.orderNumber,
+      supplierName: storedOrder.supplier?.name || "",
+      orderDate: storedOrder.orderDate || "",
+      status: storedOrder.status || "",
+      savedAt: storedOrder.savedAt,
+      data: JSON.stringify(storedOrder),
+      archivedAt: storedOrder.archivedAt || ""
     });
 
     if (supplierPatch?.name) {
@@ -2433,6 +2524,7 @@ function saveOrderFormOrder(dbData, savedOrder) {
     }
   });
   write();
+  return storedOrder;
 }
 
 async function shopifyLookupBySku(sku) {
@@ -2593,18 +2685,35 @@ async function handleApi(req, res) {
     return true;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/order-form/image") {
+    try {
+      const body = await readJsonBody(req);
+      const stored = writeImageUpload(["order-images", body.orderNumber || "drafts"], {
+        imageData: body.imageData,
+        fileName: body.fileName || "",
+        mimeType: body.mimeType || "",
+        label: body.sku || body.buyingCode || body.lineId || "line"
+      });
+      if (!stored) throw new Error("Could not read that image upload.");
+      sendJson(res, 200, { ok: true, ...stored });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not upload image" });
+    }
+    return true;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/order-form/orders") {
     try {
       const order = await readJsonBody(req);
       const db = readOrderDb();
-      const savedOrder = {
+      let savedOrder = {
         ...order,
         id: order.id || `${Date.now()}`,
         orderNumber: order.orderNumber || nextOrderNumber(db),
         savedAt: new Date().toISOString()
       };
       const lastIssuedSku = highestIssuedSku(db, getLastIssuedSku(db));
-      saveOrderFormOrder(db, savedOrder);
+      savedOrder = saveOrderFormOrder(db, savedOrder);
       syncWorkflowFromOrderStatus(savedOrder);
       setLastIssuedSku(lastIssuedSku);
       const refreshed = readOrderDb();

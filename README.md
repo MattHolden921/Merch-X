@@ -26,7 +26,7 @@ Password protection is enabled when `APP_USERNAME` and `APP_PASSWORD` are set. L
 
 ## Database
 
-Order forms, suppliers, saved product details, invoice metadata, and workflow status are stored in SQLite. Uploaded invoice files are stored on disk and referenced from SQLite.
+Order forms, suppliers, saved product details, invoice metadata, and workflow status are stored in SQLite. Uploaded invoice files and order/product images are stored on disk and referenced from SQLite.
 
 Local default:
 
@@ -57,7 +57,7 @@ For Hetzner/VPS backups, use SQLite's backup command rather than copying a live 
 sqlite3 /var/lib/merch-x/merch-x.sqlite ".backup '/var/backups/merch-x/merch-x-$(date +%F).sqlite'"
 ```
 
-Also back up the uploads directory:
+Also back up the uploads directory, which contains invoices and order/product images:
 
 ```bash
 rsync -a /var/lib/merch-x/uploads/ /var/backups/merch-x/uploads/

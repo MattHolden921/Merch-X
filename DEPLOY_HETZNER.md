@@ -42,6 +42,8 @@ mkdir -p /var/lib/merch-x/uploads
 chown -R root:root /var/lib/merch-x
 ```
 
+This uploads folder holds invoice files and order/product images. If you attach a Hetzner Volume later, mount it at `/var/lib/merch-x` or `/var/lib/merch-x/uploads` and keep the same `UPLOADS_DIR` value.
+
 Create the production environment:
 
 ```bash
