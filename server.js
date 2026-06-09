@@ -5,11 +5,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const Database = require("better-sqlite3");
 
-const port = Number(process.env.PORT || 3000);
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
 const orderDbPath = path.join(dataDir, "order-form-db.json");
-const sqliteDbPath = process.env.DATABASE_PATH || path.join(dataDir, "merch-x.sqlite");
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, ".env");
@@ -30,14 +28,21 @@ function loadEnvFile() {
 
 loadEnvFile();
 
+const port = Number(process.env.PORT || 3000);
+const sqliteDbPath = process.env.DATABASE_PATH || path.join(dataDir, "merch-x.sqlite");
+const uploadsDir = process.env.UPLOADS_DIR || path.join(dataDir, "uploads");
+
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".pdf": "application/pdf",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon"
 };
@@ -55,6 +60,73 @@ function sendJson(res, status, payload) {
 function sendHtml(res, status, html) {
   res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
   res.end(html);
+}
+
+function safeSegment(value, fallback = "file") {
+  const clean = String(value || "").trim().replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "");
+  return clean || fallback;
+}
+
+function extensionForMime(mimeType, fileName = "") {
+  const existing = path.extname(fileName || "").toLowerCase();
+  if (existing) return existing;
+  if (mimeType === "application/pdf") return ".pdf";
+  if (mimeType === "image/png") return ".png";
+  if (mimeType === "image/webp") return ".webp";
+  if (mimeType === "image/gif") return ".gif";
+  if (mimeType === "image/jpeg") return ".jpg";
+  return ".bin";
+}
+
+function parseDataUrl(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:([^;,]+)?(?:;[^,]*)?;base64,(.+)$/);
+  if (!match) return null;
+  return {
+    mimeType: match[1] || "application/octet-stream",
+    buffer: Buffer.from(match[2], "base64")
+  };
+}
+
+function publicUploadUrl(relativePath) {
+  return relativePath ? `/uploads/${relativePath.replace(/\\/g, "/").split("/").map(part => encodeURIComponent(part)).join("/")}` : "";
+}
+
+function absoluteUploadPath(relativePath) {
+  const normalized = path.normalize(String(relativePath || ""));
+  const absolute = path.resolve(uploadsDir, normalized);
+  const root = path.resolve(uploadsDir);
+  if (!absolute.startsWith(root + path.sep) && absolute !== root) throw new Error("Invalid upload path");
+  return absolute;
+}
+
+function writeInvoiceUpload(order, invoiceId, invoice) {
+  if (!invoice?.fileData) return null;
+  const parsed = parseDataUrl(invoice.fileData);
+  if (!parsed) return null;
+  if (parsed.buffer.length > 12_000_000) throw new Error("Choose an invoice under 12 MB.");
+  const orderFolder = safeSegment(order.orderNumber || order.id, "order");
+  const ext = extensionForMime(invoice.mimeType || parsed.mimeType, invoice.fileName);
+  const fileName = `${safeSegment(invoiceId, "invoice")}${ext}`;
+  const relativePath = path.join("invoices", orderFolder, fileName);
+  const absolutePath = absoluteUploadPath(relativePath);
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  fs.writeFileSync(absolutePath, parsed.buffer);
+  return {
+    filePath: relativePath.replace(/\\/g, "/"),
+    fileSize: parsed.buffer.length,
+    mimeType: invoice.mimeType || parsed.mimeType || "application/octet-stream",
+    fileName: invoice.fileName || fileName
+  };
+}
+
+function removeUploadFile(relativePath) {
+  if (!relativePath) return;
+  try {
+    const absolutePath = absoluteUploadPath(relativePath);
+    if (fs.existsSync(absolutePath)) fs.unlinkSync(absolutePath);
+  } catch {
+    // File cleanup should not block the order workflow.
+  }
 }
 
 function escapeHtml(value) {
@@ -1334,6 +1406,8 @@ function openOrderSqliteDb() {
       status TEXT,
       file_name TEXT,
       mime_type TEXT,
+      file_path TEXT,
+      file_size INTEGER DEFAULT 0,
       file_data TEXT,
       notes TEXT,
       uploaded_by TEXT,
@@ -1366,6 +1440,14 @@ function openOrderSqliteDb() {
   if (!orderColumns.includes("archived_at")) {
     orderSqliteDb.prepare("ALTER TABLE orders ADD COLUMN archived_at TEXT").run();
   }
+  const invoiceColumns = orderSqliteDb.prepare("PRAGMA table_info(order_invoices)").all().map(column => column.name);
+  if (!invoiceColumns.includes("file_path")) {
+    orderSqliteDb.prepare("ALTER TABLE order_invoices ADD COLUMN file_path TEXT").run();
+  }
+  if (!invoiceColumns.includes("file_size")) {
+    orderSqliteDb.prepare("ALTER TABLE order_invoices ADD COLUMN file_size INTEGER DEFAULT 0").run();
+  }
+  migrateInvoiceFilesToDisk(orderSqliteDb);
   importOrderJsonIfNeeded(orderSqliteDb);
   return orderSqliteDb;
 }
@@ -1380,6 +1462,52 @@ function importOrderJsonIfNeeded(db) {
   const imported = parseJson(fs.readFileSync(orderDbPath, "utf8"), null);
   if (!imported) return;
   writeOrderDbToSqlite(db, { ...emptyOrderDb(), ...imported });
+}
+
+function migrateInvoiceFilesToDisk(db) {
+  const rows = db.prepare(`
+    SELECT inv.id, inv.order_id, inv.file_name, inv.mime_type, inv.file_data, inv.file_path, ord.data AS order_data
+    FROM order_invoices inv
+    LEFT JOIN orders ord ON ord.id = inv.order_id
+    WHERE inv.file_data IS NOT NULL AND inv.file_data != ''
+  `).all();
+  if (!rows.length) return;
+  const update = db.prepare(`
+    UPDATE order_invoices
+    SET file_name = @fileName,
+        mime_type = @mimeType,
+        file_path = @filePath,
+        file_size = @fileSize,
+        file_data = '',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `);
+  for (const row of rows) {
+    if (row.file_path) {
+      update.run({
+        id: row.id,
+        fileName: row.file_name || "",
+        mimeType: row.mime_type || "",
+        filePath: row.file_path,
+        fileSize: 0
+      });
+      continue;
+    }
+    const order = parseJson(row.order_data, { id: row.order_id, orderNumber: row.order_id });
+    const stored = writeInvoiceUpload(order, row.id, {
+      fileData: row.file_data,
+      fileName: row.file_name,
+      mimeType: row.mime_type
+    });
+    if (!stored) continue;
+    update.run({
+      id: row.id,
+      fileName: stored.fileName,
+      mimeType: stored.mimeType,
+      filePath: stored.filePath,
+      fileSize: stored.fileSize
+    });
+  }
 }
 
 function writeOrderDbToSqlite(db, dbData) {
@@ -1993,6 +2121,7 @@ function deleteStoredOrder(orderId, actorName = "") {
   if (!order) throw new Error("Order not found");
   if (!canDeleteOrder(order)) throw new Error("Only draft, rejected, cancelled, or empty orders can be deleted.");
   const db = openOrderSqliteDb();
+  const invoiceFiles = db.prepare("SELECT file_path FROM order_invoices WHERE order_id = ?").all(String(orderId));
   const remove = db.transaction(() => {
     db.prepare("DELETE FROM order_invoices WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_events WHERE order_id = ?").run(String(orderId));
@@ -2000,6 +2129,7 @@ function deleteStoredOrder(orderId, actorName = "") {
     db.prepare("DELETE FROM orders WHERE id = ?").run(String(orderId));
   });
   remove();
+  for (const row of invoiceFiles) removeUploadFile(row.file_path || "");
   return { id: String(orderId), orderNumber: order.orderNumber || "" };
 }
 
@@ -2022,6 +2152,7 @@ function syncWorkflowFromOrderStatus(savedOrder) {
 }
 
 function invoiceFromRow(row, includeFile = true) {
+  const filePath = row.file_path || "";
   return {
     id: row.id,
     orderId: row.order_id,
@@ -2036,7 +2167,10 @@ function invoiceFromRow(row, includeFile = true) {
     status: row.status || "Awaiting FD",
     fileName: row.file_name || "",
     mimeType: row.mime_type || "",
-    fileData: includeFile ? row.file_data || "" : "",
+    filePath,
+    fileUrl: publicUploadUrl(filePath),
+    fileSize: Number(row.file_size || 0),
+    fileData: "",
     notes: row.notes || "",
     uploadedBy: row.uploaded_by || "",
     uploadedAt: row.uploaded_at || "",
@@ -2076,16 +2210,18 @@ function saveOrderInvoice(order, body) {
   const id = String(invoice.id || crypto.randomUUID());
   const existing = db.prepare("SELECT * FROM order_invoices WHERE id = ? AND order_id = ?").get(id, String(order.id));
   const existingInvoice = existing ? invoiceFromRow(existing) : {};
-  const fileData = invoice.fileData || existingInvoice.fileData || "";
-  const fileName = invoice.fileName || existingInvoice.fileName || "";
-  const mimeType = invoice.mimeType || existingInvoice.mimeType || "";
+  const uploadedFile = writeInvoiceUpload(order, id, invoice);
+  const filePath = uploadedFile?.filePath || existingInvoice.filePath || "";
+  const fileSize = uploadedFile?.fileSize || existingInvoice.fileSize || 0;
+  const fileName = uploadedFile?.fileName || invoice.fileName || existingInvoice.fileName || "";
+  const mimeType = uploadedFile?.mimeType || invoice.mimeType || existingInvoice.mimeType || "";
   db.prepare(`
     INSERT INTO order_invoices (
       id, order_id, invoice_type, invoice_number, invoice_date, due_date, amount, currency,
-      is_received, sent_to_fd, status, file_name, mime_type, file_data, notes, uploaded_by, uploaded_at, updated_at
+      is_received, sent_to_fd, status, file_name, mime_type, file_path, file_size, file_data, notes, uploaded_by, uploaded_at, updated_at
     ) VALUES (
       @id, @orderId, @invoiceType, @invoiceNumber, @invoiceDate, @dueDate, @amount, @currency,
-      @isReceived, @sentToFd, @status, @fileName, @mimeType, @fileData, @notes, @uploadedBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      @isReceived, @sentToFd, @status, @fileName, @mimeType, @filePath, @fileSize, '', @notes, @uploadedBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
     )
     ON CONFLICT(id) DO UPDATE SET
       invoice_type = excluded.invoice_type,
@@ -2099,7 +2235,9 @@ function saveOrderInvoice(order, body) {
       status = excluded.status,
       file_name = excluded.file_name,
       mime_type = excluded.mime_type,
-      file_data = excluded.file_data,
+      file_path = excluded.file_path,
+      file_size = excluded.file_size,
+      file_data = '',
       notes = excluded.notes,
       uploaded_by = excluded.uploaded_by,
       updated_at = CURRENT_TIMESTAMP
@@ -2117,10 +2255,14 @@ function saveOrderInvoice(order, body) {
     status: String(invoice.status || (invoice.sentToFd ? "Sent to FD" : "Awaiting FD")).trim(),
     fileName,
     mimeType,
-    fileData,
+    filePath,
+    fileSize,
     notes: String(invoice.notes || "").trim(),
     uploadedBy: String(body.actorName || invoice.uploadedBy || "").trim()
   });
+  if (uploadedFile?.filePath && existingInvoice.filePath && uploadedFile.filePath !== existingInvoice.filePath) {
+    removeUploadFile(existingInvoice.filePath);
+  }
 
   const action = invoice.sentToFd ? "Invoice uploaded and sent to FD" : "Invoice uploaded";
   recordOrderEvent(order.id, "invoice", body.actorName || "", action, { invoiceId: id, invoiceNumber: invoice.invoiceNumber || "", fileName });
@@ -2195,6 +2337,7 @@ function deleteOrderInvoice(order, body) {
   const invoice = db.prepare("SELECT * FROM order_invoices WHERE id = ? AND order_id = ?").get(invoiceId, String(order.id));
   if (!invoice) throw new Error("Invoice not found");
   db.prepare("DELETE FROM order_invoices WHERE id = ? AND order_id = ?").run(invoiceId, String(order.id));
+  removeUploadFile(invoice.file_path || "");
   recordOrderEvent(order.id, "invoice", body.actorName || "", "Invoice deleted", { invoiceId, invoiceNumber: invoice.invoice_number || "", fileName: invoice.file_name || "" });
   syncPaymentWorkflowFromInvoices(order, body.actorName || "");
   return readOrderInvoices(order.id);
@@ -2645,6 +2788,32 @@ async function handleApi(req, res) {
 
 function serveStatic(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  if (url.pathname.startsWith("/uploads/")) {
+    const relativePath = decodeURIComponent(url.pathname.replace(/^\/uploads\/+/, ""));
+    let filePath;
+    try {
+      filePath = absoluteUploadPath(relativePath);
+    } catch {
+      res.writeHead(403);
+      res.end("Forbidden");
+      return;
+    }
+    fs.readFile(filePath, (error, data) => {
+      if (error) {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
+      const ext = path.extname(filePath).toLowerCase();
+      res.writeHead(200, {
+        "content-type": mimeTypes[ext] || "application/octet-stream",
+        "cache-control": "private, max-age=3600"
+      });
+      res.end(data);
+    });
+    return;
+  }
+
   const safePath = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, "");
   const requestedPath = safePath === path.sep ? "index.html" : safePath.slice(1);
   const filePath = path.join(publicDir, requestedPath);

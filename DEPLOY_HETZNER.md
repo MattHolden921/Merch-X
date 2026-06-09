@@ -35,6 +35,13 @@ git clone YOUR_GITHUB_REPO_URL .
 npm install --omit=dev
 ```
 
+Create persistent app storage:
+
+```bash
+mkdir -p /var/lib/merch-x/uploads
+chown -R root:root /var/lib/merch-x
+```
+
 Create the production environment:
 
 ```bash
@@ -47,6 +54,8 @@ Use:
 APP_USERNAME=merch
 APP_PASSWORD=use-a-long-random-password
 PORT=3000
+DATABASE_PATH=/var/lib/merch-x/merch-x.sqlite
+UPLOADS_DIR=/var/lib/merch-x/uploads
 ```
 
 ## 3. Run with systemd

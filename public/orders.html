@@ -375,7 +375,7 @@ function renderInvoiceTable(invoices){
 }
 
 function renderInvoiceRow(invoice){
-  const fileLink=invoice.fileData?`<a class="file-icon" href="${attr(invoice.fileData)}" download="${attr(invoice.fileName||"invoice")}" target="_blank" title="${attr(invoice.fileName||"Open invoice")}" aria-label="Open invoice"></a>`:`<span class="file-icon empty" title="No file attached" aria-label="No file attached"></span>`;
+  const fileLink=invoice.fileUrl?`<a class="file-icon" href="${attr(invoice.fileUrl)}" download="${attr(invoice.fileName||"invoice")}" target="_blank" title="${attr(invoice.fileName||"Open invoice")}" aria-label="Open invoice"></a>`:`<span class="file-icon empty" title="No file attached" aria-label="No file attached"></span>`;
   return `<tr>
     <td><strong title="${attr(invoice.invoiceType||"")}">${escapeHtml(invoice.invoiceNumber||invoice.invoiceType||"Invoice")}</strong><div class="invoice-row-actions"><button type="button" class="mini-btn" onclick="editInvoice('${attr(invoice.id)}')">Edit</button><button type="button" class="mini-btn danger" onclick="deleteInvoice('${attr(invoice.id)}')">Delete</button></div></td>
     <td>${fileLink}</td>

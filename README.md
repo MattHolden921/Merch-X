@@ -26,7 +26,7 @@ Password protection is enabled when `APP_USERNAME` and `APP_PASSWORD` are set. L
 
 ## Database
 
-Order forms, suppliers, and saved product details are stored in SQLite.
+Order forms, suppliers, saved product details, invoice metadata, and workflow status are stored in SQLite. Uploaded invoice files are stored on disk and referenced from SQLite.
 
 Local default:
 
@@ -38,14 +38,29 @@ On a VPS, keep the database outside the repo and set:
 
 ```text
 DATABASE_PATH=/var/lib/merch-x/merch-x.sqlite
+UPLOADS_DIR=/var/lib/merch-x/uploads
 ```
 
 The app creates the SQLite schema on startup. If `data/order-form-db.json` exists and the SQLite database is empty, the app imports the prototype JSON data once.
+
+Local uploaded files default to:
+
+```text
+./data/uploads
+```
+
+On Hetzner, `/var/lib/merch-x/uploads` can be local VPS disk at first, then later a mounted Hetzner Volume without changing the app configuration.
 
 For Hetzner/VPS backups, use SQLite's backup command rather than copying a live database file:
 
 ```bash
 sqlite3 /var/lib/merch-x/merch-x.sqlite ".backup '/var/backups/merch-x/merch-x-$(date +%F).sqlite'"
+```
+
+Also back up the uploads directory:
+
+```bash
+rsync -a /var/lib/merch-x/uploads/ /var/backups/merch-x/uploads/
 ```
 
 ## Deploy
