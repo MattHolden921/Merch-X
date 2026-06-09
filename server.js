@@ -8,12 +8,12 @@ const Database = require("better-sqlite3");
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
 const orderDbPath = path.join(dataDir, "order-form-db.json");
+const envFilePath = path.join(__dirname, ".env");
 
 function loadEnvFile() {
-  const envPath = path.join(__dirname, ".env");
-  if (!fs.existsSync(envPath)) return;
+  if (!fs.existsSync(envFilePath)) return;
 
-  const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
+  const lines = fs.readFileSync(envFilePath, "utf8").split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -24,6 +24,33 @@ function loadEnvFile() {
     const value = trimmed.slice(equalsAt + 1).trim().replace(/^["']|["']$/g, "");
     if (key && process.env[key] == null) process.env[key] = value;
   }
+}
+
+function writeEnvFileValue(key, value) {
+  const line = `${key}=${value}`;
+  if (!fs.existsSync(envFilePath)) {
+    fs.writeFileSync(envFilePath, `${line}\n`);
+    return;
+  }
+
+  const content = fs.readFileSync(envFilePath, "utf8");
+  const lines = content.split(/\r?\n/);
+  let replaced = false;
+  const nextLines = lines.map((currentLine) => {
+    const trimmed = currentLine.trim();
+    if (!trimmed || trimmed.startsWith("#")) return currentLine;
+    const equalsAt = trimmed.indexOf("=");
+    if (equalsAt === -1) return currentLine;
+    const currentKey = trimmed.slice(0, equalsAt).trim();
+    if (currentKey !== key) return currentLine;
+    replaced = true;
+    return line;
+  });
+  if (!replaced) {
+    if (nextLines.length && nextLines[nextLines.length - 1] !== "") nextLines.push("");
+    nextLines.push(line);
+  }
+  fs.writeFileSync(envFilePath, `${nextLines.join("\n").replace(/\n*$/, "")}\n`);
 }
 
 loadEnvFile();
@@ -255,6 +282,7 @@ function gaConfig() {
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || "";
   const oauthRefreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN || "";
+  const oauthRedirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI || "";
   const inlineJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "";
   const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || "";
   let credentials = null;
@@ -265,7 +293,7 @@ function gaConfig() {
     credentials = JSON.parse(fs.readFileSync(credentialsPath, "utf8"));
   }
 
-  return { propertyId, oauthClientId, oauthClientSecret, oauthRefreshToken, credentials };
+  return { propertyId, oauthClientId, oauthClientSecret, oauthRefreshToken, oauthRedirectUri, credentials };
 }
 
 async function googleAccessToken() {
@@ -607,19 +635,43 @@ async function fetchOrderMetrics(range) {
 }
 
 function googleRedirectUri(req) {
-  return `http://${req.headers.host}/api/google-auth/callback`;
+  const configured = gaConfig().oauthRedirectUri.trim();
+  if (configured) return configured;
+  const protocol = req.headers["x-forwarded-proto"] || "http";
+  return `${protocol}://${req.headers.host}/api/google-auth/callback`;
 }
 
 function startGoogleAuth(req, res) {
   const { oauthClientId } = gaConfig();
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const redirectUri = googleRedirectUri(req);
   if (!oauthClientId) {
     sendHtml(res, 500, "<p>Set GOOGLE_OAUTH_CLIENT_ID in .env, restart Merch-X, then try again.</p>");
     return;
   }
 
+  if (url.searchParams.get("go") !== "1") {
+    sendHtml(res, 200, `
+      <!doctype html>
+      <html lang="en">
+      <head><meta charset="utf-8"><title>Connect GA4</title>
+      <style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:820px;margin:40px auto;padding:0 18px;line-height:1.55}code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}pre{background:#f4f4f2;border:1px solid #ddd;border-radius:8px;padding:14px;white-space:pre-wrap;word-break:break-all}.btn{display:inline-flex;align-items:center;min-height:36px;padding:0 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:4px;font-weight:650;font-size:14px}a{color:#164f7a}</style></head>
+      <body>
+        <h1>Connect GA4</h1>
+        <p>Google must allow this exact redirect URI on the OAuth client:</p>
+        <pre>${escapeHtml(redirectUri)}</pre>
+        <p>If you see <strong>Error 400: redirect_uri_mismatch</strong>, open the Google Cloud OAuth client for the <code>GOOGLE_OAUTH_CLIENT_ID</code> in your <code>.env</code>, add that full URI under <strong>Authorized redirect URIs</strong>, then continue.</p>
+        <p>Optional: set <code>GOOGLE_OAUTH_REDIRECT_URI=${escapeHtml(redirectUri)}</code> in <code>.env</code> to keep the redirect URI fixed if you run Merch-X on another host or port.</p>
+        <p><a class="btn" href="/api/google-auth/start?go=1">Continue to Google</a></p>
+      </body>
+      </html>
+    `);
+    return;
+  }
+
   const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authUrl.searchParams.set("client_id", oauthClientId);
-  authUrl.searchParams.set("redirect_uri", googleRedirectUri(req));
+  authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("scope", "https://www.googleapis.com/auth/analytics.readonly");
   authUrl.searchParams.set("access_type", "offline");
@@ -672,6 +724,17 @@ async function finishGoogleAuth(req, res) {
     return;
   }
 
+  process.env.GOOGLE_OAUTH_REFRESH_TOKEN = refreshToken;
+  googleToken = response.json.access_token || null;
+  googleTokenExpiresAt = googleToken ? Date.now() + Number(response.json.expires_in || 3600) * 1000 : 0;
+
+  let saveError = "";
+  try {
+    writeEnvFileValue("GOOGLE_OAUTH_REFRESH_TOKEN", refreshToken);
+  } catch (error) {
+    saveError = error.message;
+  }
+
   sendHtml(res, 200, `
     <!doctype html>
     <html lang="en">
@@ -679,9 +742,15 @@ async function finishGoogleAuth(req, res) {
     <style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:820px;margin:40px auto;padding:0 18px;line-height:1.55}code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}pre{background:#f4f4f2;border:1px solid #ddd;border-radius:8px;padding:14px;white-space:pre-wrap;word-break:break-all}a{color:#164f7a}</style></head>
     <body>
       <h1>Google OAuth Connected</h1>
-      <p>Add this line to your Merch-X <code>.env</code> file:</p>
-      <pre>GOOGLE_OAUTH_REFRESH_TOKEN=${escapeHtml(refreshToken)}</pre>
-      <p>Then restart the Merch-X local server and refresh <a href="/merchandising.html">Product merchandising</a>.</p>
+      ${saveError ? `
+        <p>The token is active for this running server, but Merch-X could not save it to <code>.env</code>.</p>
+        <p>Add this line manually before the next restart:</p>
+        <pre>GOOGLE_OAUTH_REFRESH_TOKEN=${escapeHtml(refreshToken)}</pre>
+        <p><strong>Save error:</strong> ${escapeHtml(saveError)}</p>
+      ` : `
+        <p>The refresh token has been saved to <code>.env</code> and activated for this running server.</p>
+      `}
+      <p>Refresh <a href="/merchandising.html">Product merchandising</a> to pull GA4 metrics.</p>
     </body>
     </html>
   `);
