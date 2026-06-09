@@ -10,7 +10,7 @@
 .head{align-items:center}
 .status-pill{white-space:nowrap}
 .metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
-.toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 190px 190px 160px;gap:10px;align-items:end}
+.toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 160px 170px 160px 150px;gap:10px;align-items:end}
 .toolbar .field{margin-bottom:0}
 .layout{display:grid;grid-template-columns:430px minmax(0,1fr);gap:14px;align-items:start}
 .layout>*{min-width:0}
@@ -110,6 +110,7 @@ textarea{min-height:70px;resize:vertical}
   <section class="panel">
     <div class="toolbar">
       <div class="field"><label>Search</label><input id="search" placeholder="Order, supplier, buyer, SKU"></div>
+      <div class="field"><label>View</label><select class="select" id="archive-filter"><option value="active">Active</option><option value="archived">Archived</option><option value="all">All</option></select></div>
       <div class="field"><label>Status</label><select class="select" id="status-filter"></select></div>
       <div class="field"><label>Owner</label><select class="select" id="owner-filter"></select></div>
       <div class="field"><label>Viewing as</label><select class="select" id="role-filter"><option>Buyer</option><option>Buying Director</option><option>FD / Finance</option><option>Merchandising</option></select></div>
@@ -199,11 +200,12 @@ function renderMetrics(){
 
 function recalcMetrics(){
   const todayIso=new Date().toISOString().slice(0,10);
+  const activeOrders=state.orders.filter(order=>!order.archivedAt);
   state.metrics={
-    totalOrders:state.orders.length,
-    awaitingApproval:state.orders.filter(order=>order.workflow.approvalStatus==="Pending director approval").length,
-    readyToPay:state.orders.filter(order=>["Ready to pay","Overdue","Part paid"].includes(order.workflow.paymentStatus)).length,
-    intakeRisk:state.orders.filter(order=>order.workflow.intakeStatus==="Delayed"||(order.workflow.intakeEtaDate&&order.workflow.intakeEtaDate<todayIso&&order.workflow.intakeStatus!=="Received")).length
+    totalOrders:activeOrders.length,
+    awaitingApproval:activeOrders.filter(order=>order.workflow.approvalStatus==="Pending director approval").length,
+    readyToPay:activeOrders.filter(order=>["Ready to pay","Overdue","Part paid"].includes(order.workflow.paymentStatus)).length,
+    intakeRisk:activeOrders.filter(order=>order.workflow.intakeStatus==="Delayed"||(order.workflow.intakeEtaDate&&order.workflow.intakeEtaDate<todayIso&&order.workflow.intakeStatus!=="Received")).length
   };
 }
 
@@ -211,7 +213,10 @@ function filterOrders(){
   const search=val("search").toLowerCase();
   const status=val("status-filter");
   const owner=val("owner-filter");
+  const archiveMode=val("archive-filter")||"active";
   return state.orders.filter(order=>{
+    if(archiveMode==="active"&&order.archivedAt)return false;
+    if(archiveMode==="archived"&&!order.archivedAt)return false;
     const haystack=[
       order.orderNumber,order.supplierName,order.buyerName,order.buyerEmail,order.compositeStatus,
       ...(order.categories||[]),...(order.order?.lines||[]).flatMap(line=>[line.sku,line.style,line.buyingCode])
@@ -221,8 +226,10 @@ function filterOrders(){
 }
 
 function renderFilters(){
-  const statuses=[...new Set(state.orders.map(order=>order.compositeStatus).filter(Boolean))].sort();
-  const activeOwners=[...new Set(state.orders.map(order=>order.workflow.nextActionOwner).filter(Boolean))].sort();
+  const archiveMode=val("archive-filter")||"active";
+  const scoped=state.orders.filter(order=>archiveMode==="all"||(archiveMode==="archived"?order.archivedAt:!order.archivedAt));
+  const statuses=[...new Set(scoped.map(order=>order.compositeStatus).filter(Boolean))].sort();
+  const activeOwners=[...new Set(scoped.map(order=>order.workflow.nextActionOwner).filter(Boolean))].sort();
   el("status-filter").innerHTML=options(statuses,val("status-filter"),"All statuses");
   el("owner-filter").innerHTML=options(activeOwners,val("owner-filter"),"All owners");
 }
@@ -265,7 +272,7 @@ function renderLineTable(order){
   const lines=order.order?.lines||[];
   if(!lines.length)return "";
   return `<section class="work-panel" style="margin-top:14px">
-    <div class="work-head"><h3>Order lines</h3><span class="pill">${lines.length} lines</span></div>
+    <div class="work-head"><h3>Order lines</h3><div class="actions"><span class="pill">${lines.length} lines</span><button type="button" class="btn" onclick="exportOrderLinesExcel()">Export Excel</button></div></div>
     <div class="line-table-wrap"><table class="line-table">
       <thead><tr><th>SKU</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Line cost</th></tr></thead>
       <tbody>${lines.map(line=>`<tr>
@@ -279,6 +286,38 @@ function renderLineTable(order){
       </tr>`).join("")}</tbody>
     </table></div>
   </section>`;
+}
+
+function exportOrderLinesExcel(){
+  const order=state.selected;
+  const lines=order?.order?.lines||[];
+  if(!order||!lines.length)return;
+  const headers=["Order number","Supplier","SKU","Style","Category","Colour","Size","Quantity","Unit cost GBP","Line cost GBP","Season","Buying code"];
+  const rows=lines.map(line=>[
+    order.orderNumber,
+    order.supplierName,
+    line.sku||"",
+    line.style||line.description||"",
+    line.category||"",
+    line.colour||line.color||"",
+    line.size||"",
+    Number(line.quantity||0),
+    Number(line.unitCostGbp||line.unitCost||0).toFixed(2),
+    Number(line.lineCost||0).toFixed(2),
+    line.season||"",
+    line.buyingCode||line.supplierSku||""
+  ]);
+  const table=`<table><thead><tr>${headers.map(header=>`<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(cell=>`<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>${table}</body></html>`;
+  const blob=new Blob([html],{type:"application/vnd.ms-excel"});
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement("a");
+  link.href=url;
+  link.download=`${(order.orderNumber||"order").replace(/[^a-z0-9-]+/gi,"-")}-lines.xls`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function renderEvents(){
@@ -349,6 +388,14 @@ function renderInvoiceRow(invoice){
   </tr>`;
 }
 
+function orderActionButtons(order){
+  const archiveButton=order.archivedAt
+    ? `<button type="button" class="btn" onclick="setArchiveSelected(false)">Restore</button>`
+    : order.canArchive?`<button type="button" class="btn" onclick="setArchiveSelected(true)">Archive</button>`:"";
+  const deleteButton=order.canDelete?`<button type="button" class="btn" onclick="deleteSelectedOrder()">Delete</button>`:"";
+  return `${archiveButton}${deleteButton}`;
+}
+
 function renderDetail(){
   const order=state.selected;
   if(!order){
@@ -366,6 +413,7 @@ function renderDetail(){
         <div class="actions">
           <span class="badge ${badgeClass(order.compositeStatus)}">${escapeHtml(order.compositeStatus)}</span>
           <a class="btn" href="order-form.html">Open form</a>
+          ${orderActionButtons(order)}
         </div>
       </div>
       <div class="summary-grid">
@@ -599,6 +647,47 @@ async function saveInvoicePayload(invoice){
   renderDetail();
 }
 
+async function setArchiveSelected(archived){
+  if(!state.selectedId)return;
+  const label=archived?"archive":"restore";
+  if(!window.confirm(`${archived?"Archive":"Restore"} ${state.selected?.orderNumber||"this order"}?`))return;
+  localStorage.setItem("ordersActorName",val("actor-name"));
+  const response=await apiFetch("/api/orders/archive",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,actorName:val("actor-name"),archived})});
+  const result=await response.json();
+  if(!response.ok||!result.ok){showError(new Error(result.error||`Could not ${label} order`));return;}
+  state.selected=result.order;
+  state.events=result.events||[];
+  state.invoices=result.invoices||[];
+  const index=state.orders.findIndex(order=>order.id===result.order.id);
+  if(index!==-1)state.orders[index]=result.order;
+  recalcMetrics();
+  renderFilters();
+  renderMetrics();
+  renderOrders();
+  renderDetail();
+}
+
+async function deleteSelectedOrder(){
+  if(!state.selectedId)return;
+  if(!window.confirm(`Delete ${state.selected?.orderNumber||"this order"}? This cannot be undone.`))return;
+  localStorage.setItem("ordersActorName",val("actor-name"));
+  const response=await apiFetch("/api/orders/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,actorName:val("actor-name")})});
+  const result=await response.json();
+  if(!response.ok||!result.ok){showError(new Error(result.error||"Could not delete order"));return;}
+  state.orders=state.orders.filter(order=>order.id!==state.selectedId);
+  state.selectedId="";
+  state.selected=null;
+  state.events=[];
+  state.invoices=[];
+  recalcMetrics();
+  renderFilters();
+  renderMetrics();
+  renderOrders();
+  const next=filterOrders()[0];
+  if(next)await selectOrder(next.id);
+  else renderDetail();
+}
+
 async function saveIntake(){
   const status=val("intake-status");
   await saveWorkflow("intake",{
@@ -650,6 +739,7 @@ async function loadWorkspace(){
   const data=await response.json();
   state.orders=data.orders||[];
   state.metrics=data.metrics||{};
+  recalcMetrics();
   renderMetrics();
   renderFilters();
   renderOrders();
@@ -660,7 +750,7 @@ async function loadWorkspace(){
   }
 }
 
-["search","status-filter","owner-filter","role-filter"].forEach(id=>el(id).addEventListener("input",renderOrders));
+["search","archive-filter","status-filter","owner-filter","role-filter"].forEach(id=>el(id).addEventListener("input",()=>{renderFilters();renderOrders();}));
 el("refresh-btn").addEventListener("click",()=>loadWorkspace().catch(showError));
 loadWorkspace().catch(error=>{
   renderMetrics();

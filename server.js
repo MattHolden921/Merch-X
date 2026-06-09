@@ -1281,6 +1281,7 @@ function openOrderSqliteDb() {
       status TEXT,
       saved_at TEXT NOT NULL,
       data TEXT NOT NULL,
+      archived_at TEXT,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -1361,6 +1362,10 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_order_events_order_created ON order_events(order_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_order_invoices_order ON order_invoices(order_id, updated_at);
   `);
+  const orderColumns = orderSqliteDb.prepare("PRAGMA table_info(orders)").all().map(column => column.name);
+  if (!orderColumns.includes("archived_at")) {
+    orderSqliteDb.prepare("ALTER TABLE orders ADD COLUMN archived_at TEXT").run();
+  }
   importOrderJsonIfNeeded(orderSqliteDb);
   return orderSqliteDb;
 }
@@ -1423,8 +1428,8 @@ function writeOrderDbToSqlite(db, dbData) {
     }
 
     const insertOrder = db.prepare(`
-      INSERT INTO orders (id, order_number, supplier_name, order_date, status, saved_at, data, updated_at)
-      VALUES (@id, @orderNumber, @supplierName, @orderDate, @status, @savedAt, @data, CURRENT_TIMESTAMP)
+      INSERT INTO orders (id, order_number, supplier_name, order_date, status, saved_at, data, archived_at, updated_at)
+      VALUES (@id, @orderNumber, @supplierName, @orderDate, @status, @savedAt, @data, @archivedAt, CURRENT_TIMESTAMP)
     `);
     for (const order of data.orders || []) {
       if (!order?.id || !order?.orderNumber) continue;
@@ -1435,7 +1440,8 @@ function writeOrderDbToSqlite(db, dbData) {
         orderDate: order.orderDate || "",
         status: order.status || "",
         savedAt: order.savedAt || new Date().toISOString(),
-        data: JSON.stringify(order)
+        data: JSON.stringify(order),
+        archivedAt: order.archivedAt || ""
       });
     }
   });
@@ -1450,7 +1456,10 @@ function readOrderDb() {
   return {
     suppliers: db.prepare("SELECT data FROM suppliers ORDER BY name COLLATE NOCASE").all().map(row => parseJson(row.data, null)).filter(Boolean),
     products: db.prepare("SELECT data FROM products ORDER BY updated_at").all().map(row => parseJson(row.data, null)).filter(Boolean),
-    orders: db.prepare("SELECT data FROM orders ORDER BY saved_at").all().map(row => parseJson(row.data, null)).filter(Boolean),
+    orders: db.prepare("SELECT data, archived_at AS archivedAt FROM orders ORDER BY saved_at").all().map(row => {
+      const order = parseJson(row.data, null);
+      return order ? { ...order, archivedAt: order.archivedAt || row.archivedAt || "" } : null;
+    }).filter(Boolean),
     company,
     delivery
   };
@@ -1818,6 +1827,7 @@ function readOrderEvents(orderId, limit = 40) {
 }
 
 function orderCompositeStatus(order, workflow) {
+  if (order?.archivedAt) return "Archived";
   if (String(order?.status || "").toLowerCase() === "cancelled") return "Cancelled";
   if (workflow.intakeStatus === "Received") return "Received";
   if (workflow.intakeStatus === "Part received") return "Part received";
@@ -1845,6 +1855,7 @@ function publicManagedOrder(order, workflowRow) {
     buyerName: order.company?.department || "",
     buyerEmail: order.company?.buyerEmail || "",
     status: order.status || "Draft",
+    archivedAt: order.archivedAt || "",
     compositeStatus: orderCompositeStatus(order, workflow),
     season: order.season || "",
     total: Number(order.totals?.grand || 0),
@@ -1858,9 +1869,22 @@ function publicManagedOrder(order, workflowRow) {
     units,
     categories,
     invoices: invoiceSummary(order.id),
+    canDelete: canDeleteOrder(order),
+    canArchive: canArchiveOrder(order),
     workflow,
     order
   };
+}
+
+function canDeleteOrder(order) {
+  const status = String(order?.status || "Draft").trim().toLowerCase();
+  const lines = order?.lines || [];
+  return !order?.archivedAt && (!lines.length || ["draft", "changes requested", "rejected", "cancelled"].includes(status));
+}
+
+function canArchiveOrder(order) {
+  const status = String(order?.status || "").trim().toLowerCase();
+  return !order?.archivedAt && ["received", "paid", "cancelled", "rejected"].includes(status);
 }
 
 function orderWorkflowMetrics(orders) {
@@ -1945,6 +1969,38 @@ function updateStoredOrderStatus(orderId, status) {
     WHERE id = ?
   `).run(status, JSON.stringify(order), String(orderId));
   return order;
+}
+
+function setOrderArchived(orderId, archived, actorName = "") {
+  const db = openOrderSqliteDb();
+  const row = db.prepare("SELECT data FROM orders WHERE id = ?").get(String(orderId));
+  const order = parseJson(row?.data, null);
+  if (!order) throw new Error("Order not found");
+  const archivedAt = archived ? new Date().toISOString() : "";
+  order.archivedAt = archivedAt;
+  db.prepare(`
+    UPDATE orders
+    SET data = ?, archived_at = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(JSON.stringify(order), archivedAt, String(orderId));
+  recordOrderEvent(orderId, "archive", actorName, archived ? "Order archived" : "Order restored", { archivedAt });
+  return order;
+}
+
+function deleteStoredOrder(orderId, actorName = "") {
+  const dbData = readOrderDb();
+  const order = dbData.orders.find(item => String(item.id) === String(orderId));
+  if (!order) throw new Error("Order not found");
+  if (!canDeleteOrder(order)) throw new Error("Only draft, rejected, cancelled, or empty orders can be deleted.");
+  const db = openOrderSqliteDb();
+  const remove = db.transaction(() => {
+    db.prepare("DELETE FROM order_invoices WHERE order_id = ?").run(String(orderId));
+    db.prepare("DELETE FROM order_events WHERE order_id = ?").run(String(orderId));
+    db.prepare("DELETE FROM order_workflows WHERE order_id = ?").run(String(orderId));
+    db.prepare("DELETE FROM orders WHERE id = ?").run(String(orderId));
+  });
+  remove();
+  return { id: String(orderId), orderNumber: order.orderNumber || "" };
 }
 
 function syncOrderStatusFromWorkflowRow(order, workflowRow) {
@@ -2179,8 +2235,8 @@ function saveOrderFormOrder(dbData, savedOrder) {
   const write = sqlite.transaction(() => {
     sqlite.prepare("DELETE FROM orders WHERE id = ? OR order_number = ?").run(String(savedOrder.id), savedOrder.orderNumber);
     sqlite.prepare(`
-      INSERT INTO orders (id, order_number, supplier_name, order_date, status, saved_at, data, updated_at)
-      VALUES (@id, @orderNumber, @supplierName, @orderDate, @status, @savedAt, @data, CURRENT_TIMESTAMP)
+      INSERT INTO orders (id, order_number, supplier_name, order_date, status, saved_at, data, archived_at, updated_at)
+      VALUES (@id, @orderNumber, @supplierName, @orderDate, @status, @savedAt, @data, @archivedAt, CURRENT_TIMESTAMP)
     `).run({
       id: String(savedOrder.id),
       orderNumber: savedOrder.orderNumber,
@@ -2188,7 +2244,8 @@ function saveOrderFormOrder(dbData, savedOrder) {
       orderDate: savedOrder.orderDate || "",
       status: savedOrder.status || "",
       savedAt: savedOrder.savedAt,
-      data: JSON.stringify(savedOrder)
+      data: JSON.stringify(savedOrder),
+      archivedAt: savedOrder.archivedAt || ""
     });
 
     if (supplierPatch?.name) {
@@ -2287,10 +2344,11 @@ async function handleApi(req, res) {
     const db = readOrderDb();
     const workflows = readOrderWorkflowMap();
     const orders = db.orders.map(order => syncOrderStatusFromWorkflowRow(order, workflows.get(String(order.id))));
+    const activeOrders = orders.filter(order => !order.archivedAt);
     sendJson(res, 200, {
       suppliers: db.suppliers,
       products: [],
-      orders: orders.slice(-20).reverse(),
+      orders: activeOrders.slice(-20).reverse(),
       company: db.company,
       delivery: db.delivery,
       nextOrderNumber: nextOrderNumber({ ...db, orders }),
@@ -2526,6 +2584,35 @@ async function handleApi(req, res) {
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not delete invoice" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/archive") {
+    try {
+      const body = await readJsonBody(req);
+      const orderId = String(body.orderId || "");
+      const order = setOrderArchived(orderId, Boolean(body.archived), body.actorName || "");
+      const workflow = readOrderWorkflowMap().get(orderId);
+      sendJson(res, 200, {
+        ok: true,
+        order: publicManagedOrder(order, workflow),
+        events: readOrderEvents(orderId),
+        invoices: readOrderInvoices(orderId)
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not archive order" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/delete") {
+    try {
+      const body = await readJsonBody(req);
+      const deleted = deleteStoredOrder(body.orderId, body.actorName || "");
+      sendJson(res, 200, { ok: true, deleted });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not delete order" });
     }
     return true;
   }
