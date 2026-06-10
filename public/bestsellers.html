@@ -4,19 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bestsellers Report</title>
+<link rel="stylesheet" href="design-system.css">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#fff;--bg2:#f7f7f5;--bg3:#f0efe9;--text:#1a1a18;--text2:#6b6b67;--text3:#a0a09b;--border:rgba(0,0,0,0.12);--border2:rgba(0,0,0,0.22);--danger:#c0392b;--warning:#b8700a;--success:#1e7e4a;--info:#1a5fa8;--r:8px;--rl:12px}
-@media(prefers-color-scheme:dark){:root{--bg:#1e1e1c;--bg2:#2a2a28;--bg3:#333330;--text:#f0efe9;--text2:#a0a09b;--text3:#6b6b67;--border:rgba(255,255,255,0.12);--border2:rgba(255,255,255,0.22);--danger:#e05c4b;--warning:#e09a30;--success:#3dba6e;--info:#5a9fe8}}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg3);color:var(--text);min-height:100vh;padding:24px 16px 48px}
+:root{--bg:var(--ds-bg-surface);--bg2:var(--ds-bg-muted);--bg3:var(--ds-bg-page);--text:var(--ds-text);--text2:var(--ds-text-muted);--text3:var(--ds-text-soft);--border:var(--ds-line);--border2:var(--ds-line-strong);--danger:var(--ds-bad);--warning:var(--ds-warn);--success:var(--ds-good);--info:var(--ds-info);--r:var(--ds-radius);--rl:var(--ds-radius)}
+body{font-family:var(--ds-font-sans);background:var(--ds-bg-page);color:var(--ds-text);min-height:100vh;padding:22px 16px 48px;text-rendering:optimizeLegibility}
 .wrap{max-width:1600px;margin:0 auto}
 .home-link{display:inline-flex;align-items:center;gap:6px;margin-bottom:14px;color:var(--text2);font-size:12px;text-decoration:none}
 .home-link:hover{color:var(--text)}
-h1{font-size:22px;font-weight:500;margin-bottom:4px}
+h1{font-size:24px;font-weight:650;line-height:1.15;margin-bottom:5px}
 p.sub{font-size:13px;color:var(--text2);margin-bottom:20px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px}
-.box{background:var(--bg);border:1.5px dashed var(--border2);border-radius:var(--rl);padding:20px 16px;text-align:center}
+.box{background:var(--bg);border:1px dashed var(--border2);border-radius:var(--rl);padding:20px 16px;text-align:center}
 .box.over{background:var(--bg2)}
 .box.done{border-color:var(--success);border-style:solid}
 .box-ico{font-size:18px;margin-bottom:6px;color:var(--text3)}
@@ -24,18 +24,34 @@ p.sub{font-size:13px;color:var(--text2);margin-bottom:20px}
 .box-title{font-size:13px;font-weight:500;margin-bottom:3px}
 .box-sub{font-size:11px;color:var(--text2);margin-bottom:12px}
 .box-info{font-size:11px;color:var(--success);margin-bottom:8px;min-height:14px;max-width:220px;margin:0 auto 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.btn{display:inline-block;font-size:12px;padding:7px 16px;border-radius:var(--r);border:.5px solid var(--border2);background:var(--bg2);color:var(--text);cursor:pointer}
-.btn:hover{filter:brightness(.97)}
-.btn-primary{background:var(--text);color:var(--bg);border-color:var(--text);font-size:14px;padding:10px 28px;border-radius:var(--r)}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:34px;font-size:12px;font-weight:600;padding:0 12px;border-radius:var(--r);border:1px solid var(--border2);background:var(--bg);color:var(--text);cursor:pointer;text-decoration:none}
+.btn:hover{background:var(--bg2)}
+.btn.emphasis{background:var(--ds-action);color:#fff;border-color:var(--ds-action)}
+.btn.emphasis:hover{background:var(--ds-action-hover);border-color:var(--ds-action-hover)}
+.btn-primary{display:inline-flex;align-items:center;justify-content:center;min-height:38px;background:var(--ds-action);color:#fff;border:1px solid var(--ds-action);font-size:13px;font-weight:650;padding:0 18px;border-radius:var(--r);cursor:pointer}
+.btn-primary:hover{background:var(--ds-action-hover);border-color:var(--ds-action-hover)}
 .btn-primary:disabled{opacity:.4;cursor:not-allowed}
 .hint{background:var(--bg2);border-radius:var(--r);padding:14px 16px;font-size:12px;color:var(--text2);line-height:1.8;margin-bottom:16px}
 .hint strong{color:var(--text)}
+.server-cache{background:var(--bg);border:1px solid var(--border);border-radius:var(--rl);padding:16px 18px;margin-bottom:18px}
+.server-cache-top{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px}
+.server-cache h2{font-size:15px;font-weight:600;margin-bottom:3px}
+.server-cache p{font-size:12px;color:var(--text2);line-height:1.55;margin:0}
+.server-controls{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.server-controls .field{display:flex;flex-direction:column;gap:4px}
+.server-controls label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em}
+.server-controls input{font-size:12px;min-height:32px;padding:0 9px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text)}
+.server-periods{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.server-period-select{width:min(420px,100%);min-height:34px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text);font-size:12px;padding:0 34px 0 10px;cursor:pointer}
+.server-week-select{width:160px}
+.server-period{font-size:11px;font-weight:600;padding:5px 10px;border:1px solid var(--border);border-radius:999px;background:var(--bg2);color:var(--text2);cursor:pointer}
+.server-period:hover{border-color:var(--border2);color:var(--text)}
 .status{padding:10px 14px;border-radius:var(--r);font-size:13px;margin-bottom:16px;border:.5px solid var(--border)}
 .status.info{background:var(--bg2);color:var(--text2)}
 .status.err{background:#fdf0ef;color:var(--danger);border-color:#f5c6c6}
 .status.ok{background:#f0faf4;color:var(--success);border-color:#b3dfc3}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:20px}
-.card{background:var(--bg2);border-radius:var(--r);padding:12px 14px}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px}
 .card label{display:block;font-size:11px;color:var(--text2);margin-bottom:4px}
 .card span{font-size:18px;font-weight:500}
 .ctrl-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
@@ -49,13 +65,13 @@ select.ctrl{font-size:12px;padding:5px 24px 5px 10px;border-radius:var(--r);bord
 .cat-map-row{display:grid;grid-template-columns:1fr 180px;gap:8px;align-items:center;padding:5px 0;border-bottom:.5px solid var(--border)}
 .cat-map-sel{font-size:12px;padding:4px 8px;border:.5px solid var(--border2);border-radius:4px;background:var(--bg2);color:var(--text);width:100%}
 .filter-bar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px}
-.cat-card{display:flex;flex-direction:column;gap:3px;padding:8px 12px;border-radius:var(--r);cursor:pointer;border:.5px solid var(--border2);background:var(--bg);text-align:left;min-width:100px;max-width:160px}
+.cat-card{display:flex;flex-direction:column;gap:3px;padding:8px 12px;border-radius:var(--r);cursor:pointer;border:1px solid var(--border2);background:var(--bg);text-align:left;min-width:100px;max-width:160px}
 .cat-card:hover{background:var(--bg2)}
-.cat-card.on{background:var(--text);color:var(--bg);border-color:var(--text)}
+.cat-card.on{background:var(--ds-action);color:#fff;border-color:var(--ds-action)}
 .cat-card.on .cat-stat{color:rgba(255,255,255,.6)}
 .cat-name{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
 .cat-stat{font-size:10px;color:var(--text3);white-space:nowrap;margin-top:1px}
-.tw{background:var(--bg);border:.5px solid var(--border);border-radius:var(--rl);overflow-x:auto;position:relative}
+.tw{background:var(--bg);border:1px solid var(--border);border-radius:var(--rl);overflow-x:auto;position:relative}
 tr:nth-child(odd) tr:nth-child(even) thead tr:nth-child(odd) tr:nth-child(even) thead /* Right column offsets - fixed widths */
 /* Left column offsets */
 .tw table{border-collapse:collapse;min-width:100%;width:auto}
@@ -105,11 +121,10 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
 .vt-btn{font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;border:none;background:transparent;color:var(--text2);white-space:nowrap}
 .vt-btn.on{background:var(--bg);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.1)}
 /* Category nav bar (grid view) */
-.cat-nav{display:flex;gap:0;overflow-x:auto;background:var(--text);border-radius:var(--rl) var(--rl) 0 0;padding:0 8px;scrollbar-width:none}
-.cat-nav::-webkit-scrollbar{display:none}
-.cat-nav-btn{font-size:11px;padding:12px 14px;cursor:pointer;border:none;background:transparent;color:rgba(255,255,255,.6);white-space:nowrap;letter-spacing:.04em;text-transform:uppercase;border-bottom:2px solid transparent;font-weight:500}
-.cat-nav-btn:hover{color:rgba(255,255,255,.85)}
-.cat-nav-btn.on{color:#fff;border-bottom-color:#fff}
+.cat-nav{display:flex;flex-wrap:wrap;gap:6px;background:transparent;border-radius:0;padding:0;margin:0 0 14px;overflow:visible}
+.cat-nav-btn{font-size:11px;min-height:30px;padding:0 10px;cursor:pointer;border:1px solid var(--border2);background:var(--bg);color:var(--text2);white-space:nowrap;border-radius:999px;font-weight:650}
+.cat-nav-btn:hover{background:var(--bg2);color:var(--text)}
+.cat-nav-btn.on{background:var(--ds-action);color:#fff;border-color:var(--ds-action)}
 .cat-heading{font-size:24px;font-weight:600;margin:20px 0 4px;letter-spacing:-.01em}
 .cat-meta{font-size:13px;color:var(--text2);margin-bottom:16px}
 /* Product grid */
@@ -140,10 +155,10 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
 .spark-hdr{font-size:9px;text-align:center;padding:4px 2px;color:var(--text3);font-weight:400;border-bottom:.5px solid var(--border);white-space:nowrap;width:56px;max-width:56px;overflow:hidden;text-overflow:ellipsis}
 
 /* ── Tabs ───────────────────────────────────────────────────────────── */
-.tab-bar{display:flex;gap:0;border-bottom:.5px solid var(--border);margin-bottom:24px}
-.tab-btn{font-size:13px;padding:10px 20px;cursor:pointer;border:none;background:transparent;color:var(--text2);border-bottom:2px solid transparent;margin-bottom:-1px;font-weight:500}
-.tab-btn:hover{color:var(--text)}
-.tab-btn.on{color:var(--text);border-bottom-color:var(--text)}
+.tab-bar{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);margin-bottom:24px;padding-bottom:8px}
+.tab-btn{font-size:12px;min-height:32px;padding:0 12px;cursor:pointer;border:1px solid transparent;background:transparent;color:var(--text2);border-radius:var(--r);font-weight:650}
+.tab-btn:hover{background:var(--bg);border-color:var(--border);color:var(--text)}
+.tab-btn.on{background:var(--ds-action-soft);border-color:var(--ds-action);color:var(--ds-action)}
 .ly-asp{font-size:10px;color:var(--text3);margin-top:1px}
 
 /* ── Revenue Analysis ───────────────────────────────────────────────── */
@@ -182,7 +197,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
 /* ── New lines simulator ─────────────────────────────────────────────── */
 .nl-season-btn{font-size:11px;padding:4px 12px;border-radius:20px;cursor:pointer;border:.5px solid var(--border2);background:var(--bg);color:var(--text2);transition:all .1s}
 .nl-season-btn:hover{background:var(--bg2)}
-.nl-season-btn.on{background:var(--text);color:var(--bg);border-color:var(--text)}
+.nl-season-btn.on{background:var(--ds-action);color:#fff;border-color:var(--ds-action)}
 .nl-benchmark-box{background:var(--bg2);border-radius:var(--rl);padding:16px 18px;margin-bottom:16px;border:.5px solid var(--border)}
 .nl-benchmark-box h4{font-size:13px;font-weight:500;margin-bottom:4px}
 .nl-benchmark-box p{font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px}
@@ -200,7 +215,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
 /* ── New lines simulator ─────────────────────────────────────────────── */
 .nl-season-btn{font-size:11px;padding:4px 12px;border-radius:20px;cursor:pointer;border:.5px solid var(--border2);background:var(--bg);color:var(--text2);transition:all .1s}
 .nl-season-btn:hover{background:var(--bg2)}
-.nl-season-btn.on{background:var(--text);color:var(--bg);border-color:var(--text)}
+.nl-season-btn.on{background:var(--ds-action);color:#fff;border-color:var(--ds-action)}
 .nl-benchmark-box{background:var(--bg2);border-radius:var(--rl);padding:16px 18px;margin-bottom:16px;border:.5px solid var(--border)}
 .comparison-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:20px}
 .comparison-card{border-radius:var(--rl);padding:16px 18px;background:var(--bg2);border:.5px solid transparent}
@@ -220,13 +235,32 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
 <!-- Upload -->
 <div id="upload-sec">
   <h1>Bestsellers report</h1>
-  <p class="sub">Load your Shopify sales reports — one file per month. The date range is read from each filename automatically.</p>
+  <p class="sub">Sync Shopify data by week, or load legacy Shopify sales exports where needed. Stored TY reports use Monday-Sunday weeks.</p>
   <div class="tab-bar">
     <button class="tab-btn on" id="tab-ty-upload" onclick="switchUploadTab('ty')">This Year</button>
     <button class="tab-btn" id="tab-ly-upload" onclick="switchUploadTab('ly')">Last Year</button>
   </div>
   <!-- TY upload -->
   <div id="ty-upload-panel">
+  <div class="server-cache">
+    <div class="server-cache-top">
+      <div>
+        <h2>Server-backed TY report</h2>
+        <p>Cached TY reports are built from Monday-Sunday weeks. Current week is shown live week-to-date and is not saved until it becomes a complete week.</p>
+      </div>
+      <div class="server-controls">
+        <div class="field"><label>Quick range</label><select class="server-period-select server-week-select" id="api-range-preset" onchange="applyTyRangePreset('api',this.value)"><option value="current">Current week to date</option><option value="latest">Latest saved week</option><option value="last4">Last 4 saved weeks</option><option value="last8">Last 8 saved weeks</option><option value="season">All saved weeks</option><option value="custom">Custom week range</option></select></div>
+        <div class="field"><label>From week</label><select class="server-period-select server-week-select" id="api-from-week" onchange="applyTyWeekRange('api')"></select></div>
+        <div class="field"><label>To week</label><select class="server-period-select server-week-select" id="api-to-week" onchange="applyTyWeekRange('api')"></select></div>
+        <input type="hidden" id="api-start-date">
+        <input type="hidden" id="api-end-date">
+        <button class="btn" type="button" onclick="loadCachedBestsellers()">Load week range</button>
+        <button class="btn-primary" type="button" id="api-sync-btn" onclick="syncBestsellersFromApi()">Sync Shopify</button>
+      </div>
+    </div>
+    <p id="api-cache-note" style="font-size:11px;color:var(--text3)">Checking cached periods...</p>
+    <div class="server-periods" id="api-periods"></div>
+  </div>
   <div class="grid3">
     <div class="box" id="dz-s"
       ondragover="event.preventDefault();event.stopPropagation();this.classList.add('over')"
@@ -234,7 +268,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
       ondrop="event.preventDefault();event.stopPropagation();this.classList.remove('over');loadSales(event.dataTransfer.files)">
       <div class="box-ico" id="ico-s">↓</div>
       <div class="box-title">Total Sales by Product CSV(s) <span style="color:var(--danger)">*</span></div>
-      <div class="box-sub">Drop multiple months at once — dates read from filename</div>
+      <div class="box-sub">Legacy fallback — dates read from filename</div>
       <div class="box-info" id="fi-s"> </div>
       <label class="btn">Browse<input type="file" accept=".csv" multiple style="display:none" onchange="loadSales(this.files)"></label>
     </div>
@@ -268,12 +302,27 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
     Sales: <em>Analytics → Reports → Total sales by product → set date range → Export</em><br>
     Products: <em>Products → Export → CSV for Excel</em> (for images)<br>
     Inventory: <em>Analytics → Reports → Inventory snapshot on a specific date → Export</em><br>
-    <strong>Tip:</strong> Export one sales file per month and drop them all at once.
+    <strong>Tip:</strong> For TY, use Sync Shopify where possible. CSV upload remains as a legacy fallback for manually exported periods.
   </div>
   </div><!-- /ty-upload-panel -->
 
   <!-- LY upload -->
   <div id="ly-upload-panel" style="display:none">
+    <div class="server-cache">
+      <div class="server-cache-top">
+        <div>
+          <h2>Server-backed LY report</h2>
+          <p>Reload saved LY CSV imports without uploading them again. Choose a range to combine saved monthly or weekly periods.</p>
+        </div>
+        <div class="server-controls">
+          <div class="field"><label>Start</label><input type="date" id="ly-api-start-date"></div>
+          <div class="field"><label>End</label><input type="date" id="ly-api-end-date"></div>
+          <button class="btn" type="button" onclick="loadCachedLyBestsellers()">Load saved LY</button>
+        </div>
+      </div>
+      <p id="ly-api-cache-note" style="font-size:11px;color:var(--text3)">Checking saved LY periods...</p>
+      <div class="server-periods" id="ly-api-periods"></div>
+    </div>
     <div class="grid2" style="max-width:500px">
       <div class="box" id="dz-ly"
         ondragover="event.preventDefault();event.stopPropagation();this.classList.add('over')"
@@ -288,6 +337,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
     </div>
     <div style="text-align:center;margin-bottom:20px">
       <button class="btn-primary" id="gen-ly-btn" onclick="buildLY()" disabled>Generate LY Report</button>
+      <button class="btn" id="import-ly-btn" onclick="importLyFilesToServer()" disabled>Save LY to server</button>
       <p style="font-size:11px;color:var(--text3);margin-top:8px" id="gen-ly-hint">Load at least one LY CSV to continue</p>
     </div>
     <div class="hint">
@@ -306,7 +356,6 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
     <button class="tab-btn" id="tab-stock" onclick="switchReportTab('stock')">Stock Position</button>
     <button class="tab-btn" id="tab-meth" onclick="switchReportTab('meth')">Methodology</button>
     <button class="tab-btn" id="tab-trade" onclick="switchReportTab('trade')">Trade Last Week</button>
-    <button class="tab-btn" id="tab-merch" onclick="switchReportTab('merch')">Merchandising</button>
   </div>
 
   <!-- Category mapping modal -->
@@ -342,19 +391,38 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
   <div id="ty-panel">
   <div class="hrow">
     <div><h1>Bestsellers</h1><p class="sub" id="rpt-sub"></p></div>
-    <div style="display:flex;gap:10px;align-items:center">
+    <div id="ty-actions" style="display:flex;gap:10px;align-items:center">
       <div class="view-toggle">
         <button class="vt-btn" id="vt-table" onclick="G.view='table';render()">≡ Table</button>
         <button class="vt-btn" id="vt-grid" onclick="G.view='grid';render()">⊞ Grid</button>
       </div>
-      <button class="btn" onclick="exportSnapshot()" style="background:var(--text);color:var(--bg);border-color:var(--text)">⬇ Share snapshot</button>
+      <button class="btn emphasis" onclick="exportSnapshot()">⬇ Share snapshot</button>
       <button class="btn" onclick="exportBestsellersXLSX()" title="Export to Excel">⬇ Excel</button>
       <button class="btn" onclick="openCatMap()" id="cat-map-btn">⊞ Group categories</button>
       <button class="btn" onclick="resetAll()">← New report</button>
     </div>
   </div>
-  <div class="cards" id="cards"></div>
-  <div class="ctrl-row">
+  <div class="server-cache">
+    <div class="server-cache-top">
+      <div>
+        <h2>Saved TY periods</h2>
+        <p>Load saved Monday-Sunday weeks, or show current week live to date.</p>
+      </div>
+      <div class="server-controls">
+        <div class="field"><label>Quick range</label><select class="server-period-select server-week-select" id="ty-report-api-range-preset" onchange="applyTyRangePreset('ty-report-api',this.value)"><option value="current">Current week to date</option><option value="latest">Latest saved week</option><option value="last4">Last 4 saved weeks</option><option value="last8">Last 8 saved weeks</option><option value="season">All saved weeks</option><option value="custom">Custom week range</option></select></div>
+        <div class="field"><label>From week</label><select class="server-period-select server-week-select" id="ty-report-api-from-week" onchange="applyTyWeekRange('ty-report-api')"></select></div>
+        <div class="field"><label>To week</label><select class="server-period-select server-week-select" id="ty-report-api-to-week" onchange="applyTyWeekRange('ty-report-api')"></select></div>
+        <input type="hidden" id="ty-report-api-start-date">
+        <input type="hidden" id="ty-report-api-end-date">
+        <button class="btn" type="button" onclick="loadCachedBestsellers('ty-report-api')">Load week range</button>
+      </div>
+    </div>
+    <p id="ty-report-api-cache-note" style="font-size:11px;color:var(--text3)">Checking cached TY periods...</p>
+    <div class="server-periods" id="ty-report-api-periods"></div>
+  </div>
+  <div class="hint" id="ty-empty-state" style="display:none">Choose a saved TY period above, or use the This Year upload screen to sync Shopify.</div>
+  <div class="cards ty-data" id="cards"></div>
+  <div class="ctrl-row ty-data">
     <div class="cg"><label>Sort by</label>
       <select class="ctrl" id="sort-sel" onchange="G.col=this.value;render()">
         <option value="rev">Net sales</option>
@@ -382,10 +450,10 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
       <input type="date" id="end-date" value="2026-09-01" class="ctrl" style="padding:5px 10px;width:140px" onchange="render()">
     </div>
   </div>
-  <div class="filter-bar" id="filter-bar" style="display:none"></div>
-  <div id="tbl-scroll-bar" style="display:none;justify-content:space-between;align-items:center;margin-bottom:6px;padding:4px 0">
+  <div class="filter-bar ty-data" id="filter-bar" style="display:none"></div>
+  <div class="ty-data" id="tbl-scroll-bar" style="display:none;justify-content:space-between;align-items:center;margin-bottom:6px;padding:4px 0">
     <div style="display:flex;gap:8px;align-items:center">
-      <button id="periods-toggle-btn" onclick="togglePeriodCols()" style="background:var(--text);color:var(--bg);border:none;border-radius:6px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:500">Hide periods</button>
+      <button class="btn emphasis" id="periods-toggle-btn" onclick="togglePeriodCols()" style="min-height:30px">Hide periods</button>
       <span style="font-size:11px;color:var(--text3)">← scroll to see all periods →</span>
     </div>
     <div style="display:flex;gap:6px">
@@ -393,8 +461,8 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
       <button onclick="document.getElementById('ty-tw').scrollBy({left:300,behavior:'smooth'})" style="background:var(--bg2);border:.5px solid var(--border2);border-radius:6px;padding:4px 14px;cursor:pointer;font-size:13px;color:var(--text)">Later ›</button>
     </div>
   </div>
-  <div class="tw" id="ty-tw"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
-  <div class="tfoot" id="tfoot"></div>
+  <div class="tw ty-data" id="ty-tw"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+  <div class="tfoot ty-data" id="tfoot"></div>
   </div><!-- /ty-panel -->
 
   <!-- LY panel -->
@@ -408,8 +476,24 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
             <button class="vt-btn" id="ly-vt-grid" onclick="LY.view='grid';renderLY()">⊞ Grid</button>
           </div>
         </div>
-        <button class="btn" onclick="exportSnapshot()" style="background:var(--text);color:var(--bg);border-color:var(--text)">⬇ Share snapshot</button>
+        <button class="btn emphasis" onclick="exportSnapshot()">⬇ Share snapshot</button>
       </div>
+    </div>
+
+    <div class="server-cache">
+      <div class="server-cache-top">
+        <div>
+          <h2>Saved LY periods</h2>
+          <p>Move between saved LY CSV imports, or combine saved periods by date range.</p>
+        </div>
+        <div class="server-controls">
+          <div class="field"><label>Start</label><input type="date" id="ly-report-api-start-date"></div>
+          <div class="field"><label>End</label><input type="date" id="ly-report-api-end-date"></div>
+          <button class="btn" type="button" onclick="loadCachedLyBestsellers('ly-report-api')">Load saved LY</button>
+        </div>
+      </div>
+      <p id="ly-report-api-cache-note" style="font-size:11px;color:var(--text3)">Checking saved LY periods...</p>
+      <div class="server-periods" id="ly-report-api-periods"></div>
     </div>
 
     <!-- LY upload — always visible in this panel -->
@@ -427,6 +511,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
           <label class="btn">Browse<input type="file" accept=".csv" multiple style="display:none" onchange="loadLY(this.files)"></label>
         </div>
         <button class="btn-primary" id="gen-ly-btn2" onclick="buildLY()" disabled style="white-space:nowrap">Generate LY Report</button>
+        <button class="btn" id="import-ly-btn2" onclick="importLyFilesToServer()" disabled style="white-space:nowrap">Save LY to server</button>
       </div>
     </div>
 
@@ -461,7 +546,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
   <div id="ra-panel" style="display:none;padding-bottom:48px">
     <div class="hrow">
       <div><h1>Revenue Analysis</h1><p class="sub" id="ra-sub">Generates from TY data — load sales files and generate TY report first</p></div>
-      <button class="btn" onclick="exportSnapshot()" style="background:var(--text);color:var(--bg);border-color:var(--text)">⬇ Share snapshot</button>
+      <button class="btn emphasis" onclick="exportSnapshot()">⬇ Share snapshot</button>
     </div>
     <div id="ra-content">
       <p style="color:var(--text3);font-size:13px">Generate the TY Bestsellers report first to enable Revenue Analysis.</p>
@@ -474,34 +559,17 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
       <div><h1>Stock Position</h1><p class="sub" id="stock-sub">Current inventory value by category — load an Inventory Snapshot to populate</p></div>
       <div style="display:flex;gap:10px;align-items:center">
         <button class="btn" id="stock-cat-map-btn" onclick="openStockCatMap()">⊞ Group categories</button>
-        <button class="btn" onclick="exportSnapshot()" style="background:var(--text);color:var(--bg);border-color:var(--text)">⬇ Share snapshot</button>
+        <button class="btn emphasis" onclick="exportSnapshot()">⬇ Share snapshot</button>
       </div>
     </div>
     <div id="stock-panel-content"></div>
   </div><!-- /stock-panel -->
 
-  <!-- Merchandising panel -->
-  <div id="merch-panel" style="display:none;padding-bottom:48px">
-    <div class="hrow">
-      <div><h1>Merchandising</h1><p class="sub" id="merch-sub">Category product checker &amp; collection analysis</p></div>
-      <button class="btn" onclick="exportMerchSnapshot()" style="background:var(--text);color:var(--bg);border-color:var(--text)">⬇ Share snapshot</button>
-    </div>
-    <div id="merch-panel-content"><p style="color:var(--text2);font-size:13px;padding:20px 0">Generate the Bestsellers TY report first, then run the analysis below.</p></div>
-  </div><!-- /merch-panel -->
-
-  <!-- Merchandising panel -->
-  <div id="merch-panel" style="display:none;padding-bottom:48px">
-    <div class="hrow">
-      <div><h1>Merchandising</h1><p class="sub" id="merch-sub">Category product checker &amp; collection analysis</p></div>
-    </div>
-    <div id="merch-panel-content"></div>
-  </div><!-- /merch-panel -->
-
   <!-- Slow Sellers panel -->
   <div id="slow-panel" style="display:none;padding-bottom:48px">
     <div class="hrow">
       <div><h1>Slow Sellers</h1><p class="sub" id="slow-sub">Identify lines losing sales momentum and lines with stock but no sales</p></div>
-      <button class="btn" onclick="exportSnapshot()" style="background:var(--text);color:var(--bg);border-color:var(--text)">⬇ Share snapshot</button>
+      <button class="btn emphasis" onclick="exportSnapshot()">⬇ Share snapshot</button>
     </div>
     <div id="slow-panel-content"></div>
   </div><!-- /slow-panel -->
@@ -520,7 +588,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
       <div><h1>Trade Last Week</h1><p class="sub" id="trade-sub">Upload your weekly sales and sessions exports to generate the trade overview</p></div>
       <div style="display:flex;gap:10px;align-items:center">
         <button class="btn" id="trade-pdf-btn" onclick="exportTradePDF()" style="display:none">⬇ Export PDF</button>
-        <button class="btn" onclick="exportSnapshot()" style="background:var(--text);color:var(--bg);border-color:var(--text)">⬇ Share snapshot</button>
+        <button class="btn emphasis" onclick="exportSnapshot()">⬇ Share snapshot</button>
       </div>
     </div>
 
@@ -643,6 +711,7 @@ const MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec
 let salesFiles=[],invRows=null,prodFiles=[];
 const G={col:'rev',dir:-1,cat:'All',exp:new Set(),dsExpanded:false,dsVisible:false,dsSeason:'All',view:'table',season:'All',periodFilter:'all'};
 let SYM='£';
+let serverPeriods=[];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function st(msg,cls){const e=document.getElementById('status');if(!msg){e.style.display='none';return;}e.textContent=msg;e.className='status '+cls;e.style.display='block';}
@@ -651,6 +720,360 @@ const fPct=v=>v==null||isNaN(v)?'—':v.toFixed(1)+'%';
 const fN=v=>v==null||isNaN(v)?'—':Math.round(v).toLocaleString();
 const fD=d=>d?d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'';
 function getWeeksLeft(){const v=document.getElementById('end-date');const end=v?new Date(v.value):new Date('2026-09-01');return Math.max((end-new Date())/6048e5,0);}
+async function apiJson(path,options){
+  const response=await fetch(path,options);
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.error||data.message||`API returned ${response.status}`);
+  return data;
+}
+function setDefaultApiDates(){
+  const iso=d=>d.toISOString().slice(0,10);
+  const setRange=(prefix,startDate,endDate)=>{
+    const startEl=document.getElementById(`${prefix}-start-date`);
+    const endEl=document.getElementById(`${prefix}-end-date`);
+    if(startEl&&endEl&&!startEl.value&&!endEl.value){
+      startEl.value=startDate;
+      endEl.value=endDate;
+    }
+  };
+  const end=new Date();
+  end.setDate(end.getDate()-1);
+  const start=new Date(end);
+  start.setDate(start.getDate()-27);
+  ['api','ty-report-api'].forEach(prefix=>setRange(prefix,iso(start),iso(end)));
+  const lastYear=new Date().getFullYear()-1;
+  ['ly-api','ly-report-api'].forEach(prefix=>setRange(prefix,`${lastYear}-01-01`,`${lastYear}-12-31`));
+}
+function localIsoDate(date){
+  const d=new Date(date);
+  d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
+  return d.toISOString().slice(0,10);
+}
+function currentWeekToDateRange(){
+  const end=new Date();
+  const start=new Date(end);
+  const day=start.getDay();
+  const delta=day===0?6:day-1;
+  start.setDate(start.getDate()-delta);
+  return{startDate:localIsoDate(start),endDate:localIsoDate(end)};
+}
+function apiDateParams(prefix='api'){
+  const startDate=document.getElementById(`${prefix}-start-date`)?.value||'';
+  const endDate=document.getElementById(`${prefix}-end-date`)?.value||'';
+  if(!startDate||!endDate)throw new Error('Choose a start and end date.');
+  if(startDate>endDate)throw new Error('Start date must be before end date.');
+  return{startDate,endDate};
+}
+function setApiDateParams(prefix,startDate,endDate){
+  const startEl=document.getElementById(`${prefix}-start-date`);
+  const endEl=document.getElementById(`${prefix}-end-date`);
+  if(startEl)startEl.value=startDate;
+  if(endEl)endEl.value=endDate;
+}
+function setRangePresetValue(prefix,value){
+  const el=document.getElementById(`${prefix}-range-preset`);
+  if(el)el.value=value;
+}
+function cachedTyPeriods(){
+  return serverPeriods.filter(period=>period.sourceType==='shopify_api').sort((a,b)=>b.startDate.localeCompare(a.startDate));
+}
+function setWeekSelectValues(prefix,startDate,endDate){
+  const from=document.getElementById(`${prefix}-from-week`);
+  const to=document.getElementById(`${prefix}-to-week`);
+  const periods=cachedTyPeriods();
+  const fromPeriod=periods.find(period=>period.startDate===startDate);
+  const toPeriod=periods.find(period=>period.endDate===endDate);
+  if(from&&fromPeriod)from.value=`${fromPeriod.startDate}|${fromPeriod.endDate}`;
+  if(to&&toPeriod)to.value=`${toPeriod.startDate}|${toPeriod.endDate}`;
+}
+function setServerPeriodFromSelect(value,prefix='api',autoLoad=false){
+  const [startDate,endDate]=(value||'').split('|');
+  if(!startDate||!endDate)return;
+  setApiDateParams(prefix,startDate,endDate);
+  const latest=cachedTyPeriods()[0];
+  setWeekSelectValues(prefix,startDate,endDate);
+  setRangePresetValue(prefix,latest&&latest.startDate===startDate&&latest.endDate===endDate?'latest':'custom');
+  if(autoLoad)loadCachedBestsellers(prefix);
+}
+function applyTyWeekRange(prefix='api'){
+  const from=document.getElementById(`${prefix}-from-week`)?.value||'';
+  const to=document.getElementById(`${prefix}-to-week`)?.value||'';
+  const [fromStart]=from.split('|');
+  const [,toEnd]=to.split('|');
+  if(!fromStart||!toEnd)return;
+  if(fromStart>toEnd){st('From week must be before To week.','err');return;}
+  setApiDateParams(prefix,fromStart,toEnd);
+  setRangePresetValue(prefix,'custom');
+}
+function applyTyRangePreset(prefix='api',preset='latest'){
+  const periods=cachedTyPeriods();
+  if(preset==='current'){
+    const range=currentWeekToDateRange();
+    setApiDateParams(prefix,range.startDate,range.endDate);
+    setRangePresetValue(prefix,'current');
+    syncBestsellersFromApi(prefix);
+    return;
+  }
+  if(!periods.length)return;
+  let chosen=[];
+  if(preset==='last4')chosen=periods.slice(0,4);
+  else if(preset==='last8')chosen=periods.slice(0,8);
+  else if(preset==='season')chosen=periods;
+  else if(preset==='custom'){setRangePresetValue(prefix,'custom');applyTyWeekRange(prefix);return;}
+  else chosen=periods.slice(0,1);
+  if(!chosen.length)return;
+  const chronological=[...chosen].sort((a,b)=>a.startDate.localeCompare(b.startDate));
+  setApiDateParams(prefix,chronological[0].startDate,chronological[chronological.length-1].endDate);
+  setWeekSelectValues(prefix,chronological[0].startDate,chronological[chronological.length-1].endDate);
+  setRangePresetValue(prefix,preset);
+  loadCachedBestsellers(prefix);
+}
+function renderServerPeriods(){
+  const renderTyWeekRange=(items,prefix)=>{
+    const from=document.getElementById(`${prefix}-from-week`);
+    const to=document.getElementById(`${prefix}-to-week`);
+    if(!from||!to)return;
+    if(!items.length){
+      from.innerHTML='<option value="">No saved weeks</option>';
+      to.innerHTML='<option value="">No saved weeks</option>';
+      return;
+    }
+    const chronological=[...items].sort((a,b)=>a.startDate.localeCompare(b.startDate));
+    const options=chronological.map(period=>`<option value="${period.startDate}|${period.endDate}">${period.label}</option>`).join('');
+    from.innerHTML=options;
+    to.innerHTML=options;
+  };
+  const renderTySelect=(items,wrapId,noteId,emptyText,prefix)=>{
+    const wrap=document.getElementById(wrapId);
+    const note=document.getElementById(noteId);
+    if(!wrap||!note)return;
+    if(!items.length){
+      note.textContent=emptyText;
+      wrap.innerHTML='';
+      return;
+    }
+    const latest=items[0];
+    note.textContent=`${items.length} saved TY week${items.length===1?'':'s'} available. Saved ranges load whole Monday-Sunday weeks.`;
+    const options=items.map(period=>{
+      const value=`${period.startDate}|${period.endDate}`;
+      const selected=period===latest?' selected':'';
+      return`<option value="${value}"${selected}>${period.label} · ${period.summary?.productCount||0} lines</option>`;
+    }).join('');
+    wrap.innerHTML=`<div class="field"><label>Saved week</label><select class="server-period-select" onchange="setServerPeriodFromSelect(this.value,'${prefix}',true)">${options}</select></div>`;
+    setApiDateParams(prefix,latest.startDate,latest.endDate);
+    setWeekSelectValues(prefix,latest.startDate,latest.endDate);
+    setRangePresetValue(prefix,'latest');
+  };
+  const renderList=(items,wrapId,noteId,emptyText,onClickName,prefix)=>{
+    const wrap=document.getElementById(wrapId);
+    const note=document.getElementById(noteId);
+    if(!wrap||!note)return;
+    if(!items.length){
+      note.textContent=emptyText;
+      wrap.innerHTML='';
+      return;
+    }
+    note.textContent=`${items.length} saved period${items.length===1?'':'s'} available.`;
+    wrap.innerHTML=items.slice(0,18).map(period=>
+      `<button class="server-period" type="button" data-start="${period.startDate}" data-end="${period.endDate}" onclick="${onClickName}(this.dataset.start,this.dataset.end,'${prefix}')">${period.label} · ${period.summary?.productCount||0} lines</button>`
+    ).join('');
+  };
+  const tyPeriods=serverPeriods.filter(period=>period.sourceType==='shopify_api');
+  const lyPeriods=serverPeriods.filter(period=>period.sourceType==='csv_import'&&(period.yearBucket||'').toUpperCase()==='LY');
+  renderTyWeekRange(tyPeriods,'api');
+  renderTyWeekRange(tyPeriods,'ty-report-api');
+  renderTySelect(tyPeriods,'api-periods','api-cache-note','No cached TY periods yet. Sync Shopify to create the first one.','api');
+  renderTySelect(tyPeriods,'ty-report-api-periods','ty-report-api-cache-note','No cached TY periods yet. Sync Shopify from the This Year upload screen.','ty-report-api');
+  renderList(lyPeriods,'ly-api-periods','ly-api-cache-note','No saved LY periods yet. Upload LY CSVs once, then use Save LY to server.','loadLyServerPeriod','ly-api');
+  renderList(lyPeriods,'ly-report-api-periods','ly-report-api-cache-note','No saved LY periods yet. Upload LY CSVs once, then use Save LY to server.','loadLyServerPeriod','ly-report-api');
+}
+async function loadServerPeriods(){
+  try{
+    const data=await apiJson('/api/reports/bestsellers/periods');
+    serverPeriods=data.periods||[];
+    renderServerPeriods();
+  }catch(error){
+    const note=document.getElementById('api-cache-note');
+    if(note)note.textContent=error.message;
+  }
+}
+function stockByCategoryFromProducts(products){
+  const stockByCat={};
+  products.forEach(product=>{
+    const stock=Number(product.stock||0);
+    if(stock<=0)return;
+    const cat=product.cat||product.productType||'Other';
+    if(!stockByCat[cat])stockByCat[cat]={units:0,cost:0,retail:0};
+    const cost=Number(product.cost||product.avgCost||0);
+    const retail=Number(product.rrp||product.avgP||0);
+    stockByCat[cat].units+=stock;
+    stockByCat[cat].cost+=stock*cost;
+    stockByCat[cat].retail+=stock*retail;
+  });
+  return stockByCat;
+}
+function applyServerBestsellers(data){
+  const report=data.report;
+  const period=data.period||report?.period;
+  if(!report||!period)throw new Error('Server report was missing report data.');
+  const serverReportPeriods=(data.periods&&data.periods.length?data.periods:[period]).slice().sort((a,b)=>a.startDate.localeCompare(b.startDate));
+  const minD=new Date(`${report.minDate||serverReportPeriods[0].startDate}T00:00:00`);
+  const maxD=new Date(`${report.maxDate||serverReportPeriods[serverReportPeriods.length-1].endDate}T00:00:00`);
+  salesFiles=serverReportPeriods.map(item=>{
+    const start=new Date(`${item.startDate}T00:00:00`);
+    const end=new Date(`${item.endDate}T00:00:00`);
+    return{filename:`server:${item.id}`,label:item.label,start,end,days:Math.max((end-start)/864e5+1,1),rows:[],source:'server'};
+  });
+  invRows=null;
+  prodFiles=[];
+  window._snapshotHasInventory=true;
+  window._snapshotStockByCat=stockByCategoryFromProducts(report.products||[]);
+  window._cachedStockByCat=window._snapshotStockByCat;
+  window._nameInvSku=Object.fromEntries((report.products||[]).filter(p=>p.sku).map(p=>[p.name,p.sku]));
+  window._rpt={
+    products:report.products||[],
+    minD,maxD,
+    weeks:report.weeks||Math.max(days/7,1),
+    showPeriods:false,
+    allPeriodLabels:report.allPeriodLabels||[label],
+    orderedPeriodLabels:report.orderedPeriodLabels||[label],
+    rosLabel:report.rosLabel||label,
+    totRev:report.totRev||0,
+    totUnits:report.totUnits||0,
+    totGP:report.totGP||0,
+    invTotalStock:report.invTotalStock||0,
+    deadStock:report.deadStock||[]
+  };
+  document.getElementById('upload-sec').style.display='none';
+  document.getElementById('report-sec').style.display='block';
+  setApiDateParams('api',serverReportPeriods[0].startDate,serverReportPeriods[serverReportPeriods.length-1].endDate);
+  setApiDateParams('ty-report-api',serverReportPeriods[0].startDate,serverReportPeriods[serverReportPeriods.length-1].endDate);
+  setWeekSelectValues('api',serverReportPeriods[0].startDate,serverReportPeriods[serverReportPeriods.length-1].endDate);
+  setWeekSelectValues('ty-report-api',serverReportPeriods[0].startDate,serverReportPeriods[serverReportPeriods.length-1].endDate);
+  if(data.stored===false){
+    setRangePresetValue('api','current');
+    setRangePresetValue('ty-report-api','current');
+  }
+  document.getElementById('rpt-sub').textContent=`${fD(minD)} - ${fD(maxD)} · ${data.stored===false?'live ad hoc':'server cached '+(data.storedPeriodGrain||period.sourceType||'report')} · synced ${new Date(period.syncedAt||Date.now()).toLocaleString('en-GB')}`;
+  G.col='rev';G.dir=-1;G.cat='All';G.exp=new Set();G.dsExpanded=false;G.dsVisible=false;G.dsSeason='All';G.view='table';G.season='All';G.periodFilter='all';
+  st('', '');
+  updateTyPanelState();
+  switchReportTab('ty');
+  render();
+}
+async function loadServerPeriod(startDate,endDate,prefix='api'){
+  setApiDateParams(prefix,startDate,endDate);
+  await loadCachedBestsellers(prefix);
+}
+async function loadLyServerPeriod(startDate,endDate,prefix='ly-api'){
+  setApiDateParams(prefix,startDate,endDate);
+  await loadCachedLyBestsellers(prefix);
+}
+async function loadCachedBestsellers(prefix='api'){
+  try{
+    const {startDate,endDate}=apiDateParams(prefix);
+    st('Loading cached bestsellers report...','info');
+    const data=await apiJson(`/api/reports/bestsellers?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&sourceType=shopify_api`);
+    applyServerBestsellers(data);
+  }catch(error){
+    st(error.message,'err');
+  }
+}
+function applyServerLyBestsellers(data){
+  const report=data.report;
+  const period=data.period||report?.period;
+  if(!report||!period)throw new Error('Server LY report was missing report data.');
+  const serverReportPeriods=(data.periods&&data.periods.length?data.periods:[period]).slice().sort((a,b)=>a.startDate.localeCompare(b.startDate));
+  const minD=new Date(`${report.minDate||serverReportPeriods[0].startDate}T00:00:00`);
+  const maxD=new Date(`${report.maxDate||serverReportPeriods[serverReportPeriods.length-1].endDate}T00:00:00`);
+  const products=(report.products||[]).map(product=>({
+    ...product,
+    name:product.name||product.title||'',
+    cat:product.cat||product.productType||'',
+    periods:product.periods||{},
+    img:product.img||product.imageUrl||'',
+    avgP:product.avgP||0,
+    gpPct:product.gpPct||0,
+    gpUnit:product.gpUnit||0
+  }));
+  lyFiles=serverReportPeriods.map(item=>{
+    const start=new Date(`${item.startDate}T00:00:00`);
+    const end=new Date(`${item.endDate}T00:00:00`);
+    return{filename:`server:${item.id}`,label:item.label,start,end,days:Math.max((end-start)/864e5+1,1),rows:[],source:'server'};
+  });
+  window._lyRpt={
+    products,
+    minD,maxD,
+    allPeriodLabels:report.allPeriodLabels||serverReportPeriods.map(item=>item.label),
+    totRev:report.totRev||products.reduce((a,p)=>a+Number(p.rev||0),0),
+    totUnits:report.totUnits||products.reduce((a,p)=>a+Number(p.units||0),0),
+    totGP:report.totGP||products.reduce((a,p)=>a+Number(p.gp||0),0)
+  };
+  document.getElementById('upload-sec').style.display='none';
+  document.getElementById('report-sec').style.display='block';
+  document.getElementById('ly-report-content').style.display='block';
+  setApiDateParams('ly-api',serverReportPeriods[0].startDate,serverReportPeriods[serverReportPeriods.length-1].endDate);
+  setApiDateParams('ly-report-api',serverReportPeriods[0].startDate,serverReportPeriods[serverReportPeriods.length-1].endDate);
+  const sub=document.getElementById('ly-rpt-sub');
+  if(sub)sub.textContent=`${fD(minD)} - ${fD(maxD)} · server saved LY · ${serverReportPeriods.length} period${serverReportPeriods.length===1?'':'s'}`;
+  LY.col='rev';LY.dir=-1;LY.cat='All';LY.view='table';LY.season='All';
+  st('', '');
+  switchReportTab('ly');
+  renderLY();
+}
+async function loadCachedLyBestsellers(prefix='ly-api'){
+  try{
+    const {startDate,endDate}=apiDateParams(prefix);
+    st('Loading saved LY report...','info');
+    const data=await apiJson(`/api/reports/bestsellers?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&sourceType=csv_import&yearBucket=LY`);
+    applyServerLyBestsellers(data);
+  }catch(error){
+    st(error.message,'err');
+  }
+}
+async function syncBestsellersFromApi(prefix='api'){
+  const btn=prefix==='api'?document.getElementById('api-sync-btn'):null;
+  try{
+    const {startDate,endDate}=apiDateParams(prefix);
+    if(btn){btn.disabled=true;btn.textContent='Starting';}
+    st('Starting Shopify sync job...','info');
+    const started=await apiJson('/api/reports/bestsellers/sync-job',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({startDate,endDate})
+    });
+    const jobId=started.job?.id;
+    if(!jobId)throw new Error('Sync job did not return an id.');
+    if(btn)btn.textContent='Syncing';
+    const data=await pollBestsellersSyncJob(jobId);
+    if(data.configured===false)throw new Error(data.message||'Shopify is not configured.');
+    serverPeriods=data.periods||serverPeriods;
+    renderServerPeriods();
+    applyServerBestsellers(data);
+  }catch(error){
+    st(error.message,'err');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Sync Shopify';}
+  }
+}
+async function pollBestsellersSyncJob(jobId){
+  while(true){
+    await new Promise(resolve=>setTimeout(resolve,2000));
+    const data=await apiJson(`/api/reports/bestsellers/sync-job?id=${encodeURIComponent(jobId)}`);
+    const job=data.job;
+    if(!job)throw new Error('Sync job disappeared.');
+    const total=Number(job.totalSteps||0);
+    const done=Number(job.completedSteps||0);
+    const progress=total?` (${done}/${total})`:'';
+    if(job.status==='error')throw new Error(job.error||job.message||'Shopify sync failed.');
+    st(`${job.message||job.status}${progress}`,'info');
+    if(job.status==='complete'){
+      st(job.message||'Bestsellers sync complete.','ok');
+      return job.result;
+    }
+  }
+}
+document.addEventListener('DOMContentLoaded',()=>{setDefaultApiDates();loadServerPeriods();});
 
 function extractDates(filename){
   // Pattern: YYYY-MM-DD_-_YYYY-MM-DD or YYYY-MM-DD - YYYY-MM-DD
@@ -964,9 +1387,20 @@ function buildSeasonPills(allSeasons,active,onchangeExpr){
 }
 function seasonBadge(s){if(!s)return'<span style="color:var(--text3);font-size:10px">—</span>';const u=s.toUpperCase();const cls=u.startsWith('SS')?'ss':u.startsWith('AW')?'aw':'os';return`<span class="badge ${cls}">${s}</span>`;}
 
+function updateTyPanelState(){
+  const hasReport=!!window._rpt;
+  document.querySelectorAll('.ty-data').forEach(el=>{el.style.display=hasReport?'':'none';});
+  const actions=document.getElementById('ty-actions');if(actions)actions.style.display=hasReport?'flex':'none';
+  const empty=document.getElementById('ty-empty-state');if(empty)empty.style.display=hasReport?'none':'block';
+  const sub=document.getElementById('rpt-sub');
+  if(sub&&!hasReport)sub.textContent='Choose a saved TY period or sync Shopify from the This Year upload screen.';
+}
+
 // ── Render ────────────────────────────────────────────────────────────────────
 function render(){
-  const r=window._rpt;if(!r)return;
+  const r=window._rpt;
+  updateTyPanelState();
+  if(!r)return;
 
   // ── Period date filter — declared early so all subsequent code can use it ──
   const allLabels = r.allPeriodLabels;
@@ -1059,7 +1493,7 @@ function render(){
 
   const hasImg=r.products.some(p=>p.img);
   const hasStock=(invRows||window._snapshotHasInventory)&&filt.some(p=>p.stock!=null);
-  const hasSeason=invRows&&filt.some(p=>p.season);
+  const hasSeason=(invRows||window._snapshotHasInventory)&&filt.some(p=>p.season);
   const hasCat=catList.length>2;
   const showPeriods=activePeriodLabels.length>1;
 
@@ -1462,41 +1896,78 @@ function switchUploadTab(t){
 }
 
 function switchReportTab(t){
-  ['ty','ly','ra','stock','slow','meth','trade','merch'].forEach(id=>{
+  ['ty','ly','ra','stock','slow','meth','trade'].forEach(id=>{
     const p=document.getElementById(id+'-panel');if(p)p.style.display=t===id?'block':'none';
     const b=document.getElementById('tab-'+id);if(b)b.classList.toggle('on',t===id);
   });
+  if(t==='ty'){
+    updateTyPanelState();
+    if(window._rpt)render();
+  }
   if(t==='ly'&&window._lyRpt)renderLY();
   if(t==='ra')renderRA();
   if(t==='meth')renderMeth();
   if(t==='stock')renderStockPanel();
   if(t==='slow')renderSlowSellers();
   if(t==='trade'&&window._tradeData)renderTrade();
-  if(t==='merch')renderMerchPanel();
 }
 function loadLY(files){
   if(!files||!files.length)return;
   Array.from(files).forEach(f=>{
-    readCSV(f,rows=>{
-      const{start,end}=extractDates(f.name);
-      const days=start&&end?Math.max((end-start)/864e5+1,1):30;
-      const label=periodLabel(f.name,start,end);
-      lyFiles=lyFiles.filter(x=>x.filename!==f.name);
-      lyFiles.push({filename:f.name,label,start,end,days,rows});
-      lyFiles.sort((a,b)=>(a.start||0)-(b.start||0));
-      const names=lyFiles.map(x=>x.label).join(', ');
-      // Update both upload zones
-      ['','2'].forEach(s=>{
-        const d=document.getElementById('dz-ly'+s);if(d)d.classList.add('done');
-        const i=document.getElementById('ico-ly'+s);if(i)i.textContent='✓';
-        const fi=document.getElementById('fi-ly'+s);if(fi)fi.textContent=names;
-      });
-      ['gen-ly-btn','gen-ly-btn2'].forEach(id=>{
-        const b=document.getElementById(id);if(b)b.disabled=false;
-      });
-      document.getElementById('gen-ly-hint').textContent=lyFiles.length+' file'+(lyFiles.length>1?'s':'')+' loaded. Click Generate LY Report.';
-    });
+    const fr=new FileReader();
+    fr.onload=e=>{
+      try{
+        const text=e.target.result||'';
+        const rows=parseCSV(text);
+        const{start,end}=extractDates(f.name);
+        const days=start&&end?Math.max((end-start)/864e5+1,1):30;
+        const label=periodLabel(f.name,start,end);
+        lyFiles=lyFiles.filter(x=>x.filename!==f.name);
+        lyFiles.push({filename:f.name,label,start,end,days,rows,text});
+        lyFiles.sort((a,b)=>(a.start||0)-(b.start||0));
+        const names=lyFiles.map(x=>x.label).join(', ');
+        // Update both upload zones
+        ['','2'].forEach(s=>{
+          const d=document.getElementById('dz-ly'+s);if(d)d.classList.add('done');
+          const i=document.getElementById('ico-ly'+s);if(i)i.textContent='✓';
+          const fi=document.getElementById('fi-ly'+s);if(fi)fi.textContent=names;
+        });
+        ['gen-ly-btn','gen-ly-btn2','import-ly-btn','import-ly-btn2'].forEach(id=>{
+          const b=document.getElementById(id);if(b)b.disabled=false;
+        });
+        document.getElementById('gen-ly-hint').textContent=lyFiles.length+' file'+(lyFiles.length>1?'s':'')+' loaded. Generate locally or save to the server.';
+      }catch(ex){st('Parse error: '+ex.message,'err');}
+    };
+    fr.onerror=()=>st('Cannot read '+f.name,'err');
+    fr.readAsText(f);
   });
+}
+
+async function importLyFilesToServer(){
+  if(!lyFiles.length){st('Load LY CSV files first.','err');return;}
+  const buttons=['import-ly-btn','import-ly-btn2'].map(id=>document.getElementById(id)).filter(Boolean);
+  try{
+    buttons.forEach(btn=>{btn.disabled=true;btn.textContent='Saving';});
+    st('Saving LY CSV files to server storage...','info');
+    const files=lyFiles.map(file=>({
+      fileName:file.filename,
+      text:file.text||'',
+      startDate:file.start?file.start.toISOString().slice(0,10):'',
+      endDate:file.end?file.end.toISOString().slice(0,10):''
+    })).filter(file=>file.text);
+    const data=await apiJson('/api/reports/bestsellers/import-csv',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({yearBucket:'LY',files})
+    });
+    serverPeriods=data.periods||serverPeriods;
+    renderServerPeriods();
+    st(`Saved ${data.imported?.length||0} LY period${(data.imported?.length||0)===1?'':'s'} to server storage.`,'ok');
+  }catch(error){
+    st(error.message,'err');
+  }finally{
+    buttons.forEach(btn=>{btn.disabled=false;btn.textContent='Save LY to server';});
+  }
 }
 
 function buildLY(){
@@ -4403,9 +4874,9 @@ function renderMeth(){
   document.getElementById('meth-content').innerHTML=`
 
   ${sec('Data sources','What each file contributes and where to export it from Shopify.',`
-    ${row('Total Sales by Product CSV <span style="color:var(--danger)">★ Required</span>',
-      'Your primary data source — one file per period (typically one month). Provides product name, category (Product type), units sold, gross sales, net sales and gross profit.',
-      'Export from: <em>Analytics → Reports → Total sales by product → set date range → Export</em>. Load multiple months at once — the date range is read automatically from the filename (format: YYYY-MM-DD_-_YYYY-MM-DD).')}
+    ${row('This year sales source <span style="color:var(--danger)">★ Required</span>',
+      'TY bestsellers should normally come from the Shopify API and are cached as Monday-Sunday weeks. Legacy Total Sales by Product CSVs can still be loaded for one-off periods.',
+      'CSV fallback export: <em>Analytics → Reports → Total sales by product → set date range → Export</em>. The date range is read automatically from the filename (format: YYYY-MM-DD_-_YYYY-MM-DD).')}
     ${row('Inventory Snapshot XLSX',
       'Provides current stock per SKU, cost price, RRP, season badge and product image URL. Needed for: stock, cover weeks, forecast buy, reorder simulator, season badges, and dead stock list.',
       'Export from: <em>Analytics → Reports → Inventory snapshot on a specific date → Export</em>. Stock is summed across all locations. Cost is from the "Inventory Items / Cost" column.')}
@@ -4416,8 +4887,8 @@ function renderMeth(){
 
   ${sec('Rate of sale (ROS)','The single most important input — everything else derives from it.',`
     ${row('Which period is used',
-      '<strong>Always the most recently loaded file only</strong> — not an average across all months loaded.',
-      'Deliberate design choice. Averaging across months distorts seasonal products (AW lines look slow in spring data) and new arrivals (diluted by weeks before they existed).')}
+      '<strong>Always the most recently loaded period only</strong> — not an average across all loaded history.',
+      'Deliberate design choice. Averaging across long ranges distorts seasonal products (AW lines look slow in spring data) and new arrivals (diluted by weeks before they existed).')}
     ${formula('Weekly ROS = units sold in last period ÷ period length in weeks')}
     ${row('Period length',
       'Calculated from the start and end dates in the filename. Example: "2026-04-01_-_2026-04-30" = 30 days = 4.286 weeks.',
@@ -4501,41 +4972,6 @@ function renderMeth(){
     ${row('🟡 Amber', 'Stock will run out before the season end date set in the controls.', '')}
     ${row('🟢 Green', 'Stock covers through to season end at current ROS.', '')}
     ${info('The season end date defaults to 1 September 2026. Changing it in the date picker recalculates all cover weeks, forecast buy quantities and reorder recommendations instantly.')}
-  `)}
-
-  ${sec('Merchandising tab — Category Product Checker','Identifies products that are in stock but not listed in the correct Shopify collections.',`
-    ${row('Data required','A Shopify Products & Collections export (CSV or XLSX from <em>Products → Export → CSV for Excel</em>) uploaded in the Merchandising tab, plus the Inventory Snapshot loaded on the main screen for stock levels.','Only products with stock > 0 are analysed.')}
-    ${row('How categories are inferred','Each product name is parsed to infer its core type. Keywords trigger the following assignments: jumpsuit / playsuit / dungaree → Jumpsuit; dress / pinafore → Dress; tunic → Tunic; jumper / cardigan / knitwear → Knitwear; jacket / coat / gilet → Outerwear; trouser / pant / skirt / short / jean / legging → Bottom; top / shirt / blouse / tee / vest / cami → Top.','')}
-    ${row('Status flags',
-      '<strong style="color:var(--danger)">✗ Missing</strong> — the product name implies a core category but it is not listed in any matching Ladies collection in Shopify.<br>' +
-      '<strong style="color:var(--warning)">? Unknown type</strong> — no core category can be inferred from the product name (e.g. accessories, scarves).<br>' +
-      '<strong style="color:var(--success)">✓ Listed</strong> — the product is in at least one correct category collection.','')}
-    ${info('The analyser checks against a defined list of core collections per category — e.g. "Ladies Dresses", "Ladies Cotton Dresses", "Ladies Linen Dresses" etc. all count as valid Dress collections. If none match, the product is flagged Missing.')}
-  `)}
-
-  ${sec('Merchandising tab — Shopify Position Recommendations','Ranks products within a core category using a weighted score, helping you decide the optimal display order on your collection pages.',`
-    ${row('Data sources','Sales data (revenue, units, GP) comes from the loaded sales CSVs. Stock levels come from the Inventory Snapshot. Product images come from the Inventory Snapshot or Products CSV. The Shopify collections export (uploaded in the Merchandising tab) identifies which products belong to each category — if not loaded, category membership falls back to name inference.','')}
-    ${row('Core categories','Dress · Top · Tunic · Knitwear · Outerwear · Bottom · Jumpsuit · Accessories · New In. Each maps to a defined list of Shopify collections (e.g. Dress maps to Ladies Dresses, Ladies Cotton Dresses, Ladies Linen Dresses, Ladies Long Sleeve Dresses, etc.). Products are matched to a category via their collection membership.','')}
-    ${row('Base score formula',
-      'Three sliders control the weight given to each metric:','')}
-    ${formula('Score = (wSales × normRevenue + wStock × normStock + wProfit × normGP) ÷ totalWeight')}
-    ${row('','Each metric is normalised 0–1 against the maximum value in the category (so the best-selling dress scores 1.0 for sales, all others are relative to it). The three weights are set by the sliders and can total any amount — only their relative proportions matter.', 'Example: Sales=60, Stock=20, Profit=20 → the revenue component contributes 60% of the score, stock and profit 20% each.')}
-    ${row('Season preference booster',
-      'A bidirectional slider from AW → SS. At neutral (50) there is no effect. Moving toward SS adds a bonus of up to +0.4 to the score of SS-season products; moving toward AW adds the same bonus to AW products. The bonus scales linearly: at full SS bias a pure SS product gains +0.40; at half bias it gains +0.20.',
-      'Season is read from the <em>Products / Season</em> field in the Inventory Snapshot. Products with no season data receive no bonus.')}
-    ${row('Price type booster',
-      'A bidirectional slider from Sale → Full price. GP% is used as a proxy for price integrity — higher GP% implies the product is selling at or near full price; lower GP% implies discounting or clearance. Moving toward Full price boosts high-GP% products by up to +0.40; moving toward Sale boosts low-GP% products by the same amount.',
-      'This is a proxy, not a definitive flag. A product with 70%+ GP selling very well at full price will score much higher than a clearance line with 20% GP when the slider is pushed toward Full price.')}
-    ${row('Appearance grouping — By colour',
-      'After scoring and sorting, the list is reordered so products of the same colour appear adjacent in pairs. The colour is detected from the product name (last 1–3 words checked against a list of ~50 colour keywords including Navy, Wine, Sage, Camel, Khaki, Floral, Check etc.). The highest-ranked product of each colour anchors its position; the next-best product of the same colour is moved to sit immediately after it.',
-      'A straddle correction pass then checks whether any pair crosses a row boundary in the grid layout. If so, the pair is shifted one position to keep both items on the same row.')}
-    ${row('Appearance grouping — By style',
-      'Same algorithm as By colour, but uses the first word of the product name as the style key (e.g. "Meredith" from "Meredith Washed Linen Pinafore Navy"). Products sharing a style name are paired together.',
-      'Items flagged "was #N" in amber have been moved from their base rank position due to appearance grouping.')}
-    ${row('Preview columns','2 columns simulates a mobile collection page; 4 columns simulates a desktop view. The straddle correction uses the selected column count to determine row boundaries.','')}
-    ${row('Excel export','Downloads an XLSX with two sheets: the full ranked list (position, name, SKU, season, colour, style, sales, stock, GP, score, all weightings) and a Report Info sheet summarising the settings used.','')}
-    ${row('PDF export','Downloads a self-contained HTML file. Open it in Chrome or Edge and click "Print / Save as PDF" — or press Ctrl+P. The layout uses the column count selected in the preview.','')}
-    ${info('The recommended positions are a starting point for merchandising decisions, not an absolute rule. The tool combines quantitative signals (sales, stock, margin) with visual preferences (colour, style grouping) — human judgement on trend direction, newness, and campaign focus should always be applied on top.')}
   `)}
 
   <p style="font-size:11px;color:var(--text3);padding-top:12px;margin-top:8px;border-top:.5px solid var(--border)">
@@ -4906,7 +5342,7 @@ function exportSnapshot(){
       const ed=document.getElementById('end-date');if(ed&&s.endDate)ed.value=s.endDate;
       document.getElementById('upload-sec').style.display='none';
       document.getElementById('report-sec').style.display='block';
-      ['ty','ly','ra','stock','slow','meth','trade','merch'].forEach(id=>{
+      ['ty','ly','ra','stock','slow','meth','trade'].forEach(id=>{
         const p=document.getElementById(id+'-panel');if(p)p.style.display='none';
         const b=document.getElementById('tab-'+id);if(b)b.classList.remove('on');
       });
@@ -4921,8 +5357,6 @@ function exportSnapshot(){
       banner.innerHTML='📸 <strong>Snapshot report</strong> — generated '+new Date(snap.generated).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})+' · Includes: '+tabs;
       const reportSec=document.getElementById('report-sec');
       if(reportSec)reportSec.insertBefore(banner,reportSec.firstChild);
-      // Restore merchandising state
-      if(snap.merch && typeof restoreMerchState==='function'){restoreMerchState(snap.merch);}
       if(snap.rpt){switchReportTab('ty');render();}
       else if(snap.tradeData){
         switchReportTab('trade');
@@ -4996,7 +5430,7 @@ function exportMerchSnapshot() {
       version: 3,
       generated: new Date().toISOString(),
       sym: typeof SYM !== 'undefined' ? SYM : '£',
-      openOnMerch: true,
+      openOnMerch: false,
       rpt: r ? {
         products: r.products, minD: r.minD, maxD: r.maxD, weeks: r.weeks,
         showPeriods: r.showPeriods, allPeriodLabels: r.allPeriodLabels,
@@ -5059,7 +5493,7 @@ function exportMerchSnapshot() {
       if(snap.merch && typeof restoreMerchState==='function'){restoreMerchState(snap.merch);}
       document.getElementById('upload-sec').style.display='none';
       document.getElementById('report-sec').style.display='block';
-      ['ty','ly','ra','stock','slow','meth','trade','merch'].forEach(id=>{
+      ['ty','ly','ra','stock','slow','meth','trade'].forEach(id=>{
         const p=document.getElementById(id+'-panel');if(p)p.style.display='none';
         const b=document.getElementById('tab-'+id);if(b)b.classList.remove('on');
       });
@@ -5070,13 +5504,12 @@ function exportMerchSnapshot() {
       const tul=document.getElementById('trade-upload-inline');if(tul)tul.style.display='none';
       const banner=document.createElement('div');
       banner.style.cssText='background:#f0faf4;border:.5px solid #b3dfc3;border-radius:8px;padding:10px 16px;font-size:12px;color:#1e7e4a;margin-bottom:16px';
-      const tabs=[snap.rpt&&'Bestsellers',snap.merch&&'Merchandising',snap.tradeData&&'Trade'].filter(Boolean).join(', ');
+      const tabs=[snap.rpt&&'Bestsellers',snap.tradeData&&'Trade'].filter(Boolean).join(', ');
       banner.innerHTML='\ud83d\udcf8 <strong>Snapshot report</strong> \u2014 generated '+new Date(snap.generated).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})+' \u00b7 Includes: '+tabs;
       const reportSec=document.getElementById('report-sec');
       if(reportSec)reportSec.insertBefore(banner,reportSec.firstChild);
-      // Open on merch tab
-      switchReportTab('merch');
-      renderMerchPanel();
+      if(snap.rpt){switchReportTab('ty');render();}
+      else if(snap.tradeData){switchReportTab('trade');renderTrade();}
     }catch(e){
       console.error('Snapshot restore error:',e);
       document.body.innerHTML='<div style="padding:40px;font-family:sans-serif;color:#c0392b">Snapshot failed to load: '+e.message+'</div>';

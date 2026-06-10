@@ -433,16 +433,37 @@ function normalizeProduct(product, orderMetrics) {
   const variants = product.variants.nodes;
   const stock = variants.reduce((sum, variant) => sum + Number(variant.inventoryQuantity || 0), 0);
   const prices = variants.map((variant) => Number(variant.price || 0)).filter(Number.isFinite);
+  const compareAtPrices = variants.map((variant) => Number(variant.compareAtPrice || 0)).filter((value) => Number.isFinite(value) && value > 0);
   const costs = variants.map((variant) => Number(variant.inventoryItem?.unitCost?.amount || 0)).filter((value) => Number.isFinite(value) && value > 0);
   const skus = variants.map((variant) => variant.sku).filter(Boolean);
   const variantIds = variants.flatMap((variant) => [variant.id, variant.legacyResourceId]).filter(Boolean);
   const price = prices.length ? Math.min(...prices) : 0;
+  const compareAtPrice = compareAtPrices.length ? Math.max(...compareAtPrices) : null;
   const cost = costs.length ? costs.reduce((sum, value) => sum + value, 0) / costs.length : null;
   const margin = price > 0 && cost > 0 ? Math.round(((price - cost) / price) * 100) : null;
   const metrics = orderMetrics.get(product.id) || { revenue: 0, units: 0 };
   const image = product.featuredImage || product.images.nodes[0] || null;
+  const status = product.status || "";
+  const normalizedVariants = variants.map((variant) => {
+    const variantPrice = Number(variant.price || 0);
+    const variantCompareAt = variant.compareAtPrice == null ? null : Number(variant.compareAtPrice || 0);
+    const variantCost = variant.inventoryItem?.unitCost?.amount == null ? null : Number(variant.inventoryItem.unitCost.amount || 0);
+    return {
+      id: variant.id || "",
+      legacyResourceId: variant.legacyResourceId || "",
+      sku: variant.sku || "",
+      title: variant.title || "",
+      selectedOptions: variant.selectedOptions || [],
+      price: variantPrice,
+      compareAtPrice: variantCompareAt,
+      cost: variantCost,
+      inventoryQuantity: Number(variant.inventoryQuantity || 0),
+      isMarkedDown: Boolean(variantCompareAt && variantCompareAt > variantPrice)
+    };
+  });
   return {
     id: product.id,
+    status,
     title: product.title,
     handle: product.handle,
     vendor: product.vendor,
@@ -459,9 +480,12 @@ function normalizeProduct(product, orderMetrics) {
     imageUrl: image?.url || "",
     imageAlt: image?.altText || product.title,
     price,
+    compareAtPrice,
+    isMarkedDown: Boolean(compareAtPrice && compareAtPrice > price),
     cost,
     margin,
     stock,
+    variants: normalizedVariants,
     revenue: Math.round(metrics.revenue * 100) / 100,
     units: metrics.units,
     gaViews: 0,
@@ -861,6 +885,1178 @@ async function fetchShopifyMerchandising(req, res) {
   } catch (error) {
     sendJson(res, 502, { configured: true, message: error.message });
   }
+}
+
+function reportHash(value) {
+  return crypto.createHash("sha1").update(String(value || "")).digest("hex").slice(0, 16);
+}
+
+function reportDateLabel(startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return `${startDate} - ${endDate}`;
+  const days = Math.max((end - start) / 864e5 + 1, 1);
+  if (days > 20 && start.getUTCMonth() === end.getUTCMonth() && start.getUTCFullYear() === end.getUTCFullYear()) {
+    return start.toLocaleDateString("en-GB", { month: "short", year: "numeric", timeZone: "UTC" });
+  }
+  const sameYear = start.getUTCFullYear() === end.getUTCFullYear();
+  const startText = start.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  const endText = end.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: sameYear ? undefined : "numeric", timeZone: "UTC" });
+  const suffix = sameYear ? ` ${end.getUTCFullYear()}` : "";
+  return `${startText} - ${endText}${suffix}`;
+}
+
+function reportUtcDate(value) {
+  return new Date(`${value}T00:00:00.000Z`);
+}
+
+function reportDaysInclusive(range) {
+  const start = reportUtcDate(range.startDate);
+  const end = reportUtcDate(range.endDate);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start) return 0;
+  return Math.floor((end - start) / 864e5) + 1;
+}
+
+function mondayForDate(date) {
+  const monday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = monday.getUTCDay() || 7;
+  monday.setUTCDate(monday.getUTCDate() - day + 1);
+  return monday;
+}
+
+function canonicalReportWeeks(range) {
+  const start = reportUtcDate(range.startDate);
+  const end = reportUtcDate(range.endDate);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start) return [];
+  const cursor = mondayForDate(start);
+  const weeks = [];
+  while (cursor <= end) {
+    const weekStart = new Date(cursor);
+    const weekEnd = new Date(cursor);
+    weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+    weeks.push({ startDate: isoDateOnly(weekStart), endDate: isoDateOnly(weekEnd) });
+    cursor.setUTCDate(cursor.getUTCDate() + 7);
+  }
+  return weeks;
+}
+
+function validReportDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+}
+
+function extractReportDatesFromName(fileName) {
+  const text = String(fileName || "");
+  const range = text.match(/(\d{4}-\d{2}-\d{2})[_\s-]+(?:to|_)?[_\s-]*(\d{4}-\d{2}-\d{2})/i);
+  if (range) {
+    const start = new Date(`${range[1]}T00:00:00.000Z`);
+    const end = new Date(`${range[2]}T00:00:00.000Z`);
+    if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) && start <= end) {
+      return { startDate: range[1], endDate: range[2] };
+    }
+  }
+  const single = text.match(/(\d{4}-\d{2}-\d{2})/);
+  if (single) {
+    const start = new Date(`${single[1]}T00:00:00.000Z`);
+    if (Number.isFinite(start.getTime())) {
+      const end = new Date(start);
+      end.setUTCMonth(end.getUTCMonth() + 1, 0);
+      return { startDate: single[1], endDate: isoDateOnly(end) };
+    }
+  }
+  return null;
+}
+
+function parseCsvRows(text) {
+  const rows = [];
+  let current = "";
+  let inQuotes = false;
+  let fields = [];
+  const pushField = () => {
+    fields.push(current);
+    current = "";
+  };
+  for (let index = 0; index < String(text || "").length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (inQuotes) {
+      if (char === '"' && next === '"') {
+        current += '"';
+        index += 1;
+      } else if (char === '"') {
+        inQuotes = false;
+      } else {
+        current += char;
+      }
+    } else if (char === '"') {
+      inQuotes = true;
+    } else if (char === ",") {
+      pushField();
+    } else if (char === "\n" || char === "\r") {
+      pushField();
+      if (char === "\r" && next === "\n") index += 1;
+      rows.push(fields);
+      fields = [];
+    } else {
+      current += char;
+    }
+  }
+  pushField();
+  if (fields.some(field => String(field).trim())) rows.push(fields);
+  if (!rows.length) return [];
+  const headers = rows[0].map(value => String(value || "").trim());
+  return rows.slice(1)
+    .filter(row => row.some(value => String(value || "").trim()))
+    .map(row => {
+      const item = {};
+      headers.forEach((header, index) => {
+        item[header] = String(row[index] || "").trim();
+      });
+      return item;
+    });
+}
+
+function csvNumber(value) {
+  const clean = String(value || "").replace(/[£,\s]/g, "");
+  const parsed = Number(clean);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function productsFromSalesCsvRows(rows) {
+  const byTitle = new Map();
+  for (const row of rows) {
+    const title = String(row["Product title"] || row.Title || "").trim();
+    if (!title || title === "Gift Card") continue;
+    const current = byTitle.get(title) || {
+      id: `csv:${reportHash(title)}`,
+      title,
+      productType: String(row["Product type"] || "").trim(),
+      units: 0,
+      revenue: 0,
+      grossSales: 0,
+      grossProfit: 0,
+      stock: null,
+      price: 0,
+      cost: null,
+      skus: []
+    };
+    const units = csvNumber(row["Net items sold"]);
+    const netSales = csvNumber(row["Net sales"]);
+    const grossSales = csvNumber(row["Gross sales"]);
+    current.units += units;
+    current.revenue += netSales;
+    current.grossSales += grossSales || netSales;
+    current.grossProfit += csvNumber(row["Gross profit"]);
+    if (units > 0) current.price = current.revenue / current.units;
+    byTitle.set(title, current);
+  }
+  return Array.from(byTitle.values());
+}
+
+function reportRangeFromRequest(url, fallbackDays = 28) {
+  const requestedStart = url.searchParams.get("startDate") || "";
+  const requestedEnd = url.searchParams.get("endDate") || "";
+  if (validReportDate(requestedStart) && validReportDate(requestedEnd)) {
+    const start = new Date(`${requestedStart}T00:00:00.000Z`);
+    const end = new Date(`${requestedEnd}T00:00:00.000Z`);
+    if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) && start <= end) {
+      const maxEnd = new Date(start);
+      maxEnd.setUTCDate(maxEnd.getUTCDate() + 366);
+      if (end > maxEnd) throw new Error("Choose a report range of 366 days or less.");
+      return { startDate: requestedStart, endDate: requestedEnd };
+    }
+  }
+  return dateRangeFromDays(fallbackDays);
+}
+
+function publicReportPeriod(row) {
+  if (!row) return null;
+  const summary = parseJson(row.summary_json, {});
+  return {
+    id: row.id,
+    reportType: row.report_type,
+    periodGrain: row.period_grain,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    label: row.label,
+    sourceType: row.source_type,
+    sourceId: row.source_id,
+    yearBucket: row.year_bucket || "",
+    status: row.status,
+    lockedAt: row.locked_at || "",
+    syncedAt: row.synced_at,
+    updatedAt: row.updated_at,
+    summary
+  };
+}
+
+function readBestsellersPeriods() {
+  const db = openOrderSqliteDb();
+  return db.prepare(`
+    SELECT *
+    FROM report_periods
+    WHERE report_type = 'bestsellers'
+    ORDER BY start_date DESC, end_date DESC
+    LIMIT 120
+  `).all().map(publicReportPeriod);
+}
+
+function publicStockSnapshot(row) {
+  return {
+    id: row.id,
+    periodId: row.period_id,
+    sourceId: row.source_id || "",
+    snapshotAt: row.snapshot_at,
+    shopifyProductId: row.shopify_product_id || "",
+    legacyResourceId: row.legacy_resource_id || "",
+    productStatus: row.product_status || "",
+    productTitle: row.product_title || "",
+    productHandle: row.product_handle || "",
+    productType: row.product_type || "",
+    vendor: row.vendor || "",
+    season: row.season || "",
+    shopifyVariantId: row.shopify_variant_id || "",
+    variantLegacyResourceId: row.variant_legacy_resource_id || "",
+    sku: row.sku || "",
+    variantTitle: row.variant_title || "",
+    selectedOptions: parseJson(row.selected_options_json, []),
+    inventoryQuantity: Number(row.inventory_quantity || 0),
+    price: row.price == null ? null : Number(row.price || 0),
+    compareAtPrice: row.compare_at_price == null ? null : Number(row.compare_at_price || 0),
+    cost: row.cost == null ? null : Number(row.cost || 0),
+    isMarkedDown: Boolean(row.is_marked_down),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function readStockSnapshots(url) {
+  const db = openOrderSqliteDb();
+  const where = [];
+  const params = {};
+  const sku = String(url.searchParams.get("sku") || "").trim();
+  const productStatus = String(url.searchParams.get("status") || "").trim().toUpperCase();
+  const startDate = String(url.searchParams.get("startDate") || "").trim();
+  const endDate = String(url.searchParams.get("endDate") || "").trim();
+  const markedDown = String(url.searchParams.get("markedDown") || "").trim();
+  if (sku) {
+    where.push("sku = @sku");
+    params.sku = sku;
+  }
+  if (productStatus) {
+    where.push("product_status = @productStatus");
+    params.productStatus = productStatus;
+  }
+  if (validReportDate(startDate)) {
+    where.push("date(snapshot_at) >= date(@startDate)");
+    params.startDate = startDate;
+  }
+  if (validReportDate(endDate)) {
+    where.push("date(snapshot_at) <= date(@endDate)");
+    params.endDate = endDate;
+  }
+  if (markedDown === "1" || markedDown.toLowerCase() === "true") {
+    where.push("is_marked_down = 1");
+  }
+  const limit = Math.max(1, Math.min(1000, Number(url.searchParams.get("limit") || 250)));
+  params.limit = limit;
+  const rows = db.prepare(`
+    SELECT *
+    FROM report_stock_snapshots
+    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+    ORDER BY snapshot_at DESC, product_title COLLATE NOCASE, variant_title COLLATE NOCASE
+    LIMIT @limit
+  `).all(params);
+  return rows.map(publicStockSnapshot);
+}
+
+function publicReportSyncJob(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    reportType: row.report_type,
+    status: row.status,
+    requestedStartDate: row.requested_start_date || "",
+    requestedEndDate: row.requested_end_date || "",
+    currentStartDate: row.current_start_date || "",
+    currentEndDate: row.current_end_date || "",
+    totalSteps: Number(row.total_steps || 0),
+    completedSteps: Number(row.completed_steps || 0),
+    message: row.message || "",
+    error: row.error || "",
+    result: parseJson(row.result_json, null),
+    createdAt: row.created_at,
+    startedAt: row.started_at || "",
+    completedAt: row.completed_at || "",
+    updatedAt: row.updated_at
+  };
+}
+
+function readReportSyncJob(jobId) {
+  const db = openOrderSqliteDb();
+  const row = db.prepare("SELECT * FROM report_sync_jobs WHERE id = ?").get(String(jobId || ""));
+  return publicReportSyncJob(row);
+}
+
+function createReportSyncJob(range) {
+  const db = openOrderSqliteDb();
+  const days = reportDaysInclusive(range);
+  const weeks = days >= 7 ? canonicalReportWeeks(range) : [];
+  const job = {
+    id: crypto.randomUUID(),
+    reportType: "bestsellers",
+    status: "queued",
+    requestedStartDate: range.startDate,
+    requestedEndDate: range.endDate,
+    totalSteps: days < 7 ? 1 : weeks.length,
+    completedSteps: 0,
+    message: days < 7
+      ? "Queued live ad hoc Shopify report. Ranges under 7 days are not stored."
+      : `Queued ${weeks.length} Monday-Sunday week${weeks.length === 1 ? "" : "s"} for Shopify sync.`
+  };
+  db.prepare(`
+    INSERT INTO report_sync_jobs (
+      id, report_type, status, requested_start_date, requested_end_date,
+      total_steps, completed_steps, message, created_at, updated_at
+    )
+    VALUES (
+      @id, @reportType, @status, @requestedStartDate, @requestedEndDate,
+      @totalSteps, @completedSteps, @message, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+  `).run(job);
+  return readReportSyncJob(job.id);
+}
+
+function updateReportSyncJob(jobId, patch) {
+  const db = openOrderSqliteDb();
+  const current = db.prepare("SELECT * FROM report_sync_jobs WHERE id = ?").get(String(jobId || ""));
+  if (!current) return null;
+  const next = {
+    status: patch.status ?? current.status,
+    currentStartDate: patch.currentStartDate ?? current.current_start_date ?? "",
+    currentEndDate: patch.currentEndDate ?? current.current_end_date ?? "",
+    totalSteps: patch.totalSteps ?? current.total_steps ?? 0,
+    completedSteps: patch.completedSteps ?? current.completed_steps ?? 0,
+    message: patch.message ?? current.message ?? "",
+    error: patch.error ?? current.error ?? "",
+    resultJson: patch.result == null ? current.result_json || "" : JSON.stringify(patch.result),
+    startedAt: patch.startedAt ?? current.started_at ?? "",
+    completedAt: patch.completedAt ?? current.completed_at ?? ""
+  };
+  db.prepare(`
+    UPDATE report_sync_jobs
+    SET status = @status,
+        current_start_date = @currentStartDate,
+        current_end_date = @currentEndDate,
+        total_steps = @totalSteps,
+        completed_steps = @completedSteps,
+        message = @message,
+        error = @error,
+        result_json = @resultJson,
+        started_at = NULLIF(@startedAt, ''),
+        completed_at = NULLIF(@completedAt, ''),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `).run({ id: jobId, ...next });
+  return readReportSyncJob(jobId);
+}
+
+function bestsellersPeriodRow(startDate, endDate, sourceType = "shopify_api") {
+  const db = openOrderSqliteDb();
+  return db.prepare(`
+    SELECT *
+    FROM report_periods
+    WHERE report_type = 'bestsellers'
+      AND source_type = ?
+      AND start_date = ?
+      AND end_date = ?
+  `).get(sourceType, startDate, endDate);
+}
+
+function bestsellersPeriodRowsForRanges(ranges, sourceType = "shopify_api") {
+  return ranges.map(range => bestsellersPeriodRow(range.startDate, range.endDate, sourceType)).filter(Boolean);
+}
+
+function bestsellersPeriodRowsInRange(range, sourceType = "csv_import", yearBucket = "") {
+  const db = openOrderSqliteDb();
+  const params = {
+    sourceType,
+    startDate: range.startDate,
+    endDate: range.endDate,
+    yearBucket: String(yearBucket || "").trim().toUpperCase()
+  };
+  return db.prepare(`
+    SELECT *
+    FROM report_periods
+    WHERE report_type = 'bestsellers'
+      AND source_type = @sourceType
+      AND date(start_date) >= date(@startDate)
+      AND date(end_date) <= date(@endDate)
+      AND (@yearBucket = '' OR upper(year_bucket) = @yearBucket)
+    ORDER BY start_date ASC, end_date ASC
+  `).all(params);
+}
+
+function buildBestsellersPayload(periodRow) {
+  if (!periodRow) return null;
+  return buildBestsellersPayloadFromPeriods([periodRow]);
+}
+
+function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
+  if (!periodRows.length) return null;
+  const db = openOrderSqliteDb();
+  const publicPeriods = periodRows.map(publicReportPeriod);
+  const productsByKey = new Map();
+  for (const periodRow of periodRows) {
+    const period = publicReportPeriod(periodRow);
+    const start = reportUtcDate(period.startDate);
+    const end = reportUtcDate(period.endDate);
+    const days = Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) ? Math.max((end - start) / 864e5 + 1, 1) : 7;
+    const weeks = Math.max(days / 7, 1);
+    const rows = db.prepare(`
+    SELECT *
+    FROM report_product_metrics
+    WHERE period_id = ?
+    ORDER BY net_sales DESC, units DESC, title COLLATE NOCASE
+  `).all(periodRow.id);
+    for (const row of rows) {
+      const data = parseJson(row.data, {});
+      const key = row.product_key || row.shopify_product_id || row.title;
+      const existing = productsByKey.get(key) || {
+        name: row.title,
+        title: row.title,
+        productKey: row.product_key,
+        id: row.shopify_product_id || row.product_key,
+        legacyResourceId: row.legacy_resource_id || "",
+        sku: row.sku || "",
+        skus: data.skus || (row.sku ? [row.sku] : []),
+        status: row.product_status || data.status || "",
+        cat: row.product_type || "",
+        productType: row.product_type || "",
+        vendor: row.vendor || "",
+        season: row.season || "",
+        img: row.image_url || "",
+        imageUrl: row.image_url || "",
+        units: 0,
+        rev: 0,
+        gp: 0,
+        gross: 0,
+        gaViews: 0,
+        gaAdds: 0,
+        gaPurchases: 0,
+        gaRevenue: 0,
+        periods: {}
+      };
+      const units = Number(row.units || 0);
+      const rev = Number(row.net_sales || 0);
+      const gross = Number(row.gross_sales || rev);
+      const gp = row.gross_profit == null ? 0 : Number(row.gross_profit || 0);
+      existing.units += units;
+      existing.rev += rev;
+      existing.gp += gp;
+      existing.gross += gross;
+      existing.gaViews += Number(row.ga_views || 0);
+      existing.gaAdds += Number(row.ga_adds || 0);
+      existing.gaPurchases += Number(row.ga_purchases || 0);
+      existing.gaRevenue += Number(row.ga_revenue || 0);
+      existing.periods[period.label] = { units, rev, gross, gp };
+      existing.stock = row.stock == null ? existing.stock ?? null : Number(row.stock || 0);
+      existing.cost = row.cost == null ? existing.cost ?? null : Number(row.cost || 0);
+      existing.avgCost = existing.cost;
+      existing.rrp = row.retail_price == null ? existing.rrp ?? null : Number(row.retail_price || 0);
+      existing.compareAtPrice = row.compare_at_price == null ? existing.compareAtPrice ?? null : Number(row.compare_at_price || 0);
+      existing.isMarkedDown = Boolean(existing.compareAtPrice && existing.rrp && existing.compareAtPrice > existing.rrp);
+      productsByKey.set(key, existing);
+    }
+  }
+  const products = Array.from(productsByKey.values()).map((product) => {
+    const weeks = Math.max(publicPeriods.reduce((total, period) => total + reportDaysInclusive(period) / 7, 0), 1);
+    const avgP = product.units > 0 ? product.rev / product.units : Number(product.rrp || 0);
+    const gpPct = product.rev > 0 ? product.gp / product.rev * 100 : 0;
+    const gpUnit = product.units > 0 ? product.gp / product.units : 0;
+    const wklyU = product.units / weeks;
+    const avgRevPerWeek = product.rev / weeks;
+    const coverWks = product.stock != null && wklyU > 0 ? product.stock / wklyU : null;
+    const forecastBuy = product.stock != null && wklyU > 0 ? Math.max(0, Math.ceil(wklyU * 8) - product.stock) : null;
+    return {
+      ...product,
+      avgP,
+      gAsp: product.units > 0 ? product.gross / product.units : avgP,
+      gpPct,
+      gpUnit,
+      wklyU,
+      avgRevPerWeek,
+      coverWks,
+      forecastBuy
+    };
+  });
+  const chronologicalPeriods = [...publicPeriods].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const newestPeriodsFirst = [...publicPeriods].sort((a, b) => b.startDate.localeCompare(a.startDate));
+  const latestPeriod = newestPeriodsFirst[0] || publicPeriods[0];
+  const minDate = requestedRange?.startDate || chronologicalPeriods[0]?.startDate || "";
+  const maxDate = requestedRange?.endDate || chronologicalPeriods[chronologicalPeriods.length - 1]?.endDate || "";
+  const reportWeeks = Math.max(publicPeriods.reduce((total, period) => total + reportDaysInclusive(period) / 7, 0), 1);
+  const deadStock = products
+    .filter(product => Number(product.stock || 0) > 0 && Number(product.units || 0) <= 0)
+    .map(product => ({
+      name: product.name,
+      stock: product.stock,
+      season: product.season,
+      img: product.img,
+      price: product.rrp || 0,
+      sku: product.sku || ""
+    }))
+    .sort((a, b) => Number(b.stock || 0) - Number(a.stock || 0));
+  return {
+    configured: true,
+    generatedAt: new Date().toISOString(),
+    period: latestPeriod,
+    periods: newestPeriodsFirst,
+    storedPeriodGrain: "week",
+    report: {
+      products: products.sort((a, b) => Number(b.rev || 0) - Number(a.rev || 0)),
+      minDate,
+      maxDate,
+      weeks: reportWeeks,
+      showPeriods: publicPeriods.length > 1,
+      allPeriodLabels: chronologicalPeriods.map(period => period.label),
+      orderedPeriodLabels: newestPeriodsFirst.map(period => period.label),
+      rosLabel: latestPeriod?.label || "latest period",
+      totRev: products.reduce((sum, product) => sum + Number(product.rev || 0), 0),
+      totUnits: products.reduce((sum, product) => sum + Number(product.units || 0), 0),
+      totGP: products.reduce((sum, product) => sum + Number(product.gp || 0), 0),
+      invTotalStock: products.reduce((sum, product) => sum + Number(product.stock || 0), 0),
+      deadStock
+    }
+  };
+}
+
+function writeBestsellersSnapshot(periodId, payload) {
+  const db = openOrderSqliteDb();
+  const period = payload.period;
+  const cacheKey = `${period.sourceType}:${period.startDate}:${period.endDate}`;
+  db.prepare(`
+    INSERT INTO report_snapshots (id, report_type, period_id, cache_key, payload_json, created_at, updated_at)
+    VALUES (@id, 'bestsellers', @periodId, @cacheKey, @payload, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(report_type, cache_key) DO UPDATE SET
+      period_id = excluded.period_id,
+      payload_json = excluded.payload_json,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    id: `snapshot:bestsellers:${reportHash(cacheKey)}`,
+    periodId,
+    cacheKey,
+    payload: JSON.stringify(payload)
+  });
+}
+
+function buildTransientBestsellersPayload(range, products, meta = {}) {
+  const label = reportDateLabel(range.startDate, range.endDate);
+  const weeks = Math.max(reportDaysInclusive(range) / 7, 1 / 7);
+  const reportProducts = products.map((product) => {
+    const units = Number(product.units || 0);
+    const rev = Number(product.revenue || 0);
+    const gross = Number(product.grossSales || product.revenue || 0);
+    const cost = product.cost == null ? null : Number(product.cost || 0);
+    const gp = product.grossProfit != null ? Number(product.grossProfit || 0) : cost != null ? rev - (cost * units) : 0;
+    const avgP = units > 0 ? rev / units : Number(product.price || 0);
+    const wklyU = units / weeks;
+    const stock = product.stock == null ? null : Number(product.stock || 0);
+    return {
+      name: product.title,
+      title: product.title,
+      productKey: product.id || product.title,
+      id: product.id || product.title,
+      legacyResourceId: product.legacyResourceId || "",
+      sku: (product.skus || [])[0] || "",
+      skus: product.skus || [],
+      status: product.status || "",
+      cat: product.productType || "",
+      productType: product.productType || "",
+      vendor: product.vendor || "",
+      season: product.season || "",
+      img: product.imageUrl || "",
+      imageUrl: product.imageUrl || "",
+      units,
+      rev,
+      gp,
+      gross,
+      avgP,
+      gAsp: units > 0 ? gross / units : avgP,
+      gpPct: rev > 0 ? gp / rev * 100 : 0,
+      gpUnit: units > 0 ? gp / units : 0,
+      stock,
+      cost,
+      avgCost: cost,
+      rrp: product.price == null ? null : Number(product.price || 0),
+      compareAtPrice: product.compareAtPrice == null ? null : Number(product.compareAtPrice || 0),
+      isMarkedDown: Boolean(product.compareAtPrice && product.compareAtPrice > product.price),
+      wklyU,
+      avgRevPerWeek: rev / weeks,
+      coverWks: stock != null && wklyU > 0 ? stock / wklyU : null,
+      forecastBuy: stock != null && wklyU > 0 ? Math.max(0, Math.ceil(wklyU * 8) - stock) : null,
+      gaViews: Number(product.gaViews || 0),
+      gaAdds: Number(product.gaAdds || 0),
+      gaPurchases: Number(product.gaPurchases || 0),
+      gaRevenue: Number(product.gaRevenue || 0),
+      periods: { [label]: { units, rev, gross, gp } }
+    };
+  });
+  const deadStock = reportProducts
+    .filter(product => Number(product.stock || 0) > 0 && Number(product.units || 0) <= 0)
+    .map(product => ({ name: product.name, stock: product.stock, season: product.season, img: product.img, price: product.rrp || 0, sku: product.sku || "" }))
+    .sort((a, b) => Number(b.stock || 0) - Number(a.stock || 0));
+  return {
+    configured: true,
+    stored: false,
+    generatedAt: new Date().toISOString(),
+    period: {
+      id: `transient:bestsellers:${reportHash(`${range.startDate}:${range.endDate}`)}`,
+      reportType: "bestsellers",
+      periodGrain: "ad_hoc",
+      startDate: range.startDate,
+      endDate: range.endDate,
+      label,
+      sourceType: "shopify_api",
+      yearBucket: "TY",
+      status: "transient",
+      syncedAt: new Date().toISOString(),
+      summary: {
+        productCount: reportProducts.length,
+        totalUnits: reportProducts.reduce((sum, product) => sum + Number(product.units || 0), 0),
+        totalRevenue: reportProducts.reduce((sum, product) => sum + Number(product.rev || 0), 0),
+        totalStock: reportProducts.reduce((sum, product) => sum + Number(product.stock || 0), 0),
+        grossProfitSource: meta.grossProfitSource || "estimated_current_cost"
+      }
+    },
+    storedPeriodGrain: "ad_hoc",
+    report: {
+      products: reportProducts.sort((a, b) => Number(b.rev || 0) - Number(a.rev || 0)),
+      minDate: range.startDate,
+      maxDate: range.endDate,
+      weeks,
+      showPeriods: false,
+      allPeriodLabels: [label],
+      orderedPeriodLabels: [label],
+      rosLabel: label,
+      totRev: reportProducts.reduce((sum, product) => sum + Number(product.rev || 0), 0),
+      totUnits: reportProducts.reduce((sum, product) => sum + Number(product.units || 0), 0),
+      totGP: reportProducts.reduce((sum, product) => sum + Number(product.gp || 0), 0),
+      invTotalStock: reportProducts.reduce((sum, product) => sum + Number(product.stock || 0), 0),
+      deadStock
+    }
+  };
+}
+
+function persistBestsellersProducts(range, source, products, meta = {}) {
+  const db = openOrderSqliteDb();
+  const label = reportDateLabel(range.startDate, range.endDate);
+  const sourceType = source.sourceType || "shopify_api";
+  const sourceKey = source.sourceKey || `${sourceType}:${range.startDate}:${range.endDate}`;
+  const sourceId = source.id || `source:bestsellers:${reportHash(sourceKey)}`;
+  const periodId = `period:bestsellers:${reportHash(`${sourceType}:${range.startDate}:${range.endDate}`)}`;
+  const now = new Date().toISOString();
+  const periodSummary = {
+    productCount: products.length,
+    totalUnits: products.reduce((sum, product) => sum + Number(product.units || 0), 0),
+    totalRevenue: products.reduce((sum, product) => sum + Number(product.revenue || 0), 0),
+    totalStock: products.reduce((sum, product) => sum + Number(product.stock || 0), 0),
+    grossProfitSource: meta.grossProfitSource || "estimated_current_cost"
+  };
+  const write = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO report_sources (
+        id, report_type, source_type, source_key, file_name, file_path, checksum,
+        start_date, end_date, label, status, metadata, created_at, updated_at
+      )
+      VALUES (
+        @id, 'bestsellers', @sourceType, @sourceKey, @fileName, @filePath, @checksum,
+        @startDate, @endDate, @label, 'ready', @metadata, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        source_key = excluded.source_key,
+        checksum = excluded.checksum,
+        start_date = excluded.start_date,
+        end_date = excluded.end_date,
+        label = excluded.label,
+        status = excluded.status,
+        metadata = excluded.metadata,
+        updated_at = CURRENT_TIMESTAMP
+    `).run({
+      id: sourceId,
+      sourceType,
+      sourceKey,
+      fileName: source.fileName || "",
+      filePath: source.filePath || "",
+      checksum: source.checksum || reportHash(JSON.stringify({ sourceKey, count: products.length, syncedAt: now })),
+      startDate: range.startDate,
+      endDate: range.endDate,
+      label,
+      metadata: JSON.stringify(meta)
+    });
+    db.prepare(`
+      INSERT INTO report_periods (
+        id, report_type, period_grain, start_date, end_date, label, source_type,
+        source_id, year_bucket, status, synced_at, summary_json, created_at, updated_at
+      )
+      VALUES (
+        @id, 'bestsellers', @periodGrain, @startDate, @endDate, @label, @sourceType,
+        @sourceId, @yearBucket, 'ready', @syncedAt, @summary, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(report_type, source_type, start_date, end_date) DO UPDATE SET
+        label = excluded.label,
+        source_id = excluded.source_id,
+        year_bucket = excluded.year_bucket,
+        status = excluded.status,
+        synced_at = excluded.synced_at,
+        summary_json = excluded.summary_json,
+        updated_at = CURRENT_TIMESTAMP
+    `).run({
+      id: periodId,
+      periodGrain: meta.periodGrain || "custom",
+      startDate: range.startDate,
+      endDate: range.endDate,
+      label,
+      sourceType,
+      sourceId,
+      yearBucket: source.yearBucket || "",
+      syncedAt: now,
+      summary: JSON.stringify(periodSummary)
+    });
+    db.prepare("DELETE FROM report_product_metrics WHERE period_id = ?").run(periodId);
+    db.prepare("DELETE FROM report_stock_snapshots WHERE period_id = ?").run(periodId);
+    const insertProduct = db.prepare(`
+      INSERT INTO report_product_metrics (
+        id, period_id, product_key, shopify_product_id, legacy_resource_id, sku, title,
+        product_status, product_type, vendor, season, image_url, units, net_sales, gross_sales,
+        gross_profit, stock, cost, retail_price, compare_at_price, ga_views, ga_adds, ga_purchases,
+        ga_revenue, data, updated_at
+      )
+      VALUES (
+        @id, @periodId, @productKey, @shopifyProductId, @legacyResourceId, @sku, @title,
+        @productStatus, @productType, @vendor, @season, @imageUrl, @units, @netSales, @grossSales,
+        @grossProfit, @stock, @cost, @retailPrice, @compareAtPrice, @gaViews, @gaAdds, @gaPurchases,
+        @gaRevenue, @data, CURRENT_TIMESTAMP
+      )
+    `);
+    const insertStock = db.prepare(`
+      INSERT INTO report_stock_snapshots (
+        id, period_id, source_id, snapshot_at, shopify_product_id, legacy_resource_id,
+        product_status, product_title, product_handle, product_type, vendor, season,
+        shopify_variant_id, variant_legacy_resource_id, sku, variant_title,
+        option1_name, option1_value, option2_name, option2_value, option3_name, option3_value,
+        selected_options_json, inventory_quantity, price, compare_at_price, cost,
+        is_marked_down, data, created_at, updated_at
+      )
+      VALUES (
+        @id, @periodId, @sourceId, @snapshotAt, @shopifyProductId, @legacyResourceId,
+        @productStatus, @productTitle, @productHandle, @productType, @vendor, @season,
+        @shopifyVariantId, @variantLegacyResourceId, @sku, @variantTitle,
+        @option1Name, @option1Value, @option2Name, @option2Value, @option3Name, @option3Value,
+        @selectedOptionsJson, @inventoryQuantity, @price, @compareAtPrice, @cost,
+        @isMarkedDown, @data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
+    `);
+    for (const product of products) {
+      const productKey = String(product.id || product.legacyResourceId || product.handle || product.title || crypto.randomUUID());
+      const units = Number(product.units || 0);
+      const netSales = Number(product.revenue || 0);
+      const cost = product.cost == null ? null : Number(product.cost || 0);
+      const grossProfit = product.grossProfit != null ? Number(product.grossProfit || 0) : cost != null ? netSales - (cost * units) : null;
+      insertProduct.run({
+        id: `metric:bestsellers:${reportHash(`${periodId}:${productKey}`)}`,
+        periodId,
+        productKey,
+        shopifyProductId: product.id || "",
+        legacyResourceId: product.legacyResourceId || "",
+        sku: (product.skus || [])[0] || "",
+        title: product.title || "",
+        productStatus: product.status || "",
+        productType: product.productType || "",
+        vendor: product.vendor || "",
+        season: product.season || "",
+        imageUrl: product.imageUrl || "",
+        units,
+        netSales,
+        grossSales: Number(product.grossSales || product.revenue || 0),
+        grossProfit,
+        stock: product.stock == null ? null : Number(product.stock || 0),
+        cost,
+        retailPrice: product.price == null ? null : Number(product.price || 0),
+        compareAtPrice: product.compareAtPrice == null ? null : Number(product.compareAtPrice || 0),
+        gaViews: Number(product.gaViews || 0),
+        gaAdds: Number(product.gaAdds || 0),
+        gaPurchases: Number(product.gaPurchases || 0),
+        gaRevenue: Number(product.gaRevenue || 0),
+        data: JSON.stringify(product)
+      });
+      for (const variant of product.variants || []) {
+        const options = Array.isArray(variant.selectedOptions) ? variant.selectedOptions : [];
+        const optionAt = (index) => options[index] || {};
+        const variantKey = variant.id || variant.legacyResourceId || variant.sku || `${productKey}:${variant.title || "variant"}`;
+        insertStock.run({
+          id: `stock:bestsellers:${reportHash(`${periodId}:${variantKey}`)}`,
+          periodId,
+          sourceId,
+          snapshotAt: now,
+          shopifyProductId: product.id || "",
+          legacyResourceId: product.legacyResourceId || "",
+          productStatus: product.status || "",
+          productTitle: product.title || "",
+          productHandle: product.handle || "",
+          productType: product.productType || "",
+          vendor: product.vendor || "",
+          season: product.season || "",
+          shopifyVariantId: variant.id || "",
+          variantLegacyResourceId: variant.legacyResourceId || "",
+          sku: variant.sku || "",
+          variantTitle: variant.title || "",
+          option1Name: optionAt(0).name || "",
+          option1Value: optionAt(0).value || "",
+          option2Name: optionAt(1).name || "",
+          option2Value: optionAt(1).value || "",
+          option3Name: optionAt(2).name || "",
+          option3Value: optionAt(2).value || "",
+          selectedOptionsJson: JSON.stringify(options),
+          inventoryQuantity: Number(variant.inventoryQuantity || 0),
+          price: variant.price == null ? null : Number(variant.price || 0),
+          compareAtPrice: variant.compareAtPrice == null ? null : Number(variant.compareAtPrice || 0),
+          cost: variant.cost == null ? null : Number(variant.cost || 0),
+          isMarkedDown: variant.isMarkedDown ? 1 : 0,
+          data: JSON.stringify(variant)
+        });
+      }
+    }
+  });
+  write();
+  const periodRow = bestsellersPeriodRow(range.startDate, range.endDate, sourceType);
+  const payload = buildBestsellersPayload(periodRow);
+  writeBestsellersSnapshot(periodId, payload);
+  return payload;
+}
+
+async function fetchShopifyBestsellersProducts(range) {
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  if (!shop || !clientId || !clientSecret) {
+    return {
+      configured: false,
+      message: "Set SHOPIFY_SHOP, SHOPIFY_CLIENT_ID, and SHOPIFY_CLIENT_SECRET to sync Shopify bestsellers.",
+      products: []
+    };
+  }
+  let orderMetrics = new Map();
+  let ordersAvailable = true;
+  try {
+    orderMetrics = await fetchOrderMetrics(range);
+  } catch {
+    ordersAvailable = false;
+  }
+  const productQuery = "status:active,draft";
+  const query = `
+    query BestsellersProducts($limit: Int!, $cursor: String, $productQuery: String!) {
+      products(first: $limit, after: $cursor, query: $productQuery, sortKey: UPDATED_AT, reverse: true) {
+        nodes {
+          id
+          legacyResourceId
+          status
+          title
+          handle
+          vendor
+          productType
+          tags
+          createdAt
+          publishedAt
+          updatedAt
+          seasonMetafield: metafield(namespace: "custom", key: "season") { value }
+          featuredImage { url altText }
+          images(first: 1) { nodes { url altText } }
+          variants(first: 100) {
+            nodes {
+              id
+              legacyResourceId
+              sku
+              title
+              price
+              compareAtPrice
+              inventoryQuantity
+              selectedOptions { name value }
+              inventoryItem { unitCost { amount currencyCode } }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  `;
+  const rawProducts = [];
+  let cursor = null;
+  let hasNextPage = true;
+  while (hasNextPage) {
+    const data = await shopifyGraphql(query, { limit: 250, cursor, productQuery });
+    rawProducts.push(...data.products.nodes);
+    hasNextPage = Boolean(data.products.pageInfo.hasNextPage);
+    cursor = data.products.pageInfo.endCursor;
+  }
+  let gaAvailable = false;
+  let gaMessage = "";
+  let products = rawProducts
+    .map(product => normalizeProduct(product, orderMetrics));
+  try {
+    const ga = await fetchGaMetrics(range);
+    gaAvailable = ga.available;
+    gaMessage = ga.message;
+    products = mergeGaMetrics(products, ga.metrics);
+  } catch (error) {
+    gaMessage = error.message;
+  }
+  return { configured: true, products, ordersAvailable, gaAvailable, gaMessage };
+}
+
+async function syncBestsellersReport(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const body = req.method === "POST" ? await readJsonBody(req) : {};
+  const range = body.startDate && body.endDate
+    ? reportRangeFromRequest(new URL(`http://local/?startDate=${encodeURIComponent(body.startDate)}&endDate=${encodeURIComponent(body.endDate)}`))
+    : reportRangeFromRequest(url, 28);
+  const payload = await runBestsellersSync(range);
+  sendJson(res, 200, payload);
+}
+
+async function runBestsellersSync(range, onProgress = null) {
+  if (reportDaysInclusive(range) < 7) {
+    if (onProgress) onProgress({ status: "running", completedSteps: 0, totalSteps: 1, message: "Fetching live ad hoc Shopify report...", currentStartDate: range.startDate, currentEndDate: range.endDate });
+    const fetched = await fetchShopifyBestsellersProducts(range);
+    if (!fetched.configured) {
+      return fetched;
+    }
+    const payload = buildTransientBestsellersPayload(range, fetched.products, {
+      grossProfitSource: "estimated_current_cost"
+    });
+    return {
+      ...payload,
+      synced: true,
+      stored: false,
+      message: "Ad hoc ranges under 7 days are shown live and not stored.",
+      ordersAvailable: fetched.ordersAvailable,
+      gaAvailable: fetched.gaAvailable,
+      gaMessage: fetched.gaMessage,
+      periods: readBestsellersPeriods()
+    };
+  }
+  const weeks = canonicalReportWeeks(range);
+  const syncedRows = [];
+  let lastFetched = { ordersAvailable: true, gaAvailable: false, gaMessage: "" };
+  for (let index = 0; index < weeks.length; index += 1) {
+    const week = weeks[index];
+    if (onProgress) onProgress({
+      status: "running",
+      totalSteps: weeks.length,
+      completedSteps: index,
+      currentStartDate: week.startDate,
+      currentEndDate: week.endDate,
+      message: `Fetching Shopify week ${index + 1} of ${weeks.length}: ${reportDateLabel(week.startDate, week.endDate)}`
+    });
+    const fetched = await fetchShopifyBestsellersProducts(week);
+    if (!fetched.configured) {
+      return fetched;
+    }
+    lastFetched = fetched;
+    if (onProgress) onProgress({
+      status: "running",
+      totalSteps: weeks.length,
+      completedSteps: index,
+      currentStartDate: week.startDate,
+      currentEndDate: week.endDate,
+      message: `Saving Shopify week ${index + 1} of ${weeks.length}: ${reportDateLabel(week.startDate, week.endDate)}`
+    });
+    persistBestsellersProducts(week, {
+      sourceType: "shopify_api",
+      sourceKey: `shopify_api:${week.startDate}:${week.endDate}`,
+      yearBucket: "TY"
+    }, fetched.products, {
+      periodGrain: "week",
+      ordersAvailable: fetched.ordersAvailable,
+      gaAvailable: fetched.gaAvailable,
+      gaMessage: fetched.gaMessage,
+      grossProfitSource: "estimated_current_cost"
+    });
+    const row = bestsellersPeriodRow(week.startDate, week.endDate, "shopify_api");
+    if (row) syncedRows.push(row);
+    if (onProgress) onProgress({
+      status: "running",
+      totalSteps: weeks.length,
+      completedSteps: index + 1,
+      currentStartDate: week.startDate,
+      currentEndDate: week.endDate,
+      message: `Stored Shopify week ${index + 1} of ${weeks.length}: ${reportDateLabel(week.startDate, week.endDate)}`
+    });
+  }
+  const periodRows = bestsellersPeriodRowsForRanges(weeks, "shopify_api");
+  const payload = buildBestsellersPayloadFromPeriods(periodRows, {
+    startDate: weeks[0]?.startDate || range.startDate,
+    endDate: weeks[weeks.length - 1]?.endDate || range.endDate
+  });
+  return {
+    ...payload,
+    synced: true,
+    stored: true,
+    storedPeriodGrain: "week",
+    storedWeeks: weeks,
+    requestedRange: range,
+    message: `Stored ${weeks.length} Monday-Sunday week${weeks.length === 1 ? "" : "s"}.`,
+    ordersAvailable: lastFetched.ordersAvailable,
+    gaAvailable: lastFetched.gaAvailable,
+    gaMessage: lastFetched.gaMessage,
+    periods: readBestsellersPeriods()
+  };
+}
+
+function startBestsellersSyncJob(range) {
+  const job = createReportSyncJob(range);
+  setTimeout(async () => {
+    const startedAt = new Date().toISOString();
+    updateReportSyncJob(job.id, { status: "running", startedAt, message: "Starting Shopify sync..." });
+    try {
+      const result = await runBestsellersSync(range, (progress) => {
+        updateReportSyncJob(job.id, progress);
+      });
+      const completedAt = new Date().toISOString();
+      if (result?.configured === false) {
+        updateReportSyncJob(job.id, {
+          status: "error",
+          completedAt,
+          error: result.message || "Shopify is not configured.",
+          message: result.message || "Shopify is not configured.",
+          result
+        });
+        return;
+      }
+      updateReportSyncJob(job.id, {
+        status: "complete",
+        completedSteps: Number(job.totalSteps || 0),
+        completedAt,
+        message: result.message || "Bestsellers sync complete.",
+        result
+      });
+    } catch (error) {
+      updateReportSyncJob(job.id, {
+        status: "error",
+        completedAt: new Date().toISOString(),
+        error: error.message || "Bestsellers sync failed.",
+        message: error.message || "Bestsellers sync failed."
+      });
+    }
+  }, 0);
+  return job;
+}
+
+async function importBestsellersCsv(req, res) {
+  const body = await readJsonBody(req);
+  const files = Array.isArray(body.files) ? body.files : [];
+  const yearBucket = String(body.yearBucket || "LY").trim().toUpperCase();
+  if (!files.length) {
+    sendJson(res, 400, { error: "Choose at least one CSV file to import." });
+    return;
+  }
+  const imported = [];
+  for (const file of files.slice(0, 24)) {
+    const fileName = safeSegment(file.fileName || file.name || "bestsellers.csv", "bestsellers.csv");
+    const text = String(file.text || file.content || "");
+    if (!text.trim()) continue;
+    const range = file.startDate && file.endDate
+      ? { startDate: String(file.startDate), endDate: String(file.endDate) }
+      : extractReportDatesFromName(file.fileName || file.name || "");
+    if (!range || !validReportDate(range.startDate) || !validReportDate(range.endDate)) {
+      throw new Error(`Could not infer dates for ${file.fileName || file.name || "CSV"}. Add YYYY-MM-DD dates to the filename.`);
+    }
+    const checksum = crypto.createHash("sha256").update(text).digest("hex");
+    const folder = path.join("report-sources", "bestsellers", yearBucket.toLowerCase());
+    const storedName = `${range.startDate}_${range.endDate}_${reportHash(checksum)}_${fileName.replace(/\.csv$/i, "")}.csv`;
+    const relativePath = path.join(folder, storedName);
+    const absolutePath = absoluteUploadPath(relativePath);
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+    fs.writeFileSync(absolutePath, text);
+    const rows = parseCsvRows(text);
+    const products = productsFromSalesCsvRows(rows);
+    const payload = persistBestsellersProducts(range, {
+      sourceType: "csv_import",
+      sourceKey: `csv_import:${checksum}`,
+      fileName,
+      filePath: relativePath.replace(/\\/g, "/"),
+      checksum,
+      yearBucket
+    }, products, {
+      periodGrain: "custom",
+      importedRows: rows.length,
+      grossProfitSource: "csv_gross_profit"
+    });
+    imported.push(payload.period);
+  }
+  sendJson(res, 200, {
+    ok: true,
+    imported,
+    periods: readBestsellersPeriods()
+  });
+}
+
+function getBestsellersReport(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  let range;
+  try {
+    range = reportRangeFromRequest(url, 28);
+  } catch (error) {
+    sendJson(res, 400, { error: error.message });
+    return;
+  }
+  const sourceType = url.searchParams.get("sourceType") || "shopify_api";
+  const yearBucket = url.searchParams.get("yearBucket") || "";
+  const periodRow = bestsellersPeriodRow(range.startDate, range.endDate, sourceType);
+  if (!periodRow && sourceType === "shopify_api" && reportDaysInclusive(range) >= 7) {
+    const weeks = canonicalReportWeeks(range);
+    const periodRows = bestsellersPeriodRowsForRanges(weeks, sourceType);
+    if (periodRows.length === weeks.length) {
+      sendJson(res, 200, buildBestsellersPayloadFromPeriods(periodRows, {
+        startDate: weeks[0]?.startDate || range.startDate,
+        endDate: weeks[weeks.length - 1]?.endDate || range.endDate
+      }));
+      return;
+    }
+    const foundKeys = new Set(periodRows.map(row => `${row.start_date}:${row.end_date}`));
+    const missingWeeks = weeks
+      .filter(week => !foundKeys.has(`${week.startDate}:${week.endDate}`))
+      .map(week => ({
+        startDate: week.startDate,
+        endDate: week.endDate,
+        label: reportDateLabel(week.startDate, week.endDate)
+      }));
+    if (missingWeeks.length) {
+      sendJson(res, 404, {
+        error: `Missing cached week${missingWeeks.length === 1 ? "" : "s"}: ${missingWeeks.map(week => week.label).join(", ")}. Sync Shopify to fill the gaps.`,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        sourceType,
+        missingWeeks
+      });
+      return;
+    }
+  }
+  if (!periodRow && sourceType !== "shopify_api") {
+    const periodRows = bestsellersPeriodRowsInRange(range, sourceType, yearBucket);
+    if (periodRows.length) {
+      sendJson(res, 200, buildBestsellersPayloadFromPeriods(periodRows, range));
+      return;
+    }
+  }
+  if (!periodRow) {
+    sendJson(res, 404, {
+      error: "No cached bestsellers report exists for that period yet.",
+      startDate: range.startDate,
+      endDate: range.endDate,
+      sourceType,
+      yearBucket
+    });
+    return;
+  }
+  sendJson(res, 200, buildBestsellersPayload(periodRow));
 }
 
 async function fetchCollectionPlanner(req, res) {
@@ -1572,11 +2768,148 @@ function openOrderSqliteDb() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS report_sources (
+      id TEXT PRIMARY KEY,
+      report_type TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_key TEXT,
+      file_name TEXT,
+      file_path TEXT,
+      checksum TEXT,
+      start_date TEXT,
+      end_date TEXT,
+      label TEXT,
+      status TEXT NOT NULL DEFAULT 'ready',
+      metadata TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS report_periods (
+      id TEXT PRIMARY KEY,
+      report_type TEXT NOT NULL,
+      period_grain TEXT NOT NULL DEFAULT 'custom',
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      label TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_id TEXT,
+      year_bucket TEXT,
+      status TEXT NOT NULL DEFAULT 'ready',
+      locked_at TEXT,
+      synced_at TEXT NOT NULL,
+      summary_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS report_product_metrics (
+      id TEXT PRIMARY KEY,
+      period_id TEXT NOT NULL,
+      product_key TEXT NOT NULL,
+      shopify_product_id TEXT,
+      legacy_resource_id TEXT,
+      sku TEXT,
+      title TEXT NOT NULL,
+      product_status TEXT,
+      product_type TEXT,
+      vendor TEXT,
+      season TEXT,
+      image_url TEXT,
+      units REAL DEFAULT 0,
+      net_sales REAL DEFAULT 0,
+      gross_sales REAL DEFAULT 0,
+      gross_profit REAL,
+      stock REAL,
+      cost REAL,
+      retail_price REAL,
+      compare_at_price REAL,
+      ga_views REAL DEFAULT 0,
+      ga_adds REAL DEFAULT 0,
+      ga_purchases REAL DEFAULT 0,
+      ga_revenue REAL DEFAULT 0,
+      data TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS report_stock_snapshots (
+      id TEXT PRIMARY KEY,
+      period_id TEXT NOT NULL,
+      source_id TEXT,
+      snapshot_at TEXT NOT NULL,
+      shopify_product_id TEXT,
+      legacy_resource_id TEXT,
+      product_status TEXT,
+      product_title TEXT NOT NULL,
+      product_handle TEXT,
+      product_type TEXT,
+      vendor TEXT,
+      season TEXT,
+      shopify_variant_id TEXT,
+      variant_legacy_resource_id TEXT,
+      sku TEXT,
+      variant_title TEXT,
+      option1_name TEXT,
+      option1_value TEXT,
+      option2_name TEXT,
+      option2_value TEXT,
+      option3_name TEXT,
+      option3_value TEXT,
+      selected_options_json TEXT,
+      inventory_quantity REAL DEFAULT 0,
+      price REAL,
+      compare_at_price REAL,
+      cost REAL,
+      is_marked_down INTEGER DEFAULT 0,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS report_sync_jobs (
+      id TEXT PRIMARY KEY,
+      report_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      requested_start_date TEXT,
+      requested_end_date TEXT,
+      current_start_date TEXT,
+      current_end_date TEXT,
+      total_steps INTEGER DEFAULT 0,
+      completed_steps INTEGER DEFAULT 0,
+      message TEXT,
+      error TEXT,
+      result_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      started_at TEXT,
+      completed_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS report_snapshots (
+      id TEXT PRIMARY KEY,
+      report_type TEXT NOT NULL,
+      period_id TEXT,
+      cache_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_gid ON collection_reorder_audit(collection_gid);
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_applied ON collection_reorder_audit(applied_at);
     CREATE INDEX IF NOT EXISTS idx_issued_skus_issued_at ON issued_skus(issued_at);
     CREATE INDEX IF NOT EXISTS idx_order_events_order_created ON order_events(order_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_order_invoices_order ON order_invoices(order_id, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_report_sources_lookup ON report_sources(report_type, source_type, start_date, end_date);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_report_periods_unique ON report_periods(report_type, source_type, start_date, end_date);
+    CREATE INDEX IF NOT EXISTS idx_report_periods_dates ON report_periods(report_type, start_date, end_date);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_report_product_metrics_unique ON report_product_metrics(period_id, product_key);
+    CREATE INDEX IF NOT EXISTS idx_report_product_metrics_title ON report_product_metrics(title);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_report_stock_snapshots_unique ON report_stock_snapshots(period_id, shopify_variant_id, sku);
+    CREATE INDEX IF NOT EXISTS idx_report_stock_snapshots_sku ON report_stock_snapshots(sku, snapshot_at);
+    CREATE INDEX IF NOT EXISTS idx_report_stock_snapshots_status ON report_stock_snapshots(product_status, snapshot_at);
+    CREATE INDEX IF NOT EXISTS idx_report_sync_jobs_status ON report_sync_jobs(report_type, status, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_report_snapshots_cache ON report_snapshots(report_type, cache_key);
   `);
   const orderColumns = orderSqliteDb.prepare("PRAGMA table_info(orders)").all().map(column => column.name);
   if (!orderColumns.includes("archived_at")) {
@@ -1588,6 +2921,13 @@ function openOrderSqliteDb() {
   }
   if (!invoiceColumns.includes("file_size")) {
     orderSqliteDb.prepare("ALTER TABLE order_invoices ADD COLUMN file_size INTEGER DEFAULT 0").run();
+  }
+  const metricColumns = orderSqliteDb.prepare("PRAGMA table_info(report_product_metrics)").all().map(column => column.name);
+  if (!metricColumns.includes("product_status")) {
+    orderSqliteDb.prepare("ALTER TABLE report_product_metrics ADD COLUMN product_status TEXT").run();
+  }
+  if (!metricColumns.includes("compare_at_price")) {
+    orderSqliteDb.prepare("ALTER TABLE report_product_metrics ADD COLUMN compare_at_price REAL").run();
   }
   migrateInvoiceFilesToDisk(orderSqliteDb);
   importOrderJsonIfNeeded(orderSqliteDb);
@@ -2698,6 +4038,69 @@ async function shopifyLookupBySku(sku) {
 
 async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (req.method === "GET" && url.pathname === "/api/reports/bestsellers/periods") {
+    sendJson(res, 200, {
+      periods: readBestsellersPeriods(),
+      generatedAt: new Date().toISOString()
+    });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/reports/bestsellers") {
+    getBestsellersReport(req, res);
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/reports/bestsellers/sync") {
+    try {
+      await syncBestsellersReport(req, res);
+    } catch (error) {
+      sendJson(res, 500, { error: error.message || "Could not sync bestsellers report" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/reports/bestsellers/sync-job") {
+    try {
+      const body = await readJsonBody(req);
+      const range = body.startDate && body.endDate
+        ? reportRangeFromRequest(new URL(`http://local/?startDate=${encodeURIComponent(body.startDate)}&endDate=${encodeURIComponent(body.endDate)}`))
+        : reportRangeFromRequest(url, 28);
+      const job = startBestsellersSyncJob(range);
+      sendJson(res, 202, { job });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not start bestsellers sync job" });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/reports/bestsellers/sync-job") {
+    const job = readReportSyncJob(url.searchParams.get("id"));
+    if (!job) {
+      sendJson(res, 404, { error: "Sync job not found." });
+      return true;
+    }
+    sendJson(res, 200, { job });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/reports/bestsellers/import-csv") {
+    try {
+      await importBestsellersCsv(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not import CSV files" });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/reports/stock-snapshots") {
+    sendJson(res, 200, {
+      snapshots: readStockSnapshots(url),
+      generatedAt: new Date().toISOString()
+    });
+    return true;
+  }
 
   if (req.method === "GET" && url.pathname === "/api/order-form/bootstrap") {
     const db = readOrderDb();
