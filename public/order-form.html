@@ -383,7 +383,7 @@ function loadSavedOrder(id){
 
 function addLine(data={},afterId=null){
   const id=++lineId;
-  const previewImage=data.imageUrl||data.pendingImageUrl||"";
+  const previewImage=data.imageUrl||data.confirmedImageUrl||data.pendingImageUrl||"";
   const card=document.createElement("div");
   card.className="line-card";
   card.id=`line-${id}`;
@@ -414,6 +414,7 @@ function addLine(data={},afterId=null){
           <input id="source-${id}" type="hidden" value="${escapeHtml(data.source||"")}">
           <input id="sourceSku-${id}" type="hidden" value="${escapeHtml(data.source?normalizeLineSku(data.sku):"")}">
           <input id="duplicated-${id}" type="hidden" value="${data.duplicated?"1":""}">
+          <input id="confirmedImage-${id}" type="hidden" value="${escapeHtml(data.confirmedImageUrl||"")}">
           <input id="pendingImage-${id}" type="hidden" value="${escapeHtml(data.pendingImageUrl||"")}">
           ${field("buyingCode",id,"Buying code","text","Supplier SKU",data.buyingCode||data.supplierSku)}
           ${selectField("repeatType",id,"Repeat or new",["New","Repeat","Repeat with variation"],data.repeatType)}
@@ -456,7 +457,7 @@ function removeLine(id){
 }
 
 function lineDisplayImage(id){
-  return val(`imageUrl-${id}`)||val(`pendingImage-${id}`);
+  return val(`imageUrl-${id}`)||val(`confirmedImage-${id}`)||val(`pendingImage-${id}`);
 }
 
 function renderThumb(id){
@@ -466,12 +467,14 @@ function renderThumb(id){
 
 function setLineImage(id,url){
   set(`pendingImage-${id}`,"");
+  set(`confirmedImage-${id}`,url||"");
   set(`imageUrl-${id}`,url||"");
   renderThumb(id);
 }
 
 function handleImageUrlInput(id){
   set(`pendingImage-${id}`,"");
+  if(val(`imageUrl-${id}`))set(`confirmedImage-${id}`,"");
   renderThumb(id);
 }
 
@@ -602,7 +605,7 @@ function lineData(id){
   const exitRetail=(unitCostGbp/.35)*1.2;
   return {
     sku:val(`sku-${id}`),style:val(`style-${id}`),category:val(`category-${id}`),colour:val(`colour-${id}`),size:val(`size-${id}`),
-    buyingCode:val(`buyingCode-${id}`),supplierSku:val(`buyingCode-${id}`),quantity,unitCostEur,unitCostGbp,unitCost:unitCostGbp,rrp,exitRetail,repeatType:val(`repeatType-${id}`),season:val(`season-${id}`),imageUrl:val(`imageUrl-${id}`),
+    buyingCode:val(`buyingCode-${id}`),supplierSku:val(`buyingCode-${id}`),quantity,unitCostEur,unitCostGbp,unitCost:unitCostGbp,rrp,exitRetail,repeatType:val(`repeatType-${id}`),season:val(`season-${id}`),imageUrl:lineDisplayImage(id),
     source:lineSource(id)||undefined,
     lineCost:quantity*unitCostGbp,lineRrp:quantity*rrp,lineExitRetail:quantity*exitRetail
   };
