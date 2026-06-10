@@ -383,13 +383,14 @@ function loadSavedOrder(id){
 
 function addLine(data={},afterId=null){
   const id=++lineId;
+  const previewImage=data.imageUrl||data.pendingImageUrl||"";
   const card=document.createElement("div");
   card.className="line-card";
   card.id=`line-${id}`;
   card.innerHTML=`
     <div class="line-grid">
       <div>
-        <div class="thumb" id="thumb-${id}" onclick="openImageLightbox('${id}')">${data.imageUrl?`<img src="${escapeHtml(data.imageUrl)}" alt="">`:"Image"}</div>
+        <div class="thumb" id="thumb-${id}" onclick="openImageLightbox('${id}')">${previewImage?`<img src="${escapeHtml(previewImage)}" alt="">`:"Image"}</div>
         <div class="thumb-tools">
           <button type="button" class="btn" onclick="el('imageFile-${id}').click()">Add image</button>
           <button type="button" class="btn" onclick="copyPreviousImage(${id})">Use previous</button>
@@ -413,6 +414,7 @@ function addLine(data={},afterId=null){
           <input id="source-${id}" type="hidden" value="${escapeHtml(data.source||"")}">
           <input id="sourceSku-${id}" type="hidden" value="${escapeHtml(data.source?normalizeLineSku(data.sku):"")}">
           <input id="duplicated-${id}" type="hidden" value="${data.duplicated?"1":""}">
+          <input id="pendingImage-${id}" type="hidden" value="${escapeHtml(data.pendingImageUrl||"")}">
           ${field("buyingCode",id,"Buying code","text","Supplier SKU",data.buyingCode||data.supplierSku)}
           ${selectField("repeatType",id,"Repeat or new",["New","Repeat","Repeat with variation"],data.repeatType)}
           ${selectField("season",id,"Season",SEASONS,data.season)}
@@ -430,7 +432,7 @@ function addLine(data={},afterId=null){
   ["quantity","unitCostEur","category"].forEach(key=>el(`${key}-${id}`).addEventListener("input",calc));
   el(`sku-${id}`).addEventListener("input",()=>clearLineSourceIfSkuChanged(id));
   el(`sku-${id}`).addEventListener("change",()=>lookupSku(id));
-  el(`imageUrl-${id}`).addEventListener("input",()=>renderThumb(id));
+  el(`imageUrl-${id}`).addEventListener("input",()=>handleImageUrlInput(id));
   el(`imageFile-${id}`).addEventListener("change",event=>handleImageUpload(id,event));
   calc();
 }
@@ -453,18 +455,28 @@ function removeLine(id){
   calc();
 }
 
+function lineDisplayImage(id){
+  return val(`imageUrl-${id}`)||val(`pendingImage-${id}`);
+}
+
 function renderThumb(id){
-  const url=val(`imageUrl-${id}`);
+  const url=lineDisplayImage(id);
   el(`thumb-${id}`).innerHTML=url?`<img src="${escapeHtml(url)}" alt="">`:"Image";
 }
 
 function setLineImage(id,url){
+  set(`pendingImage-${id}`,"");
   set(`imageUrl-${id}`,url||"");
   renderThumb(id);
 }
 
+function handleImageUrlInput(id){
+  set(`pendingImage-${id}`,"");
+  renderThumb(id);
+}
+
 function openImageLightbox(id){
-  const url=val(`imageUrl-${id}`);
+  const url=lineDisplayImage(id);
   if(!url)return;
   el("image-lightbox-img").src=url;
   el("image-lightbox").classList.add("open");
@@ -513,8 +525,7 @@ async function handleImageUpload(id,event){
     });
     const result=await response.json();
     if(!response.ok||!result.imageUrl)throw new Error(result.error||"Could not upload that image.");
-    set(`imageUrl-${id}`,result.imageUrl);
-    renderThumb(id);
+    setLineImage(id,result.imageUrl);
     state.textContent=`Image uploaded (${Math.round(Number(result.fileSize||0)/1024)} KB)`;
     state.className="lookup-state ok";
   }catch(error){
@@ -573,14 +584,13 @@ async function compressImageFile(file){
 function copyPreviousImage(id){
   const previous=[...document.querySelectorAll(".line-card")]
     .map(card=>Number(card.id.replace("line-","")))
-    .filter(lineId=>lineId<id&&val(`imageUrl-${lineId}`))
+    .filter(lineId=>lineId<id&&lineDisplayImage(lineId))
     .pop();
   if(!previous){
     notice("No previous line image to copy.","err");
     return;
   }
-  set(`imageUrl-${id}`,val(`imageUrl-${previous}`));
-  renderThumb(id);
+  setLineImage(id,lineDisplayImage(previous));
 }
 
 function lineData(id){
@@ -599,7 +609,7 @@ function lineData(id){
 }
 
 function duplicateLine(id){
-  const copy={...lineData(id),sku:"",source:"",duplicated:true};
+  const copy={...lineData(id),sku:"",source:"",imageUrl:"",pendingImageUrl:lineDisplayImage(id),duplicated:true};
   addLine(copy,id);
   const newId=lineId;
   set(`source-${newId}`,"");
@@ -645,6 +655,10 @@ async function lookupSku(id){
     state.textContent=`Prefilled from ${source}`;
     state.className="lookup-state ok";
   }else{
+    if(val(`duplicated-${id}`)==="1"&&val(`pendingImage-${id}`)){
+      setLineImage(id,val(`pendingImage-${id}`));
+      set(`duplicated-${id}`,"");
+    }
     setLineSource(id,"","");
     state.textContent=result.message||"No matching SKU found";
     state.className="lookup-state warn";

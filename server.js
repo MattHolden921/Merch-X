@@ -77,6 +77,9 @@ const mimeTypes = {
 function sendJson(res, status, payload) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store, no-cache, must-revalidate",
+    "pragma": "no-cache",
+    "expires": "0",
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
     "access-control-allow-headers": "content-type, authorization"
@@ -85,8 +88,23 @@ function sendJson(res, status, payload) {
 }
 
 function sendHtml(res, status, html) {
-  res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
+  res.writeHead(status, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store, no-cache, must-revalidate",
+    "pragma": "no-cache",
+    "expires": "0"
+  });
   res.end(html);
+}
+
+function staticHeaders(ext) {
+  const headers = { "content-type": mimeTypes[ext] || "application/octet-stream" };
+  if ([".html", ".js", ".css", ".json"].includes(ext)) {
+    headers["cache-control"] = "no-store, no-cache, must-revalidate";
+    headers.pragma = "no-cache";
+    headers.expires = "0";
+  }
+  return headers;
 }
 
 function safeSegment(value, fallback = "file") {
@@ -3030,14 +3048,14 @@ function serveStatic(req, res) {
           res.end("Not found");
           return;
         }
-        res.writeHead(200, { "content-type": mimeTypes[".html"] });
+        res.writeHead(200, staticHeaders(".html"));
         res.end(indexData);
       });
       return;
     }
 
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { "content-type": mimeTypes[ext] || "application/octet-stream" });
+    res.writeHead(200, staticHeaders(ext));
     res.end(data);
   });
 }
