@@ -381,7 +381,7 @@ function loadSavedOrder(id){
   notice(`Loaded ${order.orderNumber}. Save it to update the stored order.`);
 }
 
-function addLine(data={}){
+function addLine(data={},afterId=null){
   const id=++lineId;
   const card=document.createElement("div");
   card.className="line-card";
@@ -393,6 +393,7 @@ function addLine(data={}){
         <div class="thumb-tools">
           <button type="button" class="btn" onclick="el('imageFile-${id}').click()">Add image</button>
           <button type="button" class="btn" onclick="copyPreviousImage(${id})">Use previous</button>
+          <button type="button" class="btn" onclick="duplicateLine(${id})">Duplicate</button>
         </div>
         <input class="image-file" id="imageFile-${id}" type="file" accept="image/*">
       </div>
@@ -421,7 +422,9 @@ function addLine(data={}){
       </div>
       <button type="button" class="remove" onclick="removeLine(${id})" aria-label="Remove line">×</button>
     </div>`;
-  el("lines-wrap").appendChild(card);
+  const afterCard=afterId?el(`line-${afterId}`):null;
+  if(afterCard)afterCard.insertAdjacentElement("afterend",card);
+  else el("lines-wrap").appendChild(card);
   ["unitCostGbp","rrp","exitRetail"].forEach(key=>el(`${key}-${id}`).readOnly=true);
   ["quantity","unitCostEur","category"].forEach(key=>el(`${key}-${id}`).addEventListener("input",calc));
   el(`sku-${id}`).addEventListener("input",()=>clearLineSourceIfSkuChanged(id));
@@ -437,7 +440,7 @@ function field(key,id,label,type,placeholder,value=""){
 }
 
 function skuField(id,value=""){
-  return `<div><div class="col-label">SKU</div><div class="sku-field"><input id="sku-${id}" type="text" placeholder="15101" value="${escapeHtml(value)}"><button class="btn" type="button" title="Issue next SKU" onclick="issueSku(${id})">+</button></div></div>`;
+  return `<div><div class="col-label">SKU</div><div class="sku-field"><input id="sku-${id}" type="text" placeholder="15101" value="${escapeHtml(value)}"><button class="btn" type="button" tabindex="-1" title="Issue next SKU" onclick="issueSku(${id})">+</button></div></div>`;
 }
 
 function selectField(key,id,label,items,value=""){
@@ -574,6 +577,30 @@ function copyPreviousImage(id){
   renderThumb(id);
 }
 
+function lineData(id){
+  const fx=Number(val("fx-rate"))||0;
+  const quantity=Number(val(`quantity-${id}`))||0;
+  const unitCostEur=Number(val(`unitCostEur-${id}`))||0;
+  const unitCostGbp=unitCostEur*fx;
+  const rrp=unitCostGbp*5;
+  const exitRetail=(unitCostGbp/.35)*1.2;
+  return {
+    sku:val(`sku-${id}`),style:val(`style-${id}`),category:val(`category-${id}`),colour:val(`colour-${id}`),size:val(`size-${id}`),
+    buyingCode:val(`buyingCode-${id}`),supplierSku:val(`buyingCode-${id}`),quantity,unitCostEur,unitCostGbp,unitCost:unitCostGbp,rrp,exitRetail,repeatType:val(`repeatType-${id}`),season:val(`season-${id}`),imageUrl:val(`imageUrl-${id}`),
+    source:lineSource(id)||undefined,
+    lineCost:quantity*unitCostGbp,lineRrp:quantity*rrp,lineExitRetail:quantity*exitRetail
+  };
+}
+
+function duplicateLine(id){
+  const copy={...lineData(id),sku:"",source:""};
+  addLine(copy,id);
+  const newId=lineId;
+  set(`source-${newId}`,"");
+  set(`sourceSku-${newId}`,"");
+  el(`sku-${newId}`)?.focus();
+}
+
 async function issueSku(id){
   const state=el(`lookup-${id}`);
   state.textContent="Issuing SKU";
@@ -641,20 +668,9 @@ function lineSource(id){
 }
 
 function collectLines(){
-  const fx=Number(val("fx-rate"))||0;
   return [...document.querySelectorAll(".line-card")].map(card=>{
     const id=card.id.replace("line-","");
-    const quantity=Number(val(`quantity-${id}`))||0;
-    const unitCostEur=Number(val(`unitCostEur-${id}`))||0;
-    const unitCostGbp=unitCostEur*fx;
-    const rrp=unitCostGbp*5;
-    const exitRetail=(unitCostGbp/.35)*1.2;
-    return {
-      sku:val(`sku-${id}`),style:val(`style-${id}`),category:val(`category-${id}`),colour:val(`colour-${id}`),size:val(`size-${id}`),
-      buyingCode:val(`buyingCode-${id}`),supplierSku:val(`buyingCode-${id}`),quantity,unitCostEur,unitCostGbp,unitCost:unitCostGbp,rrp,exitRetail,repeatType:val(`repeatType-${id}`),season:val(`season-${id}`),imageUrl:val(`imageUrl-${id}`),
-      source:lineSource(id)||undefined,
-      lineCost:quantity*unitCostGbp,lineRrp:quantity*rrp,lineExitRetail:quantity*exitRetail
-    };
+    return lineData(id);
   }).filter(line=>line.sku||line.style||line.quantity);
 }
 
