@@ -412,6 +412,7 @@ function addLine(data={},afterId=null){
           ${skuField(id,data.sku)}
           <input id="source-${id}" type="hidden" value="${escapeHtml(data.source||"")}">
           <input id="sourceSku-${id}" type="hidden" value="${escapeHtml(data.source?normalizeLineSku(data.sku):"")}">
+          <input id="duplicated-${id}" type="hidden" value="${data.duplicated?"1":""}">
           ${field("buyingCode",id,"Buying code","text","Supplier SKU",data.buyingCode||data.supplierSku)}
           ${selectField("repeatType",id,"Repeat or new",["New","Repeat","Repeat with variation"],data.repeatType)}
           ${selectField("season",id,"Season",SEASONS,data.season)}
@@ -455,6 +456,11 @@ function removeLine(id){
 function renderThumb(id){
   const url=val(`imageUrl-${id}`);
   el(`thumb-${id}`).innerHTML=url?`<img src="${escapeHtml(url)}" alt="">`:"Image";
+}
+
+function setLineImage(id,url){
+  set(`imageUrl-${id}`,url||"");
+  renderThumb(id);
 }
 
 function openImageLightbox(id){
@@ -593,7 +599,7 @@ function lineData(id){
 }
 
 function duplicateLine(id){
-  const copy={...lineData(id),sku:"",source:""};
+  const copy={...lineData(id),sku:"",source:"",duplicated:true};
   addLine(copy,id);
   const newId=lineId;
   set(`source-${newId}`,"");
@@ -633,7 +639,8 @@ async function lookupSku(id){
   if(state.dataset.lookupToken!==token||normalizeLineSku(val(`sku-${id}`))!==lookupSku)return;
   if(result.product){
     const source=result.source||result.product.source||"saved";
-    applyProductToLine(id,result.product);
+    applyProductToLine(id,result.product,{replaceCopiedImage:val(`duplicated-${id}`)==="1"});
+    set(`duplicated-${id}`,"");
     setLineSource(id,source,lookupSku);
     state.textContent=`Prefilled from ${source}`;
     state.className="lookup-state ok";
@@ -644,11 +651,11 @@ async function lookupSku(id){
   }
 }
 
-function applyProductToLine(id,product){
-  const map={style:"style",category:"category",colour:"colour",size:"size",quantity:"quantity",unitCostEur:"unitCostEur",unitCost:"unitCostEur",repeatType:"repeatType",season:"season",imageUrl:"imageUrl",buyingCode:"buyingCode",supplierSku:"buyingCode"};
+function applyProductToLine(id,product,options={}){
+  const map={style:"style",category:"category",colour:"colour",size:"size",quantity:"quantity",unitCostEur:"unitCostEur",unitCost:"unitCostEur",repeatType:"repeatType",season:"season",buyingCode:"buyingCode",supplierSku:"buyingCode"};
   Object.entries(map).forEach(([from,to])=>{if(product[from]!=null&&product[from]!=="")set(`${to}-${id}`,product[from])});
+  if(options.replaceCopiedImage||product.imageUrl)setLineImage(id,product.imageUrl||"");
   if(product.supplierName&&!val("sup-name"))set("sup-name",product.supplierName);
-  renderThumb(id);
   calc();
 }
 
