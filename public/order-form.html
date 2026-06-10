@@ -27,9 +27,10 @@ textarea{min-height:72px;resize:vertical}
 .thumb-tools .btn{width:88px;min-height:28px;padding:5px 7px;font-size:11px}
 .image-file{display:none}
 .line-row{display:grid;grid-template-columns:1.35fr 1fr .85fr .65fr .55fr .75fr .75fr .75fr;gap:8px;margin-bottom:8px}
-.line-row.second{grid-template-columns:.85fr .85fr .85fr .85fr 1fr .75fr .75fr}
-.sku-field{display:grid;grid-template-columns:minmax(0,1fr) 30px;gap:5px}
+.line-row.second{grid-template-columns:1.15fr .8fr .85fr .85fr 1fr .75fr .75fr}
+.sku-field{display:grid;grid-template-columns:minmax(0,1fr) 30px 52px;gap:5px}
 .sku-field .btn{min-height:32px;padding:0}
+.sku-field .lookup-btn{font-size:11px}
 .col-label{font-size:10px;color:var(--soft);font-weight:600;margin-bottom:3px;text-transform:uppercase;letter-spacing:.04em}
 .line-row input,.line-row select{min-height:32px}
 .remove{border:none;background:transparent;color:var(--soft);font-size:22px;line-height:1;padding:2px}
@@ -59,7 +60,7 @@ textarea{min-height:72px;resize:vertical}
 .lightbox.open{display:flex}
 .lightbox img{max-width:min(760px,92vw);max-height:88vh;object-fit:contain;border-radius:var(--r);background:var(--bg);box-shadow:var(--ds-shadow)}
 @media(max-width:1080px){.layout{grid-template-columns:1fr}.side{position:static}.grid4,.grid5{grid-template-columns:1fr 1fr}.line-row,.line-row.second{grid-template-columns:1fr 1fr 1fr}.totals{grid-template-columns:1fr}}
-@media(max-width:680px){.head{display:block}.status-pill{margin-top:12px}.grid2,.grid3,.grid4,.grid5{grid-template-columns:1fr}.line-grid{grid-template-columns:1fr}.thumb{width:100%;max-width:160px}.thumb-tools{flex-direction:row;flex-wrap:wrap}.thumb-tools .btn{width:auto}.line-row,.line-row.second{grid-template-columns:1fr}.sku-field{grid-template-columns:minmax(0,1fr) 36px}.checks{grid-template-columns:1fr}.actions{justify-content:flex-start}}
+@media(max-width:680px){.head{display:block}.status-pill{margin-top:12px}.grid2,.grid3,.grid4,.grid5{grid-template-columns:1fr}.line-grid{grid-template-columns:1fr}.thumb{width:100%;max-width:160px}.thumb-tools{flex-direction:row;flex-wrap:wrap}.thumb-tools .btn{width:auto}.line-row,.line-row.second{grid-template-columns:1fr}.sku-field{grid-template-columns:minmax(0,1fr) 36px 58px}.checks{grid-template-columns:1fr}.actions{justify-content:flex-start}}
 @media print{.side,.notice{display:none!important}.layout{display:block}.panel{break-inside:avoid;border-color:#ddd}.line-card{break-inside:avoid}}
 </style>
 </head>
@@ -444,7 +445,7 @@ function field(key,id,label,type,placeholder,value=""){
 }
 
 function skuField(id,value=""){
-  return `<div><div class="col-label">SKU</div><div class="sku-field"><input id="sku-${id}" type="text" placeholder="15101" value="${escapeHtml(value)}"><button class="btn" type="button" tabindex="-1" title="Issue next SKU" onclick="issueSku(${id})">+</button></div></div>`;
+  return `<div><div class="col-label">SKU</div><div class="sku-field"><input id="sku-${id}" type="text" placeholder="15101" value="${escapeHtml(value)}"><button class="btn" type="button" tabindex="-1" title="Issue next SKU" onclick="issueSku(${id})">+</button><button class="btn lookup-btn" type="button" tabindex="-1" title="Look up this SKU again" onclick="lookupSku(${id})">Find</button></div></div>`;
 }
 
 function selectField(key,id,label,items,value=""){
