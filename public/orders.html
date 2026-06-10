@@ -12,6 +12,10 @@
 .metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
 .toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 160px 170px 160px 150px;gap:10px;align-items:end}
 .toolbar .field{margin-bottom:0}
+.filter-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:8px;margin-top:12px}
+.filter-summary .summary-item strong{font-size:14px}
+.filter-context{grid-column:span 2}
+.filter-context strong{white-space:normal;line-height:1.35}
 .layout{display:grid;grid-template-columns:430px minmax(0,1fr);gap:14px;align-items:start}
 .layout>*{min-width:0}
 .order-list{display:flex;flex-direction:column;gap:8px;max-height:calc(100vh - 284px);overflow:auto;padding-right:2px}
@@ -87,8 +91,8 @@ textarea{min-height:70px;resize:vertical}
 .line-table td{font-size:12px;color:var(--ds-text-muted);padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:top}
 .line-table tr:last-child td{border-bottom:0}
 .num{text-align:right;white-space:nowrap}
-@media(max-width:1180px){.layout{grid-template-columns:1fr}.order-list{max-height:none}.metric-grid,.summary-grid{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:760px){.toolbar,.workflow-grid,.grid2,.grid3,.invoice-form,.invoice-totals{grid-template-columns:1fr}.metric-grid,.summary-grid{grid-template-columns:1fr}.detail-head{grid-template-columns:1fr}.actions{justify-content:flex-start}.order-row{grid-template-columns:1fr}.order-side{text-align:left;display:flex;gap:6px;flex-wrap:wrap;min-width:0}.order-side span{display:inline-flex;width:auto}.badge{max-width:100%}}
+@media(max-width:1180px){.layout{grid-template-columns:1fr}.order-list{max-height:none}.metric-grid,.summary-grid{grid-template-columns:repeat(2,1fr)}.filter-summary{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:760px){.toolbar,.workflow-grid,.grid2,.grid3,.invoice-form,.invoice-totals{grid-template-columns:1fr}.metric-grid,.summary-grid,.filter-summary{grid-template-columns:1fr}.filter-context{grid-column:auto}.detail-head{grid-template-columns:1fr}.actions{justify-content:flex-start}.order-row{grid-template-columns:1fr}.order-side{text-align:left;display:flex;gap:6px;flex-wrap:wrap;min-width:0}.order-side span{display:inline-flex;width:auto}.badge{max-width:100%}}
 </style>
 </head>
 <body>
@@ -113,8 +117,9 @@ textarea{min-height:70px;resize:vertical}
       <div class="field"><label>View</label><select class="select" id="archive-filter"><option value="active">Active</option><option value="archived">Archived</option><option value="all">All</option></select></div>
       <div class="field"><label>Status</label><select class="select" id="status-filter"></select></div>
       <div class="field"><label>Owner</label><select class="select" id="owner-filter"></select></div>
-      <div class="field"><label>Viewing as</label><select class="select" id="role-filter"><option>Buyer</option><option>Buying Director</option><option>FD / Finance</option><option>Merchandising</option></select></div>
+      <div class="field"><label>Viewing as</label><select class="select" id="role-filter"><option value="">All departments</option><option>Buyer</option><option>Buying Director</option><option>FD / Finance</option><option>Merchandising</option></select></div>
     </div>
+    <div class="filter-summary" id="filter-summary"></div>
   </section>
 
   <section class="layout">
@@ -213,6 +218,7 @@ function filterOrders(){
   const search=val("search").toLowerCase();
   const status=val("status-filter");
   const owner=val("owner-filter");
+  const role=val("role-filter");
   const archiveMode=val("archive-filter")||"active";
   return state.orders.filter(order=>{
     if(archiveMode==="active"&&order.archivedAt)return false;
@@ -221,8 +227,87 @@ function filterOrders(){
       order.orderNumber,order.supplierName,order.buyerName,order.buyerEmail,order.compositeStatus,
       ...(order.categories||[]),...(order.order?.lines||[]).flatMap(line=>[line.sku,line.style,line.buyingCode])
     ].join(" ").toLowerCase();
-    return (!search||haystack.includes(search))&&(!status||order.compositeStatus===status)&&(!owner||order.workflow.nextActionOwner===owner);
+    return (!search||haystack.includes(search))
+      &&(!status||order.compositeStatus===status)
+      &&(!owner||order.workflow.nextActionOwner===owner)
+      &&(!role||order.workflow.nextActionOwner===role);
   });
+}
+
+function filteredSummary(orders){
+  const styles=new Set();
+  const summary=orders.reduce((total,order)=>{
+    const lines=order.order?.lines||[];
+    total.orders+=1;
+    total.units+=Number(order.units||0);
+    total.cost+=Number(order.total||order.order?.totals?.grand||0);
+    total.retail+=Number(order.order?.totals?.totalRrp||lines.reduce((sum,line)=>sum+Number(line.lineRrp||0),0));
+    lines.forEach(line=>{
+      const style=String(line.style||line.description||line.sku||"").trim().toLowerCase();
+      if(style)styles.add(style);
+    });
+    return total;
+  },{orders:0,units:0,cost:0,retail:0});
+  summary.styles=styles.size;
+  return summary;
+}
+
+function financeSummary(orders){
+  return orders.reduce((total,order)=>{
+    const invoices=order.invoices||{};
+    total.orders+=1;
+    total.orderValue+=Number(order.total||order.order?.totals?.grand||0);
+    total.invoices+=Number(invoices.count||0);
+    total.invoiced+=Number(invoices.totalDue||0);
+    total.paid+=Number(invoices.totalPaid||0);
+    total.awaitingPayment+=Number(invoices.outstanding||0);
+    return total;
+  },{orders:0,orderValue:0,invoices:0,invoiced:0,paid:0,awaitingPayment:0});
+}
+
+function showingFinanceSummary(){
+  return val("role-filter")==="FD / Finance"||(!val("role-filter")&&val("owner-filter")==="FD / Finance");
+}
+
+function filterContextText(){
+  const parts=[];
+  const role=val("role-filter");
+  const owner=val("owner-filter");
+  const status=val("status-filter");
+  const search=val("search");
+  const archiveMode=val("archive-filter")||"active";
+  if(role)parts.push(role);
+  else if(owner)parts.push(owner);
+  if(status)parts.push(status);
+  if(search)parts.push(`Search: ${search}`);
+  if(archiveMode==="archived")parts.push("Archived");
+  if(archiveMode==="all")parts.push("All orders");
+  return parts.length?parts.join(" / "):"Current filtered orders";
+}
+
+function renderFilterSummary(orders){
+  const summary=filteredSummary(orders);
+  if(showingFinanceSummary()){
+    const finance=financeSummary(orders);
+    el("filter-summary").innerHTML=[
+      `<div class="summary-item filter-context"><label>Summary</label><strong>${escapeHtml(filterContextText())}</strong></div>`,
+      summaryItem("Orders",`${finance.orders.toLocaleString("en-GB")} order${finance.orders===1?"":"s"}`),
+      summaryItem("Invoices",finance.invoices.toLocaleString("en-GB")),
+      summaryItem("Invoiced",money.format(finance.invoiced)),
+      summaryItem("Paid",money.format(finance.paid)),
+      summaryItem("Awaiting payment",money.format(finance.awaitingPayment)),
+      summaryItem("Order value",money.format(finance.orderValue))
+    ].join("");
+    return;
+  }
+  el("filter-summary").innerHTML=[
+    `<div class="summary-item filter-context"><label>Summary</label><strong>${escapeHtml(filterContextText())}</strong></div>`,
+    summaryItem("Orders",`${summary.orders.toLocaleString("en-GB")} order${summary.orders===1?"":"s"}`),
+    summaryItem("Units",summary.units.toLocaleString("en-GB")),
+    summaryItem("Styles",summary.styles.toLocaleString("en-GB")),
+    summaryItem("Cost inc VAT",money.format(summary.cost)),
+    summaryItem("Retail",money.format(summary.retail))
+  ].join("");
 }
 
 function renderFilters(){
@@ -237,6 +322,7 @@ function renderFilters(){
 function renderOrders(){
   const orders=filterOrders();
   el("order-count").textContent=`${orders.length} order${orders.length===1?"":"s"}`;
+  renderFilterSummary(orders);
   el("order-list").innerHTML=orders.length?orders.map(order=>`
     <button type="button" class="order-row ${order.id===state.selectedId?"active":""}" onclick="selectOrder('${attr(order.id)}')">
       <span class="order-main">
