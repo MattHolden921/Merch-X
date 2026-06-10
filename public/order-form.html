@@ -245,6 +245,7 @@ async function apiFetch(path,options){
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
 const set=(id,value)=>{if(el(id))el(id).value=value||""};
+const normalizeLineSku=value=>String(value||"").trim().toUpperCase();
 const opts=(items,blank)=>`${blank?`<option value="">${blank}</option>`:""}${items.map(item=>`<option>${escapeHtml(item)}</option>`).join("")}`;
 el("fx-rate")?.addEventListener("input",calc);
 document.addEventListener("keydown",event=>{if(event.key==="Escape")closeImageLightbox()});
@@ -408,6 +409,8 @@ function addLine(data={}){
         </div>
         <div class="line-row second">
           ${skuField(id,data.sku)}
+          <input id="source-${id}" type="hidden" value="${escapeHtml(data.source||"")}">
+          <input id="sourceSku-${id}" type="hidden" value="${escapeHtml(data.source?normalizeLineSku(data.sku):"")}">
           ${field("buyingCode",id,"Buying code","text","Supplier SKU",data.buyingCode||data.supplierSku)}
           ${selectField("repeatType",id,"Repeat or new",["New","Repeat","Repeat with variation"],data.repeatType)}
           ${selectField("season",id,"Season",SEASONS,data.season)}
@@ -421,6 +424,7 @@ function addLine(data={}){
   el("lines-wrap").appendChild(card);
   ["unitCostGbp","rrp","exitRetail"].forEach(key=>el(`${key}-${id}`).readOnly=true);
   ["quantity","unitCostEur","category"].forEach(key=>el(`${key}-${id}`).addEventListener("input",calc));
+  el(`sku-${id}`).addEventListener("input",()=>clearLineSourceIfSkuChanged(id));
   el(`sku-${id}`).addEventListener("change",()=>lookupSku(id));
   el(`imageUrl-${id}`).addEventListener("input",()=>renderThumb(id));
   el(`imageFile-${id}`).addEventListener("change",event=>handleImageUpload(id,event));
@@ -582,6 +586,7 @@ async function issueSku(id){
     return;
   }
   set(`sku-${id}`,result.sku);
+  setLineSource(id,"issued",result.sku);
   state.textContent=`Issued after ${result.previousSku||"last saved SKU"}`;
   state.className="lookup-state ok";
   bootstrap.lastIssuedSku=result.sku;
@@ -590,16 +595,23 @@ async function issueSku(id){
 async function lookupSku(id){
   const sku=val(`sku-${id}`);
   if(!sku)return;
+  const lookupSku=normalizeLineSku(sku);
   const state=el(`lookup-${id}`);
+  const token=`${lookupSku}-${Date.now()}`;
+  state.dataset.lookupToken=token;
   state.textContent="Looking up SKU";
   state.className="lookup-state";
   const response=await apiFetch(`/api/order-form/sku?sku=${encodeURIComponent(sku)}`);
   const result=await response.json();
+  if(state.dataset.lookupToken!==token||normalizeLineSku(val(`sku-${id}`))!==lookupSku)return;
   if(result.product){
+    const source=result.source||result.product.source||"saved";
     applyProductToLine(id,result.product);
-    state.textContent=`Prefilled from ${result.source}`;
+    setLineSource(id,source,lookupSku);
+    state.textContent=`Prefilled from ${source}`;
     state.className="lookup-state ok";
   }else{
+    setLineSource(id,"","");
     state.textContent=result.message||"No matching SKU found";
     state.className="lookup-state warn";
   }
@@ -611,6 +623,21 @@ function applyProductToLine(id,product){
   if(product.supplierName&&!val("sup-name"))set("sup-name",product.supplierName);
   renderThumb(id);
   calc();
+}
+
+function setLineSource(id,source,sku=val(`sku-${id}`)){
+  set(`source-${id}`,source||"");
+  set(`sourceSku-${id}`,source?normalizeLineSku(sku):"");
+}
+
+function clearLineSourceIfSkuChanged(id){
+  if(normalizeLineSku(val(`sku-${id}`))!==val(`sourceSku-${id}`)){
+    setLineSource(id,"","");
+  }
+}
+
+function lineSource(id){
+  return normalizeLineSku(val(`sku-${id}`))===val(`sourceSku-${id}`)?val(`source-${id}`):"";
 }
 
 function collectLines(){
@@ -625,6 +652,7 @@ function collectLines(){
     return {
       sku:val(`sku-${id}`),style:val(`style-${id}`),category:val(`category-${id}`),colour:val(`colour-${id}`),size:val(`size-${id}`),
       buyingCode:val(`buyingCode-${id}`),supplierSku:val(`buyingCode-${id}`),quantity,unitCostEur,unitCostGbp,unitCost:unitCostGbp,rrp,exitRetail,repeatType:val(`repeatType-${id}`),season:val(`season-${id}`),imageUrl:val(`imageUrl-${id}`),
+      source:lineSource(id)||undefined,
       lineCost:quantity*unitCostGbp,lineRrp:quantity*rrp,lineExitRetail:quantity*exitRetail
     };
   }).filter(line=>line.sku||line.style||line.quantity);
