@@ -407,7 +407,7 @@ function addLine(data={},afterId=null){
           ${field("size",id,"Size","text","S/M/L",data.size)}
           ${field("quantity",id,"Qty","number","0",data.quantity)}
           ${field("unitCostEur",id,"Unit cost EUR","number","0.00",data.unitCostEur??data.unitCost)}
-          ${field("unitCostGbp",id,"Cost GBP","text","0.00",data.unitCostGbp)}
+          ${field("unitCostGbp",id,"Cost GBP","number","0.00",data.unitCostGbp)}
           ${field("rrp",id,"5x RRP GBP","text","0.00",data.rrp)}
         </div>
         <div class="line-row second">
@@ -417,6 +417,7 @@ function addLine(data={},afterId=null){
           <input id="duplicated-${id}" type="hidden" value="${data.duplicated?"1":""}">
           <input id="confirmedImage-${id}" type="hidden" value="${escapeHtml(data.confirmedImageUrl||"")}">
           <input id="pendingImage-${id}" type="hidden" value="${escapeHtml(data.pendingImageUrl||"")}">
+          <input id="costMode-${id}" type="hidden" value="${escapeHtml(data.costMode||"eur")}">
           ${field("buyingCode",id,"Buying code","text","Supplier SKU",data.buyingCode||data.supplierSku)}
           ${selectField("repeatType",id,"Repeat or new",["New","Repeat","Repeat with variation"],data.repeatType)}
           ${selectField("season",id,"Season",SEASONS,data.season)}
@@ -430,8 +431,10 @@ function addLine(data={},afterId=null){
   const afterCard=afterId?el(`line-${afterId}`):null;
   if(afterCard)afterCard.insertAdjacentElement("afterend",card);
   else el("lines-wrap").appendChild(card);
-  ["unitCostGbp","rrp","exitRetail"].forEach(key=>el(`${key}-${id}`).readOnly=true);
-  ["quantity","unitCostEur","category"].forEach(key=>el(`${key}-${id}`).addEventListener("input",calc));
+  ["rrp","exitRetail"].forEach(key=>el(`${key}-${id}`).readOnly=true);
+  ["quantity","category"].forEach(key=>el(`${key}-${id}`).addEventListener("input",calc));
+  el(`unitCostEur-${id}`).addEventListener("input",()=>{set(`costMode-${id}`,"eur");calc();});
+  el(`unitCostGbp-${id}`).addEventListener("input",()=>{set(`costMode-${id}`,"gbp");calc();});
   el(`sku-${id}`).addEventListener("input",()=>clearLineSourceIfSkuChanged(id));
   el(`sku-${id}`).addEventListener("change",()=>lookupSku(id));
   el(`imageUrl-${id}`).addEventListener("input",()=>handleImageUrlInput(id));
@@ -597,16 +600,27 @@ function copyPreviousImage(id){
   setLineImage(id,lineDisplayImage(previous));
 }
 
-function lineData(id){
+function lineCostValues(id){
   const fx=Number(val("fx-rate"))||0;
-  const quantity=Number(val(`quantity-${id}`))||0;
-  const unitCostEur=Number(val(`unitCostEur-${id}`))||0;
-  const unitCostGbp=unitCostEur*fx;
+  const mode=val(`costMode-${id}`)==="gbp"?"gbp":"eur";
+  let unitCostEur=Number(val(`unitCostEur-${id}`))||0;
+  let unitCostGbp=Number(val(`unitCostGbp-${id}`))||0;
+  if(mode==="gbp"){
+    unitCostEur=fx?unitCostGbp/fx:0;
+  }else{
+    unitCostGbp=unitCostEur*fx;
+  }
   const rrp=unitCostGbp*5;
   const exitRetail=(unitCostGbp/.35)*1.2;
+  return { mode, unitCostEur, unitCostGbp, rrp, exitRetail };
+}
+
+function lineData(id){
+  const quantity=Number(val(`quantity-${id}`))||0;
+  const { mode, unitCostEur, unitCostGbp, rrp, exitRetail }=lineCostValues(id);
   return {
     sku:val(`sku-${id}`),style:val(`style-${id}`),category:val(`category-${id}`),colour:val(`colour-${id}`),size:val(`size-${id}`),
-    buyingCode:val(`buyingCode-${id}`),supplierSku:val(`buyingCode-${id}`),quantity,unitCostEur,unitCostGbp,unitCost:unitCostGbp,rrp,exitRetail,repeatType:val(`repeatType-${id}`),season:val(`season-${id}`),imageUrl:lineDisplayImage(id),
+    buyingCode:val(`buyingCode-${id}`),supplierSku:val(`buyingCode-${id}`),quantity,unitCostEur,unitCostGbp,unitCost:unitCostGbp,costMode:mode,rrp,exitRetail,repeatType:val(`repeatType-${id}`),season:val(`season-${id}`),imageUrl:lineDisplayImage(id),
     source:lineSource(id)||undefined,
     lineCost:quantity*unitCostGbp,lineRrp:quantity*rrp,lineExitRetail:quantity*exitRetail
   };
@@ -672,6 +686,7 @@ async function lookupSku(id){
 function applyProductToLine(id,product,options={}){
   const map={style:"style",category:"category",colour:"colour",size:"size",quantity:"quantity",unitCostEur:"unitCostEur",unitCost:"unitCostEur",repeatType:"repeatType",season:"season",buyingCode:"buyingCode",supplierSku:"buyingCode"};
   Object.entries(map).forEach(([from,to])=>{if(product[from]!=null&&product[from]!=="")set(`${to}-${id}`,product[from])});
+  if(product.unitCostEur!=null||product.unitCost!=null)set(`costMode-${id}`,"eur");
   if(options.replaceCopiedImage||product.imageUrl)setLineImage(id,product.imageUrl||"");
   if(product.supplierName&&!val("sup-name"))set("sup-name",product.supplierName);
   calc();
@@ -718,11 +733,9 @@ function calc(){
   document.querySelectorAll(".line-card").forEach(card=>{
     const id=card.id.replace("line-","");
     const quantity=Number(val(`quantity-${id}`))||0;
-    const unitCostEur=Number(val(`unitCostEur-${id}`))||0;
-    const unitCostGbp=unitCostEur*(Number(val("fx-rate"))||0);
-    const rrp=unitCostGbp*5;
-    const exitRetail=(unitCostGbp/.35)*1.2;
-    set(`unitCostGbp-${id}`,unitCostGbp?unitCostGbp.toFixed(2):"");
+    const { mode, unitCostEur, unitCostGbp, rrp, exitRetail }=lineCostValues(id);
+    if(mode==="gbp")set(`unitCostEur-${id}`,unitCostEur?unitCostEur.toFixed(2):"");
+    else set(`unitCostGbp-${id}`,unitCostGbp?unitCostGbp.toFixed(2):"");
     set(`rrp-${id}`,rrp?rrp.toFixed(2):"");
     set(`exitRetail-${id}`,exitRetail?exitRetail.toFixed(2):"");
     el(`lineTotal-${id}`).value=money.format(quantity*unitCostGbp);
