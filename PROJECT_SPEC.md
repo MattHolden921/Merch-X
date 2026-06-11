@@ -1,0 +1,292 @@
+# Merch X Project Spec
+
+Last reviewed: 2026-06-11
+
+This is the shared logic and product reference for Merch X. Keep it current when the app's workflows, calculations, data model, integrations, or page responsibilities change.
+
+## Product Purpose
+
+Merch X is a hosted merchandising toolkit for Kit and Kaboodal / AMG Retail workflows. It brings together sales reporting, stock/order creation, local SKU issuing, Shopify merchandising views, collection reorder planning, order workflow tracking, invoice handling, and weekly trading actions.
+
+The app favours simple operational tools over a large framework:
+
+- A Node.js HTTP server in `server.js`.
+- Static HTML/CSS/JavaScript screens in `public/`.
+- SQLite for persistent app data.
+- Disk storage for uploaded invoices and product/order images.
+- Shopify and GA4 integrations when credentials are configured.
+- Local fallback/sample behaviour where useful, so tools remain inspectable without live credentials.
+
+## Running And Deployment
+
+- Local command: `npm start`.
+- Default URL: `http://localhost:3000`.
+- Runtime: Node 20+.
+- Main database path: `DATABASE_PATH`, defaulting to `./data/merch-x.sqlite`.
+- Upload storage path: `UPLOADS_DIR`, defaulting to `./data/uploads`.
+- Shared password protection is enabled when `APP_USERNAME` and `APP_PASSWORD` are set.
+- Hetzner/VPS setup details live in `DEPLOY_HETZNER.md`.
+
+## Repository Map
+
+- `server.js`: HTTP server, auth, static serving, API routes, integrations, persistence, migrations, report calculations, workflow logic.
+- `public/index.html`: tool hub.
+- `public/design-system.css`: shared visual system.
+- `public/bestsellers.html`: TY/LY bestsellers, revenue analysis, stock position, slow sellers, methodology, trade last week, CSV/import workflows.
+- `public/order-form.html`: purchase order creation, SKU issuing/lookup, line image upload, printable PO output.
+- `public/orders.html`: order workspace, approval/payment/intake workflow, invoices, notes, archive/delete.
+- `public/sku-register.html`: local SKU register and safe deletion of unused issued SKUs.
+- `public/merchandising.html`: Shopify product merchandising view using product, order, and optional GA4 metrics.
+- `public/collection-planner.html`: Shopify collection reorder planning and apply-to-Shopify workflow.
+- `public/weekly-actions.html`: action board generated from saved bestsellers periods.
+- `README.md`: setup and storage overview.
+- `DESIGN.md`: visual/design guidance.
+
+## Core Architecture
+
+The server uses Node's built-in `http`, `https`, `fs`, `path`, and `crypto` modules plus `better-sqlite3`.
+
+Request flow:
+
+1. Load `.env` values if present.
+2. Resolve server port, SQLite path, and uploads path.
+3. Apply shared-password auth when configured.
+4. Route integration endpoints such as Shopify, collection reorder, and Google OAuth.
+5. Route other `/api/*` requests through `handleApi`.
+6. Serve `/uploads/*` from the configured uploads directory.
+7. Serve static files from `public/`, falling back to `index.html` when a file is missing.
+
+The frontend is plain HTML with inline scripts. API helpers usually try same-origin first and, where useful for local testing, localhost fallbacks.
+
+## Data Storage
+
+SQLite is the system of record for current app data. The schema is created and lightly migrated on server startup.
+
+Primary table groups:
+
+- App/config: `app_settings`.
+- Buying/order form: `suppliers`, `products`, `issued_skus`, `orders`.
+- Order management: `order_workflows`, `order_events`, `order_invoices`.
+- Collection reorder: `collection_reorder_audit`.
+- Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
+- Weekly actions: `weekly_actions`, `weekly_action_events`.
+
+Legacy/prototype data:
+
+- If `data/order-form-db.json` exists and SQLite is empty, the app imports it once.
+- New changes should treat SQLite as canonical.
+
+Uploads:
+
+- Invoice files are stored under `uploads/invoices/...`.
+- Order line images are stored under `uploads/order-images/...`.
+- Product images are stored under `uploads/product-images/...`.
+- Uploaded file paths stored in SQLite are relative to `UPLOADS_DIR`.
+- Never expose arbitrary disk paths; all upload reads must pass through the upload path guard.
+
+## Integrations
+
+### Shopify
+
+Configuration:
+
+- `SHOPIFY_SHOP`, `SHOPIFY_STORE_DOMAIN`, or `SHOPIFY_SHOP_DOMAIN`.
+- `SHOPIFY_CLIENT_ID`.
+- `SHOPIFY_CLIENT_SECRET`.
+- `SHOPIFY_API_VERSION`, defaulting to `2026-04`.
+
+Used for:
+
+- Product and variant lookups by SKU.
+- Product merchandising sync.
+- Collection planner product and collection sync.
+- Collection reorder apply jobs.
+- Bestsellers sync from Shopify orders/products.
+
+When Shopify is not configured, tools should return a clear configured=false response and use samples or saved local data where appropriate.
+
+### GA4
+
+Configuration supports either OAuth refresh token or service account credentials:
+
+- `GA4_PROPERTY_ID` or `GOOGLE_ANALYTICS_PROPERTY_ID`.
+- OAuth: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `GOOGLE_OAUTH_REDIRECT_URI`.
+- Service account: `GOOGLE_SERVICE_ACCOUNT_JSON` or `GOOGLE_APPLICATION_CREDENTIALS`.
+
+Used for:
+
+- Product view/add/purchase/revenue metrics merged into merchandising and collection planning reports.
+- Google OAuth start/callback endpoints can write a refresh token back to `.env`.
+
+## Main API Surface
+
+Reports and actions:
+
+- `GET /api/reports/bestsellers/periods`
+- `GET /api/reports/bestsellers`
+- `POST /api/reports/bestsellers/sync`
+- `POST /api/reports/bestsellers/sync-job`
+- `GET /api/reports/bestsellers/sync-job`
+- `POST /api/reports/bestsellers/import-csv`
+- `GET /api/reports/stock-snapshots`
+- `GET /api/weekly-actions`
+- `POST /api/weekly-actions/generate`
+- `POST /api/weekly-actions/update`
+
+Order form and local SKUs:
+
+- `GET /api/order-form/bootstrap`
+- `GET /api/order-form/local-skus`
+- `DELETE /api/order-form/local-skus`
+- `POST /api/order-form/next-sku`
+- `GET /api/order-form/sku`
+- `POST /api/order-form/image`
+- `POST /api/order-form/orders`
+
+Order workspace:
+
+- `GET /api/orders/workspace`
+- `GET /api/orders/detail`
+- `POST /api/orders/workflow`
+- `POST /api/orders/invoices`
+- `POST /api/orders/invoices/delete`
+- `POST /api/orders/archive`
+- `POST /api/orders/delete`
+- `POST /api/orders/events`
+
+Shopify and Google:
+
+- `GET /api/shopify-merchandising`
+- `GET /api/shopify-collection-planner`
+- `POST /api/shopify-collection-reorder/start`
+- `GET /api/shopify-collection-reorder/status`
+- `GET /api/google-auth/start`
+- `GET /api/google-auth/callback`
+
+## Business Logic
+
+### SKU Issuing
+
+- The initial SKU is `ORDER_FORM_INITIAL_SKU`, defaulting to `15100`.
+- SKUs are normalized before comparison.
+- Issuing skips SKUs that are already attached to saved products, orders, or issued SKU rows.
+- `issued_skus` records reserved/issued numbers.
+- Unused issued SKUs can be deleted only when no saved product or order data references them.
+- `app_settings.lastIssuedSku` tracks the latest issued cursor.
+
+### Order Numbers
+
+- New orders receive the next local order number when one is not supplied.
+- Orders are saved to SQLite as JSON payloads plus indexed top-level fields.
+- Saving an order also updates supplier/product helper records and syncs workflow status defaults.
+
+### Order Workflow
+
+Order workflow is split into approval, payment, and intake sections. The composite order status is derived from workflow values and the stored order status.
+
+Important principles:
+
+- Workflow updates should record events.
+- Invoice changes can update payment workflow.
+- Archiving hides orders from active creation/bootstrap views but preserves history.
+- Deleting an order should remove related invoice records/files and workflow data only through the server's delete logic.
+
+### Invoices
+
+- Invoices are attached to orders.
+- New invoice files are written to disk and referenced by `file_path`.
+- The API returns public upload URLs, not raw filesystem paths.
+- Invoice totals and paid/sent-to-FD states feed payment status.
+
+### Bestsellers Reports
+
+Reports can come from:
+
+- Shopify API sync.
+- CSV imports.
+- Saved periods/snapshots.
+
+Report concepts:
+
+- `report_sources` records the origin.
+- `report_periods` defines date ranges and source type.
+- `report_product_metrics` stores product-level sales, stock, GP, price, GA, and Shopify identifiers.
+- `report_snapshots` caches assembled payloads.
+- `report_sync_jobs` tracks longer Shopify syncs.
+
+Key calculated fields include weekly units, average price, GP percent, GP per unit, cover weeks, forecast buy, dead stock, stock value, and category/season summaries.
+
+### Stock Snapshots
+
+Stock snapshot rows represent Shopify variant-level inventory and pricing at a point in time. They support stock position, markdown state, and SKU/product status filters.
+
+### Weekly Actions
+
+Weekly actions are generated from saved Shopify bestsellers periods. Candidate action types:
+
+- `reorder`: selling with low cover or forecast buy requirement.
+- `markdown`: stock-heavy or no/weak sales lines.
+- `feature`: strong sellers with stock and acceptable GP where available.
+- `watch`: mixed signals such as missing cost, medium cover, or sales with no stock showing.
+
+Actions use a `dedupe_key` by type/product so unresolved existing actions are updated rather than duplicated. Statuses are `Open`, `In progress`, `Snoozed`, `Blocked`, and `Done`.
+
+### Collection Reorder Planner
+
+The collection planner fetches Shopify collections/products, ranks products according to the selected strategy, previews movement, and can apply a new order through a background reorder job.
+
+Guardrails:
+
+- Applying a reorder requires explicit user confirmation.
+- Reorder jobs are polled until complete/error.
+- Successful applies are written to `collection_reorder_audit`.
+- After apply, the user should sync collections again to verify live Shopify order.
+
+## Frontend Behaviour Principles
+
+- Pages are operational tools, not landing pages.
+- Existing pages use static HTML and inline scripts; keep that approach unless there is a deliberate migration.
+- Shared styling belongs in `public/design-system.css` when it applies across tools.
+- Preserve same-origin API behaviour for deployed use.
+- When adding large calculations, prefer server-side persistence/calculation if multiple tools need the result.
+- Keep user-facing failure states clear: missing credentials, unavailable Shopify scopes, missing saved periods, invalid dates, and upload limits should produce actionable messages.
+
+## Date And Range Rules
+
+- API date inputs use `YYYY-MM-DD`.
+- Report date ranges are inclusive.
+- Server range parsing guards against invalid dates and overly broad ranges.
+- Bestsellers weekly buckets use Monday-based canonical weeks.
+- UI labels use UK-style dates where displayed to users.
+
+## Security And Safety
+
+- Use shared-password auth for hosted access.
+- Do not commit `.env`, SQLite databases, uploads, or secrets.
+- File upload paths must remain inside `UPLOADS_DIR`.
+- Keep upload size limits in place unless storage/backups have been reconsidered.
+- Be careful with endpoints that write `.env`, apply Shopify reorder changes, delete orders, delete invoices, or delete issued SKUs.
+- API JSON responses should avoid exposing server filesystem paths or secrets.
+
+## Change Rules For Future Work
+
+Update this file when changing any of the following:
+
+- A page's ownership or core user workflow.
+- API endpoint names, request shapes, or response shapes.
+- Database schema, migrations, or canonical data ownership.
+- SKU/order/invoice/workflow status logic.
+- Bestsellers, stock, forecast, GP, cover, or weekly action calculations.
+- Shopify or GA4 credential requirements.
+- Upload storage paths, file limits, or backup requirements.
+- Deployment/runtime assumptions.
+
+When the implementation and this spec disagree, treat the code as current truth, then update this spec in the same change.
+
+## Open Product Questions
+
+- Should uploaded report files be stored centrally so every team member sees the same report history without re-uploading?
+- Should `server.js` be split into route/service modules as the app grows?
+- Should bestsellers calculations move toward reusable server-side modules instead of page-level inline scripts?
+- Should order workflow actors eventually map to real users rather than free-text names?
+- Should Shopify reorder apply support dry-run exports and approvals before writing to Shopify?

@@ -2,6 +2,8 @@
 
 Barebones hosted version of the merchandising prototype.
 
+For the living product/logic reference, see `PROJECT_SPEC.md`.
+
 ## What changed
 
 - The original standalone report is now served from `public/index.html`.

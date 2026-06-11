@@ -54,10 +54,11 @@ textarea{min-height:70px;resize:vertical}
 .invoice-create{display:none;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px;margin-bottom:12px}
 .invoice-create.open{display:block}
 .invoice-form{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end}
-.invoice-totals{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.invoice-totals{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
 .invoice-total{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:8px 9px}
 .invoice-total label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);margin-bottom:3px}
 .invoice-total strong{font-size:14px}
+.money-sub{display:block;margin-top:2px;font-size:10px;color:var(--ds-text-soft);font-weight:500}
 .invoice-table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
 .invoice-table{width:100%;border-collapse:collapse;table-layout:fixed}
 .invoice-table th{font-size:9px;text-transform:uppercase;letter-spacing:0;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:6px 4px;border-bottom:1px solid var(--ds-line)}
@@ -67,7 +68,7 @@ textarea{min-height:70px;resize:vertical}
 .invoice-table input[type="checkbox"]{width:16px;min-height:16px}
 .invoice-table th:nth-child(1),.invoice-table td:nth-child(1){width:24%}
 .invoice-table th:nth-child(2),.invoice-table td:nth-child(2){width:30px;text-align:center}
-.invoice-table th:nth-child(3),.invoice-table td:nth-child(3){width:70px}
+.invoice-table th:nth-child(3),.invoice-table td:nth-child(3){width:92px}
 .invoice-table th:nth-child(4),.invoice-table td:nth-child(4){width:52px}
 .invoice-table th:nth-child(5),.invoice-table td:nth-child(5){width:68px}
 .invoice-table th:nth-child(6),.invoice-table td:nth-child(6),.invoice-table th:nth-child(7),.invoice-table td:nth-child(7),.invoice-table th:nth-child(8),.invoice-table td:nth-child(8){width:34px;text-align:center}
@@ -86,7 +87,7 @@ textarea{min-height:70px;resize:vertical}
 .file-input{padding:6px 8px;min-height:34px}
 .empty-state{padding:38px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.6}
 .line-table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius)}
-.line-table{width:100%;border-collapse:collapse;min-width:780px}
+.line-table{width:100%;border-collapse:collapse;min-width:1040px}
 .line-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:8px;border-bottom:1px solid var(--ds-line)}
 .line-table td{font-size:12px;color:var(--ds-text-muted);padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:top}
 .line-table tr:last-child td{border-bottom:0}
@@ -137,6 +138,7 @@ textarea{min-height:70px;resize:vertical}
 
 <script>
 const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"});
+const eurMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"EUR"});
 const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:"numeric"});
 const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
 const approvalStatuses=["Not requested","Pending director approval","Approved","Changes requested","Rejected"];
@@ -144,11 +146,13 @@ const paymentStatuses=["Not due","Awaiting invoice","Ready to pay","Part paid","
 const intakeStatuses=["Not confirmed","Confirmed","In production","Shipped","Delayed","Part received","Received"];
 const invoiceTypes=["Deposit invoice","Balance invoice","Full invoice","Credit note","Other"];
 const invoiceStatuses=["Awaiting FD","Sent to FD","Paid","Query"];
+const currencyOptions=["EUR","GBP","USD","Other"];
 const owners=["Buyer","Buying Director","FD / Finance","Merchandising","Supplier"];
 let state={orders:[],selectedId:"",selected:null,events:[],invoices:[],metrics:null,editingInvoiceId:"",invoiceEditorOpen:false};
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
+const setVal=(id,value)=>{const node=el(id);if(node)node.value=value||"";};
 
 async function apiFetch(path,options){
   let lastError;
@@ -176,6 +180,75 @@ function formatDate(value){
   if(!value)return "";
   const date=new Date(`${value}T00:00:00`);
   return Number.isNaN(date.getTime())?value:dateFmt.format(date);
+}
+
+function formatCurrency(value,currency){
+  const code=String(currency||"GBP").toUpperCase();
+  if(code==="GBP")return money.format(Number(value||0));
+  if(code==="EUR")return eurMoney.format(Number(value||0));
+  try{
+    return new Intl.NumberFormat("en-GB",{style:"currency",currency:code}).format(Number(value||0));
+  }catch(error){
+    return `${Number(value||0).toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2})} ${code}`;
+  }
+}
+
+function orderFxRate(order){
+  return Number(order?.fxRate||order?.order?.fxRate||order?.order?.totals?.fxRate||0);
+}
+
+function orderTotalGbp(order){
+  return Number(order?.totalGbp||order?.total||order?.order?.totals?.grand||0);
+}
+
+function gbpToEur(value,order){
+  const rate=orderFxRate(order);
+  return rate?Number(value||0)/rate:0;
+}
+
+function eurToGbp(value,order){
+  const rate=orderFxRate(order);
+  return rate?Number(value||0)*rate:Number(value||0);
+}
+
+function moneyPairFromGbp(value,order){
+  const gbp=Number(value||0);
+  const eur=gbpToEur(gbp,order);
+  return orderFxRate(order)?`${money.format(gbp)} / ${eurMoney.format(eur)}`:`${money.format(gbp)} / EUR n/a`;
+}
+
+function invoiceAmountGbp(invoice,order){
+  const amount=Number(invoice?.amount||0);
+  return String(invoice?.currency||"GBP").toUpperCase()==="EUR"?eurToGbp(amount,order):amount;
+}
+
+function invoiceAmountEur(invoice,order){
+  const amount=Number(invoice?.amount||0);
+  return String(invoice?.currency||"GBP").toUpperCase()==="EUR"?amount:gbpToEur(amount,order);
+}
+
+function invoiceDefaultAmount(order,currency){
+  const code=String(currency||order?.currency||"GBP").toUpperCase();
+  return code==="EUR"&&orderFxRate(order)?gbpToEur(orderTotalGbp(order),order):orderTotalGbp(order);
+}
+
+function lineUnitGbp(line){
+  return Number(line?.unitCostGbp||line?.unitCost||0);
+}
+
+function lineUnitEur(line,order){
+  const eur=Number(line?.unitCostEur||0);
+  return eur||gbpToEur(lineUnitGbp(line),order);
+}
+
+function lineCostGbp(line){
+  return Number(line?.lineCost||0);
+}
+
+function lineCostEur(line,order){
+  const qty=Number(line?.quantity||0);
+  const eur=lineUnitEur(line,order);
+  return eur?eur*qty:gbpToEur(lineCostGbp(line),order);
 }
 
 function options(items,value,blank){
@@ -240,14 +313,15 @@ function filteredSummary(orders){
     const lines=order.order?.lines||[];
     total.orders+=1;
     total.units+=Number(order.units||0);
-    total.cost+=Number(order.total||order.order?.totals?.grand||0);
+    total.cost+=orderTotalGbp(order);
+    total.costEur+=gbpToEur(orderTotalGbp(order),order);
     total.retail+=Number(order.order?.totals?.totalRrp||lines.reduce((sum,line)=>sum+Number(line.lineRrp||0),0));
     lines.forEach(line=>{
       const style=String(line.style||line.description||line.sku||"").trim().toLowerCase();
       if(style)styles.add(style);
     });
     return total;
-  },{orders:0,units:0,cost:0,retail:0});
+  },{orders:0,units:0,cost:0,costEur:0,retail:0});
   summary.styles=styles.size;
   return summary;
 }
@@ -255,14 +329,19 @@ function filteredSummary(orders){
 function financeSummary(orders){
   return orders.reduce((total,order)=>{
     const invoices=order.invoices||{};
+    const orderValue=orderTotalGbp(order);
     total.orders+=1;
-    total.orderValue+=Number(order.total||order.order?.totals?.grand||0);
+    total.orderValue+=orderValue;
+    total.orderValueEur+=Number(invoices.orderTotalEur||gbpToEur(orderValue,order));
     total.invoices+=Number(invoices.count||0);
     total.invoiced+=Number(invoices.totalDue||0);
+    total.invoicedEur+=Number(invoices.totalDueEur||gbpToEur(invoices.totalDue||0,order));
     total.paid+=Number(invoices.totalPaid||0);
+    total.paidEur+=Number(invoices.totalPaidEur||gbpToEur(invoices.totalPaid||0,order));
     total.awaitingPayment+=Number(invoices.outstanding||0);
+    total.awaitingPaymentEur+=Number(invoices.outstandingEur||gbpToEur(invoices.outstanding||0,order));
     return total;
-  },{orders:0,orderValue:0,invoices:0,invoiced:0,paid:0,awaitingPayment:0});
+  },{orders:0,orderValue:0,orderValueEur:0,invoices:0,invoiced:0,invoicedEur:0,paid:0,paidEur:0,awaitingPayment:0,awaitingPaymentEur:0});
 }
 
 function showingFinanceSummary(){
@@ -293,10 +372,10 @@ function renderFilterSummary(orders){
       `<div class="summary-item filter-context"><label>Summary</label><strong>${escapeHtml(filterContextText())}</strong></div>`,
       summaryItem("Orders",`${finance.orders.toLocaleString("en-GB")} order${finance.orders===1?"":"s"}`),
       summaryItem("Invoices",finance.invoices.toLocaleString("en-GB")),
-      summaryItem("Invoiced",money.format(finance.invoiced)),
-      summaryItem("Paid",money.format(finance.paid)),
-      summaryItem("Awaiting payment",money.format(finance.awaitingPayment)),
-      summaryItem("Order value",money.format(finance.orderValue))
+      summaryItem("Invoiced",`${money.format(finance.invoiced)} / ${eurMoney.format(finance.invoicedEur)}`),
+      summaryItem("Paid",`${money.format(finance.paid)} / ${eurMoney.format(finance.paidEur)}`),
+      summaryItem("Awaiting payment",`${money.format(finance.awaitingPayment)} / ${eurMoney.format(finance.awaitingPaymentEur)}`),
+      summaryItem("Order value",`${money.format(finance.orderValue)} / ${eurMoney.format(finance.orderValueEur)}`)
     ].join("");
     return;
   }
@@ -305,7 +384,7 @@ function renderFilterSummary(orders){
     summaryItem("Orders",`${summary.orders.toLocaleString("en-GB")} order${summary.orders===1?"":"s"}`),
     summaryItem("Units",summary.units.toLocaleString("en-GB")),
     summaryItem("Styles",summary.styles.toLocaleString("en-GB")),
-    summaryItem("Cost inc VAT",money.format(summary.cost)),
+    summaryItem("Cost inc VAT",`${money.format(summary.cost)} / ${eurMoney.format(summary.costEur)}`),
     summaryItem("Retail",money.format(summary.retail))
   ].join("");
 }
@@ -332,7 +411,7 @@ function renderOrders(){
       </span>
       <span class="order-side">
         <span class="badge ${badgeClass(order.compositeStatus)}">${escapeHtml(order.compositeStatus)}</span>
-        <span>${money.format(order.total||0)}</span>
+        <span>${moneyPairFromGbp(orderTotalGbp(order),order)}</span>
         <span>${formatDate(order.requiredDate)||"No intake date"}</span>
       </span>
     </button>`).join(""):`<p class="empty-state">No orders match the current filters.</p>`;
@@ -360,15 +439,18 @@ function renderLineTable(order){
   return `<section class="work-panel" style="margin-top:14px">
     <div class="work-head"><h3>Order lines</h3><div class="actions"><span class="pill">${lines.length} lines</span><button type="button" class="btn" onclick="exportOrderLinesExcel()">Export Excel</button></div></div>
     <div class="line-table-wrap"><table class="line-table">
-      <thead><tr><th>SKU</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Line cost</th></tr></thead>
+      <thead><tr><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
       <tbody>${lines.map(line=>`<tr>
         <td>${escapeHtml(line.sku||"")}</td>
+        <td>${escapeHtml(line.buyingCode||line.supplierSku||"")}</td>
         <td>${escapeHtml(line.style||line.description||"")}</td>
         <td>${escapeHtml(line.category||"")}</td>
         <td>${escapeHtml(line.colour||line.color||"")}</td>
         <td class="num">${Number(line.quantity||0).toLocaleString("en-GB")}</td>
-        <td class="num">${money.format(Number(line.unitCostGbp||line.unitCost||0))}</td>
-        <td class="num">${money.format(Number(line.lineCost||0))}</td>
+        <td class="num">${money.format(lineUnitGbp(line))}</td>
+        <td class="num">${eurMoney.format(lineUnitEur(line,order))}</td>
+        <td class="num">${money.format(lineCostGbp(line))}</td>
+        <td class="num">${eurMoney.format(lineCostEur(line,order))}</td>
       </tr>`).join("")}</tbody>
     </table></div>
   </section>`;
@@ -378,20 +460,22 @@ function exportOrderLinesExcel(){
   const order=state.selected;
   const lines=order?.order?.lines||[];
   if(!order||!lines.length)return;
-  const headers=["Order number","Supplier","SKU","Style","Category","Colour","Size","Quantity","Unit cost GBP","Line cost GBP","Season","Buying code"];
+  const headers=["Order number","Supplier","SKU","Buying code","Style","Category","Colour","Size","Quantity","Unit cost GBP","Unit cost EUR","Line cost GBP","Line cost EUR","Season"];
   const rows=lines.map(line=>[
     order.orderNumber,
     order.supplierName,
     line.sku||"",
+    line.buyingCode||line.supplierSku||"",
     line.style||line.description||"",
     line.category||"",
     line.colour||line.color||"",
     line.size||"",
     Number(line.quantity||0),
-    Number(line.unitCostGbp||line.unitCost||0).toFixed(2),
-    Number(line.lineCost||0).toFixed(2),
-    line.season||"",
-    line.buyingCode||line.supplierSku||""
+    lineUnitGbp(line).toFixed(2),
+    lineUnitEur(line,order).toFixed(2),
+    lineCostGbp(line).toFixed(2),
+    lineCostEur(line,order).toFixed(2),
+    line.season||""
   ]);
   const table=`<table><thead><tr>${headers.map(header=>`<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(cell=>`<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>${table}</body></html>`;
@@ -420,20 +504,24 @@ function renderInvoiceGroup(order){
   const totals=invoiceTotals(order,invoices);
   const editing=invoices.find(invoice=>invoice.id===state.editingInvoiceId)||null;
   const formInvoice=editing||{};
+  const formCurrency=formInvoice.currency||order.currency||"EUR";
+  const formAmount=formInvoice.id?formInvoice.amount:invoiceDefaultAmount(order,formCurrency);
   const formOpen=state.invoiceEditorOpen||Boolean(editing);
   return `<div class="invoice-group">
     <div class="work-head"><h3>Invoices</h3><div class="actions"><span class="pill">${invoices.length} invoice${invoices.length===1?"":"s"}</span><button type="button" class="btn" onclick="toggleCreateInvoice()">${editing?"Edit invoice":"Create invoice"}</button></div></div>
     <div class="invoice-totals">
-      <div class="invoice-total"><label>Total due</label><strong>${money.format(totals.due)}</strong></div>
-      <div class="invoice-total"><label>Paid</label><strong>${money.format(totals.paid)}</strong></div>
-      <div class="invoice-total"><label>Outstanding</label><strong>${money.format(totals.outstanding)}</strong></div>
+      <div class="invoice-total"><label>Order total</label><strong>${money.format(totals.orderGbp)}</strong><span class="money-sub">${eurMoney.format(totals.orderEur)}</span></div>
+      <div class="invoice-total"><label>Invoiced</label><strong>${money.format(totals.invoicedGbp)}</strong><span class="money-sub">${eurMoney.format(totals.invoicedEur)}</span></div>
+      <div class="invoice-total"><label>Paid</label><strong>${money.format(totals.paidGbp)}</strong><span class="money-sub">${eurMoney.format(totals.paidEur)}</span></div>
+      <div class="invoice-total"><label>Outstanding</label><strong>${money.format(totals.outstandingGbp)}</strong><span class="money-sub">${eurMoney.format(totals.outstandingEur)}</span></div>
     </div>
-    <div class="invoice-table-wrap">${renderInvoiceTable(invoices)}</div>
+    <div class="invoice-table-wrap">${renderInvoiceTable(order,invoices)}</div>
     <div class="invoice-create ${formOpen?"open":""}" id="invoice-create">
       <div class="invoice-form">
         ${select("invoice-type","Invoice type",invoiceTypes,formInvoice.invoiceType||"Deposit invoice")}
         ${input("invoice-number","Invoice number",formInvoice.invoiceNumber||"","text")}
-        ${input("invoice-amount","Amount",formInvoice.amount||order.total||0,"number")}
+        ${input("invoice-amount","Amount",formAmount||0,"number")}
+        ${select("invoice-currency","Currency",currencyOptions,formCurrency)}
         ${input("invoice-date","Invoice date",formInvoice.invoiceDate||"","date")}
         ${input("invoice-due","Due date",formInvoice.dueDate||"","date")}
         <div class="field"><label>Invoice file</label><input class="file-input" id="invoice-file" type="file" accept=".pdf,image/*"></div>
@@ -447,25 +535,34 @@ function renderInvoiceGroup(order){
 }
 
 function invoiceTotals(order,invoices){
-  const due=invoices.length?invoices.reduce((total,invoice)=>total+Number(invoice.amount||0),0):Number(order.total||0);
-  const paid=invoices.filter(invoice=>invoice.status==="Paid").reduce((total,invoice)=>total+Number(invoice.amount||0),0);
-  return {due,paid,outstanding:Math.max(0,due-paid)};
+  const orderGbp=orderTotalGbp(order);
+  const orderEur=gbpToEur(orderGbp,order);
+  const invoicedGbp=invoices.reduce((total,invoice)=>total+invoiceAmountGbp(invoice,order),0);
+  const invoicedEur=invoices.reduce((total,invoice)=>total+invoiceAmountEur(invoice,order),0);
+  const paidInvoices=invoices.filter(invoice=>invoice.status==="Paid");
+  const paidGbp=paidInvoices.reduce((total,invoice)=>total+invoiceAmountGbp(invoice,order),0);
+  const paidEur=paidInvoices.reduce((total,invoice)=>total+invoiceAmountEur(invoice,order),0);
+  const outstandingGbp=Math.max(0,orderGbp-paidGbp);
+  const outstandingEur=Math.max(0,orderEur-paidEur);
+  return {orderGbp,orderEur,invoicedGbp,invoicedEur,paidGbp,paidEur,outstandingGbp,outstandingEur};
 }
 
-function renderInvoiceTable(invoices){
+function renderInvoiceTable(order,invoices){
   if(!invoices.length)return `<p class="empty" style="padding:10px">No invoices uploaded yet.</p>`;
   return `<table class="invoice-table">
     <thead><tr><th>Invoice</th><th>Doc</th><th class="num">Amount</th><th>Due</th><th>Status</th><th>Rec</th><th>Sent</th><th>Paid</th></tr></thead>
-    <tbody>${invoices.map(renderInvoiceRow).join("")}</tbody>
+    <tbody>${invoices.map(invoice=>renderInvoiceRow(order,invoice)).join("")}</tbody>
   </table>`;
 }
 
-function renderInvoiceRow(invoice){
+function renderInvoiceRow(order,invoice){
   const fileLink=invoice.fileUrl?`<a class="file-icon" href="${attr(invoice.fileUrl)}" download="${attr(invoice.fileName||"invoice")}" target="_blank" title="${attr(invoice.fileName||"Open invoice")}" aria-label="Open invoice"></a>`:`<span class="file-icon empty" title="No file attached" aria-label="No file attached"></span>`;
+  const code=String(invoice.currency||"GBP").toUpperCase();
+  const equivalent=code==="EUR"?money.format(invoiceAmountGbp(invoice,order)):eurMoney.format(invoiceAmountEur(invoice,order));
   return `<tr>
     <td><strong title="${attr(invoice.invoiceType||"")}">${escapeHtml(invoice.invoiceNumber||invoice.invoiceType||"Invoice")}</strong><div class="invoice-row-actions"><button type="button" class="mini-btn" onclick="editInvoice('${attr(invoice.id)}')">Edit</button><button type="button" class="mini-btn danger" onclick="deleteInvoice('${attr(invoice.id)}')">Delete</button></div></td>
     <td>${fileLink}</td>
-    <td class="num">${money.format(Number(invoice.amount||0))} ${escapeHtml(invoice.currency||"")}</td>
+    <td class="num">${formatCurrency(Number(invoice.amount||0),code)}<span class="money-sub">${equivalent}</span></td>
     <td>${formatDate(invoice.dueDate)||"-"}</td>
     <td><span class="badge ${badgeClass(invoice.status)}">${escapeHtml(invoice.status||"Awaiting FD")}</span></td>
     <td><input type="checkbox" ${invoice.isReceived?"checked":""} onchange="toggleInvoice('${attr(invoice.id)}','isReceived',this.checked)" aria-label="Received"></td>
@@ -480,6 +577,45 @@ function orderActionButtons(order){
     : order.canArchive?`<button type="button" class="btn" onclick="setArchiveSelected(true)">Archive</button>`:"";
   const deleteButton=order.canDelete?`<button type="button" class="btn" onclick="deleteSelectedOrder()">Delete</button>`:"";
   return `${archiveButton}${deleteButton}`;
+}
+
+function suggestedNextAction(workflow,order){
+  const approval=workflow?.approvalStatus||"Not requested";
+  const payment=workflow?.paymentStatus||"Not due";
+  const intake=workflow?.intakeStatus||"Not confirmed";
+  if(String(order?.status||"").toLowerCase()==="cancelled")return {owner:"Buyer",action:"Review cancelled order"};
+  if(approval==="Pending director approval")return {owner:"Buying Director",action:"Review order for approval"};
+  if(approval==="Changes requested")return {owner:"Buyer",action:"Update order and resubmit"};
+  if(approval==="Rejected")return {owner:"Buyer",action:"Review rejected order"};
+  if(approval!=="Approved")return {owner:"Buyer",action:"Prepare or submit order"};
+  if(payment==="Awaiting invoice")return {owner:"Buyer",action:"Upload supplier invoice for FD"};
+  if(payment==="Ready to pay")return {owner:"FD / Finance",action:"Pay supplier invoice"};
+  if(payment==="Part paid")return {owner:"FD / Finance",action:"Pay remaining supplier invoice"};
+  if(payment==="Overdue")return {owner:"FD / Finance",action:"Resolve overdue supplier payment"};
+  if(payment!=="Paid")return {owner:"Buyer",action:"Confirm invoice and payment plan"};
+  if(intake==="Received")return {owner:"Merchandising",action:"Archive completed order"};
+  if(intake==="Part received")return {owner:"Merchandising",action:"Chase remaining intake"};
+  if(intake==="Shipped")return {owner:"Merchandising",action:"Track shipment to warehouse"};
+  if(intake==="Delayed")return {owner:"Merchandising",action:"Resolve delayed intake"};
+  if(intake==="In production")return {owner:"Merchandising",action:"Track supplier production and ETA"};
+  if(intake==="Confirmed")return {owner:"Merchandising",action:"Track confirmed intake date"};
+  return {owner:"Merchandising",action:"Track intake date"};
+}
+
+function workflowFromControls(){
+  const current=state.selected?.workflow||{};
+  return {
+    ...current,
+    approvalStatus:val("approval-status")||current.approvalStatus,
+    paymentStatus:val("payment-status")||current.paymentStatus,
+    intakeStatus:val("intake-status")||current.intakeStatus
+  };
+}
+
+function syncNextActionFromStatuses(){
+  const suggestion=suggestedNextAction(workflowFromControls(),state.selected);
+  setVal("next-owner",suggestion.owner);
+  setVal("next-action",suggestion.action);
 }
 
 function renderDetail(){
@@ -503,7 +639,7 @@ function renderDetail(){
         </div>
       </div>
       <div class="summary-grid">
-        ${summaryItem("Value",money.format(order.total||0))}
+        ${summaryItem("Value",moneyPairFromGbp(orderTotalGbp(order),order))}
         ${summaryItem("Order date",formatDate(order.orderDate))}
         ${summaryItem("Required date",formatDate(order.requiredDate))}
         ${summaryItem("Payment terms",order.paymentTerms)}
@@ -566,6 +702,7 @@ function renderDetail(){
     </section>
     ${renderLineTable(order)}`;
   el("actor-name").addEventListener("input",()=>localStorage.setItem("ordersActorName",val("actor-name")));
+  ["approval-status","payment-status","intake-status"].forEach(id=>el(id)?.addEventListener("change",syncNextActionFromStatuses));
 }
 
 function today(){
@@ -667,7 +804,7 @@ async function saveInvoice(){
     invoiceDate:val("invoice-date"),
     dueDate:val("invoice-due"),
     amount:val("invoice-amount"),
-    currency:state.selected?.currency||"GBP",
+    currency:val("invoice-currency")||state.selected?.currency||"GBP",
     isReceived:Boolean(el("invoice-received")?.checked)||Boolean(file),
     sentToFd,
     status:paid?"Paid":sentToFd?"Sent to FD":val("invoice-status"),

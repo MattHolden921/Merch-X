@@ -3474,6 +3474,29 @@ function orderStatusFromWorkflow(workflow) {
   return "";
 }
 
+function nextActionForWorkflow(order, workflow) {
+  const approvalStatus = workflow?.approvalStatus || "Not requested";
+  const paymentStatus = workflow?.paymentStatus || "Not due";
+  const intakeStatus = workflow?.intakeStatus || "Not confirmed";
+  if (String(order?.status || "").toLowerCase() === "cancelled") return { nextActionOwner: "Buyer", nextAction: "Review cancelled order" };
+  if (approvalStatus === "Pending director approval") return { nextActionOwner: "Buying Director", nextAction: "Review order for approval" };
+  if (approvalStatus === "Changes requested") return { nextActionOwner: "Buyer", nextAction: "Update order and resubmit" };
+  if (approvalStatus === "Rejected") return { nextActionOwner: "Buyer", nextAction: "Review rejected order" };
+  if (approvalStatus !== "Approved") return { nextActionOwner: "Buyer", nextAction: "Prepare or submit order" };
+  if (paymentStatus === "Awaiting invoice") return { nextActionOwner: "Buyer", nextAction: "Upload supplier invoice for FD" };
+  if (paymentStatus === "Ready to pay") return { nextActionOwner: "FD / Finance", nextAction: "Pay supplier invoice" };
+  if (paymentStatus === "Part paid") return { nextActionOwner: "FD / Finance", nextAction: "Pay remaining supplier invoice" };
+  if (paymentStatus === "Overdue") return { nextActionOwner: "FD / Finance", nextAction: "Resolve overdue supplier payment" };
+  if (paymentStatus !== "Paid") return { nextActionOwner: "Buyer", nextAction: "Confirm invoice and payment plan" };
+  if (intakeStatus === "Received") return { nextActionOwner: "Merchandising", nextAction: "Archive completed order" };
+  if (intakeStatus === "Part received") return { nextActionOwner: "Merchandising", nextAction: "Chase remaining intake" };
+  if (intakeStatus === "Shipped") return { nextActionOwner: "Merchandising", nextAction: "Track shipment to warehouse" };
+  if (intakeStatus === "Delayed") return { nextActionOwner: "Merchandising", nextAction: "Resolve delayed intake" };
+  if (intakeStatus === "In production") return { nextActionOwner: "Merchandising", nextAction: "Track supplier production and ETA" };
+  if (intakeStatus === "Confirmed") return { nextActionOwner: "Merchandising", nextAction: "Track confirmed intake date" };
+  return { nextActionOwner: "Merchandising", nextAction: "Track intake date" };
+}
+
 function defaultWorkflowForOrder(order) {
   const status = String(order?.status || "").toLowerCase();
   const isApproved = status === "approved";
@@ -3569,6 +3592,8 @@ function publicManagedOrder(order, workflowRow) {
   const lines = order.lines || [];
   const units = lines.reduce((total, line) => total + Number(line.quantity || 0), 0);
   const categories = [...new Set(lines.map(line => line.category).filter(Boolean))];
+  const fxRate = Number(order.fxRate || order.totals?.fxRate || 0);
+  const total = Number(order.totals?.grand || 0);
   return {
     id: String(order.id || ""),
     orderNumber: order.orderNumber || "",
@@ -3582,8 +3607,11 @@ function publicManagedOrder(order, workflowRow) {
     archivedAt: order.archivedAt || "",
     compositeStatus: orderCompositeStatus(order, workflow),
     season: order.season || "",
-    total: Number(order.totals?.grand || 0),
+    total,
+    totalGbp: total,
+    totalEur: fxRate ? total / fxRate : 0,
     subtotal: Number(order.totals?.subtotal || 0),
+    fxRate,
     currency: order.terms?.currency || "GBP",
     paymentTerms: order.terms?.payment || "",
     requiredDate: order.delivery?.requiredDate || "",
@@ -3592,7 +3620,7 @@ function publicManagedOrder(order, workflowRow) {
     lineCount: lines.length,
     units,
     categories,
-    invoices: invoiceSummary(order.id),
+    invoices: invoiceSummary(order),
     canDelete: canDeleteOrder(order),
     canArchive: canArchiveOrder(order),
     workflow,
@@ -3629,7 +3657,16 @@ function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") 
   for (const key of Object.keys(workflowFields)) {
     if (Object.prototype.hasOwnProperty.call(patch || {}, key)) clean[key] = normalizeWorkflowValue(key, patch[key]);
   }
-  const next = { ...current, ...clean };
+  let next = { ...current, ...clean };
+  const shouldDeriveNextAction = section !== "next action"
+    && !Object.prototype.hasOwnProperty.call(clean, "nextActionOwner")
+    && !Object.prototype.hasOwnProperty.call(clean, "nextAction");
+  if (shouldDeriveNextAction) {
+    const actionPatch = nextActionForWorkflow(order, next);
+    next = { ...next, ...actionPatch };
+    clean.nextActionOwner = actionPatch.nextActionOwner;
+    clean.nextAction = actionPatch.nextAction;
+  }
   db.prepare(`
     INSERT INTO order_workflows (
       order_id, approval_status, approval_by, approval_decided_at, approval_notes,
@@ -3783,20 +3820,66 @@ function readOrderInvoices(orderId, includeFiles = true) {
   `).all(String(orderId)).map(row => invoiceFromRow(row, includeFiles));
 }
 
-function invoiceSummary(orderId) {
+function orderTotalGbp(order) {
+  return Number(order?.totals?.grand || 0);
+}
+
+function orderFxRate(order) {
+  return Number(order?.fxRate || order?.totals?.fxRate || 0);
+}
+
+function amountToGbp(amount, currency, order) {
+  const value = Number(amount || 0);
+  const code = String(currency || "GBP").toUpperCase();
+  const rate = orderFxRate(order);
+  if (code === "EUR" && rate) return value * rate;
+  return value;
+}
+
+function amountToEur(amount, currency, order) {
+  const value = Number(amount || 0);
+  const code = String(currency || "GBP").toUpperCase();
+  const rate = orderFxRate(order);
+  if (code === "EUR") return value;
+  return rate ? value / rate : 0;
+}
+
+function resolveOrderForInvoiceSummary(orderOrId) {
+  if (orderOrId && typeof orderOrId === "object") return orderOrId;
+  const orderId = String(orderOrId || "");
+  if (!orderId) return null;
+  return readOrderDb().orders.find(order => String(order.id) === orderId) || null;
+}
+
+function invoiceSummary(orderOrId) {
+  const order = resolveOrderForInvoiceSummary(orderOrId);
+  const orderId = String(order?.id || orderOrId || "");
   const invoices = readOrderInvoices(orderId, false);
-  const totalDue = invoices.reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+  const totalDue = invoices.reduce((total, invoice) => total + amountToGbp(invoice.amount, invoice.currency, order), 0);
+  const totalDueEur = invoices.reduce((total, invoice) => total + amountToEur(invoice.amount, invoice.currency, order), 0);
   const totalPaid = invoices
     .filter(invoice => invoice.status === "Paid")
-    .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+    .reduce((total, invoice) => total + amountToGbp(invoice.amount, invoice.currency, order), 0);
+  const totalPaidEur = invoices
+    .filter(invoice => invoice.status === "Paid")
+    .reduce((total, invoice) => total + amountToEur(invoice.amount, invoice.currency, order), 0);
+  const orderTotal = orderTotalGbp(order);
+  const orderTotalEur = amountToEur(orderTotal, "GBP", order);
+  const outstanding = Math.max(0, (orderTotal || totalDue) - totalPaid);
+  const outstandingEur = Math.max(0, (orderTotalEur || totalDueEur) - totalPaidEur);
   return {
     count: invoices.length,
     sentToFd: invoices.filter(invoice => invoice.sentToFd).length,
     received: invoices.filter(invoice => invoice.isReceived).length,
     paid: invoices.filter(invoice => invoice.status === "Paid").length,
+    orderTotal,
+    orderTotalEur,
     totalDue,
+    totalDueEur,
     totalPaid,
-    outstanding: Math.max(0, totalDue - totalPaid)
+    totalPaidEur,
+    outstanding,
+    outstandingEur
   };
 }
 
@@ -3884,14 +3967,14 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "") {
     return;
   }
 
-  const totals = invoiceSummary(order.id);
-  const allPaid = totals.paid === totals.count;
-  const somePaid = totals.paid > 0;
+  const totals = invoiceSummary(order);
+  const allPaid = totals.totalPaid >= Math.max(0, totals.orderTotal - 0.01) && totals.orderTotal > 0;
+  const somePaid = totals.totalPaid > 0;
   const anySent = totals.sentToFd > 0;
   if (allPaid) {
     writeOrderWorkflow(order, {
       paymentStatus: "Paid",
-      paymentAmount: totals.totalDue,
+      paymentAmount: totals.orderTotal || totals.totalDue,
       paymentPaidDate: todayIsoDate(),
       nextActionOwner: "Merchandising",
       nextAction: "Track intake date"
@@ -3900,7 +3983,7 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "") {
   } else if (somePaid) {
     writeOrderWorkflow(order, {
       paymentStatus: "Part paid",
-      paymentAmount: totals.totalDue,
+      paymentAmount: totals.orderTotal || totals.totalDue,
       paymentPaidDate: todayIsoDate(),
       nextActionOwner: "FD / Finance",
       nextAction: "Pay remaining supplier invoice"
@@ -3909,7 +3992,7 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "") {
   } else if (anySent) {
     writeOrderWorkflow(order, {
       paymentStatus: "Ready to pay",
-      paymentAmount: totals.totalDue,
+      paymentAmount: totals.orderTotal || totals.totalDue,
       nextActionOwner: "FD / Finance",
       nextAction: "Pay supplier invoice"
     }, actorName, "invoice");
@@ -3917,7 +4000,7 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "") {
   } else if (["Paid", "Part paid", "Ready to pay", "Overdue"].includes(current.paymentStatus)) {
     writeOrderWorkflow(order, {
       paymentStatus: "Awaiting invoice",
-      paymentAmount: totals.totalDue,
+      paymentAmount: totals.orderTotal || totals.totalDue,
       paymentPaidDate: "",
       nextActionOwner: "Buyer",
       nextAction: "Send invoice to FD"
