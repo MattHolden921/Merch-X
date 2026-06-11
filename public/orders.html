@@ -588,7 +588,7 @@ function suggestedNextAction(workflow,order){
   if(approval==="Changes requested")return {owner:"Buyer",action:"Update order and resubmit"};
   if(approval==="Rejected")return {owner:"Buyer",action:"Review rejected order"};
   if(approval!=="Approved")return {owner:"Buyer",action:"Prepare or submit order"};
-  if(payment==="Awaiting invoice")return {owner:"Buyer",action:"Upload supplier invoice for FD"};
+  if(payment==="Awaiting invoice")return {owner:"Buyer",action:"Awaiting supplier invoice"};
   if(payment==="Ready to pay")return {owner:"FD / Finance",action:"Pay supplier invoice"};
   if(payment==="Part paid")return {owner:"FD / Finance",action:"Pay remaining supplier invoice"};
   if(payment==="Overdue")return {owner:"FD / Finance",action:"Resolve overdue supplier payment"};
@@ -604,15 +604,19 @@ function suggestedNextAction(workflow,order){
 
 function workflowFromControls(){
   const current=state.selected?.workflow||{};
+  const approvalStatus=val("approval-status")||current.approvalStatus;
+  const currentPayment=val("payment-status")||current.paymentStatus;
+  const paymentStatus=approvalStatus==="Approved"&&currentPayment==="Not due"?"Awaiting invoice":currentPayment;
   return {
     ...current,
-    approvalStatus:val("approval-status")||current.approvalStatus,
-    paymentStatus:val("payment-status")||current.paymentStatus,
+    approvalStatus,
+    paymentStatus,
     intakeStatus:val("intake-status")||current.intakeStatus
   };
 }
 
 function syncNextActionFromStatuses(){
+  if(val("approval-status")==="Approved"&&val("payment-status")==="Not due")setVal("payment-status","Awaiting invoice");
   const suggestion=suggestedNextAction(workflowFromControls(),state.selected);
   setVal("next-owner",suggestion.owner);
   setVal("next-action",suggestion.action);
@@ -733,12 +737,14 @@ async function saveNextAction(){
 
 async function saveApproval(){
   const status=val("approval-status");
-  await saveWorkflow("approval",{
+  const patch={
     approvalStatus:status,
     approvalBy:val("approval-by"),
     approvalDecidedAt:val("approval-date")||(["Approved","Changes requested","Rejected"].includes(status)?today():""),
     approvalNotes:val("approval-notes")
-  }).catch(showError);
+  };
+  if(status==="Approved"&&val("payment-status")==="Not due")patch.paymentStatus="Awaiting invoice";
+  await saveWorkflow("approval",patch).catch(showError);
 }
 
 async function savePayment(){

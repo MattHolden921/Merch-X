@@ -3411,7 +3411,7 @@ function workflowPatchForOrderStatus(status, currentWorkflow = {}) {
       approvalDecidedAt: currentWorkflow.approvalDecidedAt || todayIsoDate(),
       paymentStatus: ["Paid", "Part paid", "Ready to pay", "Overdue"].includes(currentWorkflow.paymentStatus) ? currentWorkflow.paymentStatus : "Awaiting invoice",
       nextActionOwner: "Buyer",
-      nextAction: "Upload supplier invoice for FD"
+      nextAction: "Awaiting supplier invoice"
     };
   }
   if (normalized === "changes requested") {
@@ -3483,7 +3483,7 @@ function nextActionForWorkflow(order, workflow) {
   if (approvalStatus === "Changes requested") return { nextActionOwner: "Buyer", nextAction: "Update order and resubmit" };
   if (approvalStatus === "Rejected") return { nextActionOwner: "Buyer", nextAction: "Review rejected order" };
   if (approvalStatus !== "Approved") return { nextActionOwner: "Buyer", nextAction: "Prepare or submit order" };
-  if (paymentStatus === "Awaiting invoice") return { nextActionOwner: "Buyer", nextAction: "Upload supplier invoice for FD" };
+  if (paymentStatus === "Awaiting invoice") return { nextActionOwner: "Buyer", nextAction: "Awaiting supplier invoice" };
   if (paymentStatus === "Ready to pay") return { nextActionOwner: "FD / Finance", nextAction: "Pay supplier invoice" };
   if (paymentStatus === "Part paid") return { nextActionOwner: "FD / Finance", nextAction: "Pay remaining supplier invoice" };
   if (paymentStatus === "Overdue") return { nextActionOwner: "FD / Finance", nextAction: "Resolve overdue supplier payment" };
@@ -3522,8 +3522,8 @@ function defaultWorkflowForOrder(order) {
     intakeActualDate: "",
     intakeReference: "",
     intakeNotes: "",
-    nextActionOwner: isPending ? "Buying Director" : isApproved ? "FD / Finance" : "Buyer",
-    nextAction: isPending ? "Review order for approval" : isApproved ? "Confirm invoice and payment plan" : "Prepare or submit order",
+    nextActionOwner: isPending ? "Buying Director" : isApproved ? "Buyer" : "Buyer",
+    nextAction: isPending ? "Review order for approval" : isApproved ? "Awaiting supplier invoice" : "Prepare or submit order",
     data: {},
     updatedAt: order?.savedAt || new Date().toISOString()
   };
@@ -3656,6 +3656,13 @@ function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") 
   const clean = {};
   for (const key of Object.keys(workflowFields)) {
     if (Object.prototype.hasOwnProperty.call(patch || {}, key)) clean[key] = normalizeWorkflowValue(key, patch[key]);
+  }
+  if (section === "approval"
+    && clean.approvalStatus === "Approved"
+    && !Object.prototype.hasOwnProperty.call(clean, "paymentStatus")
+    && !["Paid", "Part paid", "Ready to pay", "Overdue"].includes(current.paymentStatus)) {
+    clean.paymentStatus = "Awaiting invoice";
+    clean.paymentPaidDate = "";
   }
   let next = { ...current, ...clean };
   const shouldDeriveNextAction = section !== "next action"
@@ -3960,7 +3967,7 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "") {
         paymentAmount: Number(order.totals?.grand || 0),
         paymentPaidDate: "",
         nextActionOwner: order.status === "Approved" ? "Buyer" : current.nextActionOwner,
-        nextAction: order.status === "Approved" ? "Upload supplier invoice for FD" : current.nextAction
+        nextAction: order.status === "Approved" ? "Awaiting supplier invoice" : current.nextAction
       }, actorName, "invoice");
       if (order.status === "Paid" || order.status === "Payment pending") updateStoredOrderStatus(order.id, "Approved");
     }
@@ -3971,6 +3978,7 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "") {
   const allPaid = totals.totalPaid >= Math.max(0, totals.orderTotal - 0.01) && totals.orderTotal > 0;
   const somePaid = totals.totalPaid > 0;
   const anySent = totals.sentToFd > 0;
+  const anyReceived = totals.received > 0;
   if (allPaid) {
     writeOrderWorkflow(order, {
       paymentStatus: "Paid",
@@ -3989,12 +3997,12 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "") {
       nextAction: "Pay remaining supplier invoice"
     }, actorName, "invoice");
     updateStoredOrderStatus(order.id, "Payment pending");
-  } else if (anySent) {
+  } else if (anyReceived || anySent) {
     writeOrderWorkflow(order, {
       paymentStatus: "Ready to pay",
       paymentAmount: totals.orderTotal || totals.totalDue,
       nextActionOwner: "FD / Finance",
-      nextAction: "Pay supplier invoice"
+      nextAction: anySent ? "Pay supplier invoice" : "Review supplier invoice for payment"
     }, actorName, "invoice");
     updateStoredOrderStatus(order.id, "Payment pending");
   } else if (["Paid", "Part paid", "Ready to pay", "Overdue"].includes(current.paymentStatus)) {
