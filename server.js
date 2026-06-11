@@ -2895,6 +2895,44 @@ function openOrderSqliteDb() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS weekly_actions (
+      id TEXT PRIMARY KEY,
+      dedupe_key TEXT NOT NULL,
+      action_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      product_key TEXT,
+      product_title TEXT NOT NULL,
+      sku TEXT,
+      season TEXT,
+      category TEXT,
+      owner TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Open',
+      priority TEXT NOT NULL DEFAULT 'Medium',
+      due_date TEXT,
+      source_type TEXT NOT NULL DEFAULT 'bestsellers',
+      source_period_id TEXT,
+      source_start_date TEXT,
+      source_end_date TEXT,
+      source_label TEXT,
+      rationale TEXT,
+      metrics_json TEXT,
+      data TEXT,
+      generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS weekly_action_events (
+      id TEXT PRIMARY KEY,
+      action_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      actor_name TEXT,
+      message TEXT NOT NULL,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_gid ON collection_reorder_audit(collection_gid);
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_applied ON collection_reorder_audit(applied_at);
     CREATE INDEX IF NOT EXISTS idx_issued_skus_issued_at ON issued_skus(issued_at);
@@ -2910,6 +2948,10 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_report_stock_snapshots_status ON report_stock_snapshots(product_status, snapshot_at);
     CREATE INDEX IF NOT EXISTS idx_report_sync_jobs_status ON report_sync_jobs(report_type, status, created_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_report_snapshots_cache ON report_snapshots(report_type, cache_key);
+    CREATE INDEX IF NOT EXISTS idx_weekly_actions_status ON weekly_actions(status, owner, priority, due_date);
+    CREATE INDEX IF NOT EXISTS idx_weekly_actions_dedupe ON weekly_actions(dedupe_key, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_weekly_actions_source ON weekly_actions(source_period_id, action_type);
+    CREATE INDEX IF NOT EXISTS idx_weekly_action_events_action ON weekly_action_events(action_id, created_at);
   `);
   const orderColumns = orderSqliteDb.prepare("PRAGMA table_info(orders)").all().map(column => column.name);
   if (!orderColumns.includes("archived_at")) {
@@ -3897,6 +3939,532 @@ function deleteOrderInvoice(order, body) {
   return readOrderInvoices(order.id);
 }
 
+const weeklyActionStatuses = ["Open", "In progress", "Snoozed", "Blocked", "Done"];
+const weeklyActionOwners = ["Buyer", "Merchandising"];
+const weeklyActionPriorities = ["High", "Medium", "Low"];
+
+function addDaysIso(dateValue, days) {
+  const base = dateValue ? new Date(`${dateValue}T00:00:00.000Z`) : new Date();
+  if (!Number.isFinite(base.getTime())) return "";
+  base.setUTCDate(base.getUTCDate() + Number(days || 0));
+  return isoDateOnly(base);
+}
+
+function normalizeWeeklyActionStatus(value) {
+  const found = weeklyActionStatuses.find(status => status.toLowerCase() === String(value || "").trim().toLowerCase());
+  return found || "Open";
+}
+
+function normalizeWeeklyActionOwner(value, fallback = "Merchandising") {
+  const found = weeklyActionOwners.find(owner => owner.toLowerCase() === String(value || "").trim().toLowerCase());
+  return found || fallback;
+}
+
+function normalizeWeeklyActionPriority(value, fallback = "Medium") {
+  const found = weeklyActionPriorities.find(priority => priority.toLowerCase() === String(value || "").trim().toLowerCase());
+  return found || fallback;
+}
+
+function weeklyActionTypeLabel(type) {
+  return ({
+    reorder: "Reorder risk",
+    markdown: "Markdown risk",
+    feature: "Feature winner",
+    watch: "Watch item"
+  })[type] || type || "Action";
+}
+
+function weeklyActionFromRow(row, events = null) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    dedupeKey: row.dedupe_key,
+    actionType: row.action_type,
+    actionTypeLabel: weeklyActionTypeLabel(row.action_type),
+    title: row.title,
+    productKey: row.product_key || "",
+    productTitle: row.product_title || "",
+    sku: row.sku || "",
+    season: row.season || "",
+    category: row.category || "",
+    owner: row.owner || "Merchandising",
+    status: row.status || "Open",
+    priority: row.priority || "Medium",
+    dueDate: row.due_date || "",
+    sourceType: row.source_type || "bestsellers",
+    sourcePeriodId: row.source_period_id || "",
+    sourceStartDate: row.source_start_date || "",
+    sourceEndDate: row.source_end_date || "",
+    sourceLabel: row.source_label || "",
+    rationale: row.rationale || "",
+    metrics: parseJson(row.metrics_json, {}),
+    data: parseJson(row.data, {}),
+    generatedAt: row.generated_at || "",
+    completedAt: row.completed_at || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
+    events: events || undefined
+  };
+}
+
+function readWeeklyActionEvents(actionId, limit = 60) {
+  return openOrderSqliteDb().prepare(`
+    SELECT id, action_id AS actionId, event_type AS eventType, actor_name AS actorName, message, data, created_at AS createdAt
+    FROM weekly_action_events
+    WHERE action_id = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(String(actionId), limit).map(row => ({ ...row, data: parseJson(row.data, {}) }));
+}
+
+function recordWeeklyActionEvent(actionId, eventType, actorName, message, data = {}) {
+  openOrderSqliteDb().prepare(`
+    INSERT INTO weekly_action_events (id, action_id, event_type, actor_name, message, data, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `).run(crypto.randomUUID(), String(actionId), eventType || "update", actorName || "", message || "Updated", JSON.stringify(data || {}));
+}
+
+function latestBestsellersPeriodRow() {
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM report_periods
+    WHERE report_type = 'bestsellers'
+      AND source_type = 'shopify_api'
+      AND status = 'ready'
+    ORDER BY start_date DESC, end_date DESC
+    LIMIT 1
+  `).get();
+}
+
+function weeklyActionsPeriodFromRequest(body = {}) {
+  const sourceType = String(body.sourceType || "shopify_api").trim() || "shopify_api";
+  if (body.periodId) {
+    const row = openOrderSqliteDb().prepare(`
+      SELECT *
+      FROM report_periods
+      WHERE id = ?
+        AND report_type = 'bestsellers'
+    `).get(String(body.periodId));
+    if (!row) throw new Error("Saved bestsellers period not found.");
+    return row;
+  }
+  if (validReportDate(body.startDate) && validReportDate(body.endDate)) {
+    const row = bestsellersPeriodRow(body.startDate, body.endDate, sourceType);
+    if (!row) throw new Error("No saved bestsellers report exists for that period.");
+    return row;
+  }
+  const latest = latestBestsellersPeriodRow();
+  if (!latest) throw new Error("No saved Shopify bestsellers reports exist yet. Sync Shopify from the Bestsellers report first.");
+  return latest;
+}
+
+function stockValue(product) {
+  return Math.max(0, Number(product.stock || 0)) * Math.max(0, Number(product.rrp || product.avgP || 0));
+}
+
+function productMetricSnapshot(product) {
+  return {
+    revenue: Number(product.rev || 0),
+    units: Number(product.units || 0),
+    stock: product.stock == null ? null : Number(product.stock || 0),
+    coverWks: product.coverWks == null ? null : Number(product.coverWks || 0),
+    forecastBuy: product.forecastBuy == null ? null : Number(product.forecastBuy || 0),
+    gpPct: Number(product.gpPct || 0),
+    grossProfit: Number(product.gp || 0),
+    avgPrice: Number(product.avgP || product.rrp || 0),
+    price: product.rrp == null ? null : Number(product.rrp || 0),
+    compareAtPrice: product.compareAtPrice == null ? null : Number(product.compareAtPrice || 0),
+    isMarkedDown: Boolean(product.isMarkedDown || (product.compareAtPrice && product.rrp && Number(product.compareAtPrice) > Number(product.rrp))),
+    stockValue: stockValue(product),
+    gaViews: Number(product.gaViews || 0),
+    gaAdds: Number(product.gaAdds || 0)
+  };
+}
+
+function weeklyCandidate(type, product, period, priority, rationale, title) {
+  const productKey = String(product.productKey || product.id || product.legacyResourceId || product.sku || product.name || product.title || "");
+  const metrics = productMetricSnapshot(product);
+  return {
+    dedupeKey: `${type}:${productKey || reportHash(product.name || product.title)}`,
+    actionType: type,
+    title,
+    productKey,
+    productTitle: product.name || product.title || "",
+    sku: product.sku || (product.skus || [])[0] || "",
+    season: product.season || "",
+    category: product.cat || product.productType || "",
+    owner: type === "reorder" ? "Buyer" : "Merchandising",
+    status: "Open",
+    priority,
+    dueDate: addDaysIso("", 7),
+    sourcePeriodId: period.id,
+    sourceStartDate: period.startDate,
+    sourceEndDate: period.endDate,
+    sourceLabel: period.label,
+    rationale,
+    metrics,
+    data: {
+      sourceUrl: `bestsellers.html?startDate=${encodeURIComponent(period.startDate)}&endDate=${encodeURIComponent(period.endDate)}`,
+      imageUrl: product.img || product.imageUrl || "",
+      productStatus: product.status || "",
+      isMarkedDown: metrics.isMarkedDown,
+      price: metrics.price,
+      compareAtPrice: metrics.compareAtPrice,
+      generatedRule: type
+    }
+  };
+}
+
+function generateWeeklyActionCandidates(payload) {
+  const period = payload.period || payload.report?.period;
+  const report = payload.report || {};
+  const products = (report.products || []).filter(product => product && (product.name || product.title));
+  const byRevenue = [...products].sort((a, b) => Number(b.rev || 0) - Number(a.rev || 0));
+  const topRevenueSet = new Set(byRevenue.slice(0, Math.max(8, Math.ceil(byRevenue.length * 0.08))).map(product => product.productKey || product.id || product.name));
+  const reorderCandidates = [];
+  const markdownCandidates = [];
+  const featureCandidates = [];
+  const watchCandidates = [];
+
+  for (const product of products) {
+    const units = Number(product.units || 0);
+    const stock = product.stock == null ? null : Number(product.stock || 0);
+    const coverWks = product.coverWks == null ? null : Number(product.coverWks || 0);
+    const forecastBuy = product.forecastBuy == null ? null : Number(product.forecastBuy || 0);
+    if (units >= 2 && (forecastBuy > 0 || (coverWks != null && coverWks <= 4))) {
+      const priority = coverWks != null && coverWks <= 2 || forecastBuy >= 20 ? "High" : "Medium";
+      reorderCandidates.push(weeklyCandidate(
+        "reorder",
+        product,
+        period,
+        priority,
+        `Sold ${Math.round(units).toLocaleString("en-GB")} units with ${stock == null ? "unknown" : Math.round(stock).toLocaleString("en-GB")} in stock${coverWks == null ? "" : `, ${coverWks.toFixed(1)} weeks cover`}. Forecast buy is ${Math.round(forecastBuy || 0).toLocaleString("en-GB")}.`,
+        `Review reorder for ${product.name || product.title}`
+      ));
+    }
+  }
+
+  const markdownPool = products.filter(product => {
+    const units = Number(product.units || 0);
+    const stock = Number(product.stock || 0);
+    const coverWks = product.coverWks == null ? null : Number(product.coverWks || 0);
+    return stock > 0 && (units === 0 || (coverWks != null && coverWks >= 12 && units <= 2));
+  }).sort((a, b) => stockValue(b) - stockValue(a));
+  const highMarkdownCut = markdownPool.length ? Math.max(stockValue(markdownPool[Math.min(markdownPool.length - 1, 9)]), 1000) : 1000;
+  for (const product of markdownPool.slice(0, 40)) {
+    const units = Number(product.units || 0);
+    const stock = Number(product.stock || 0);
+    const value = stockValue(product);
+    const coverText = product.coverWks == null ? "" : `, ${Number(product.coverWks || 0).toFixed(1)} weeks cover`;
+    const markedDown = Boolean(product.isMarkedDown || (product.compareAtPrice && product.rrp && Number(product.compareAtPrice) > Number(product.rrp)));
+    const markdownState = markedDown ? " Already marked down." : " Not currently marked down.";
+    markdownCandidates.push(weeklyCandidate(
+      "markdown",
+      product,
+      period,
+      value >= highMarkdownCut || stock >= 30 ? "High" : "Medium",
+      units === 0
+        ? `Has ${Math.round(stock).toLocaleString("en-GB")} units in stock and no sales in the saved report period.${markdownState}`
+        : `Weak demand: ${Math.round(units).toLocaleString("en-GB")} units sold with ${Math.round(stock).toLocaleString("en-GB")} units in stock${coverText}.${markdownState}`,
+      markedDown ? `Review existing markdown for ${product.name || product.title}` : `Review markdown or launch action for ${product.name || product.title}`
+    ));
+  }
+
+  for (const product of byRevenue.slice(0, 30)) {
+    const units = Number(product.units || 0);
+    const stock = Number(product.stock || 0);
+    const gpPct = Number(product.gpPct || 0);
+    const hasGp = Number(product.gp || 0) !== 0 || product.cost != null;
+    const key = product.productKey || product.id || product.name;
+    if (!topRevenueSet.has(key) || units < 3 || stock < 5 || (hasGp && gpPct < 45)) continue;
+    featureCandidates.push(weeklyCandidate(
+      "feature",
+      product,
+      period,
+      stock >= units * 2 ? "High" : "Medium",
+      `Top seller with ${Math.round(units).toLocaleString("en-GB")} units sold, ${Math.round(stock).toLocaleString("en-GB")} units in stock${hasGp ? `, and ${Math.round(gpPct)}% GP` : ""}.`,
+      `Feature ${product.name || product.title}`
+    ));
+  }
+
+  const watchProducts = products.filter(product => {
+    const units = Number(product.units || 0);
+    const stock = Number(product.stock || 0);
+    const coverWks = product.coverWks == null ? null : Number(product.coverWks || 0);
+    const missingCost = product.cost == null && units >= 2;
+    const mediumCover = units >= 2 && coverWks != null && coverWks > 4 && coverWks <= 8;
+    const inconsistent = units > 0 && stock <= 0 && Number(product.forecastBuy || 0) <= 0;
+    return stock >= 0 && (missingCost || mediumCover || inconsistent);
+  }).sort((a, b) => Number(b.rev || 0) - Number(a.rev || 0));
+  for (const product of watchProducts.slice(0, 30)) {
+    const reasons = [];
+    if (product.cost == null && Number(product.units || 0) >= 2) reasons.push("missing cost");
+    if (product.coverWks != null && Number(product.coverWks) > 4 && Number(product.coverWks) <= 8) reasons.push(`${Number(product.coverWks).toFixed(1)} weeks cover`);
+    if (Number(product.units || 0) > 0 && Number(product.stock || 0) <= 0) reasons.push("sales recorded but no stock showing");
+    watchCandidates.push(weeklyCandidate(
+      "watch",
+      product,
+      period,
+      "Low",
+      `Needs review: ${reasons.join(", ") || "mixed trading signal"}.`,
+      `Watch ${product.name || product.title}`
+    ));
+  }
+
+  const seen = new Set();
+  const orderedCandidates = [
+    ...reorderCandidates
+      .sort((a, b) => (a.priority === "High" ? -1 : 1) - (b.priority === "High" ? -1 : 1) || Number(b.metrics.forecastBuy || 0) - Number(a.metrics.forecastBuy || 0))
+      .slice(0, 40),
+    ...markdownCandidates
+      .sort((a, b) => (a.priority === "High" ? -1 : 1) - (b.priority === "High" ? -1 : 1) || Number(b.metrics.stockValue || 0) - Number(a.metrics.stockValue || 0))
+      .slice(0, 35),
+    ...featureCandidates
+      .sort((a, b) => Number(b.metrics.revenue || 0) - Number(a.metrics.revenue || 0))
+      .slice(0, 25),
+    ...watchCandidates
+      .sort((a, b) => Number(b.metrics.revenue || 0) - Number(a.metrics.revenue || 0))
+      .slice(0, 20)
+  ];
+  return orderedCandidates.filter(candidate => {
+    if (seen.has(candidate.dedupeKey)) return false;
+    seen.add(candidate.dedupeKey);
+    return true;
+  });
+}
+
+function upsertWeeklyActions(candidates, actorName = "") {
+  const db = openOrderSqliteDb();
+  let created = 0;
+  let updated = 0;
+  const unresolved = ["Open", "In progress", "Snoozed", "Blocked"];
+  const insert = db.prepare(`
+    INSERT INTO weekly_actions (
+      id, dedupe_key, action_type, title, product_key, product_title, sku, season, category,
+      owner, status, priority, due_date, source_type, source_period_id, source_start_date,
+      source_end_date, source_label, rationale, metrics_json, data, generated_at, created_at, updated_at
+    ) VALUES (
+      @id, @dedupeKey, @actionType, @title, @productKey, @productTitle, @sku, @season, @category,
+      @owner, @status, @priority, @dueDate, 'bestsellers', @sourcePeriodId, @sourceStartDate,
+      @sourceEndDate, @sourceLabel, @rationale, @metricsJson, @data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+  `);
+  const update = db.prepare(`
+    UPDATE weekly_actions
+    SET title = @title,
+        product_key = @productKey,
+        product_title = @productTitle,
+        sku = @sku,
+        season = @season,
+        category = @category,
+        source_period_id = @sourcePeriodId,
+        source_start_date = @sourceStartDate,
+        source_end_date = @sourceEndDate,
+        source_label = @sourceLabel,
+        rationale = @rationale,
+        metrics_json = @metricsJson,
+        data = @data,
+        generated_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `);
+
+  const write = db.transaction(() => {
+    for (const candidate of candidates) {
+      const existing = db.prepare(`
+        SELECT *
+        FROM weekly_actions
+        WHERE dedupe_key = ?
+          AND status IN (${unresolved.map(() => "?").join(",")})
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `).get(candidate.dedupeKey, ...unresolved);
+      const payload = {
+        ...candidate,
+        id: existing?.id || crypto.randomUUID(),
+        metricsJson: JSON.stringify(candidate.metrics || {}),
+        data: JSON.stringify(candidate.data || {})
+      };
+      if (existing) {
+        update.run(payload);
+        updated += 1;
+      } else {
+        insert.run(payload);
+        created += 1;
+        recordWeeklyActionEvent(payload.id, "generated", actorName, "Action generated from saved bestsellers report", {
+          actionType: candidate.actionType,
+          sourceLabel: candidate.sourceLabel
+        });
+      }
+    }
+  });
+  write();
+  return { created, updated, total: candidates.length };
+}
+
+function previewWeeklyActions(candidates) {
+  const db = openOrderSqliteDb();
+  const unresolved = ["Open", "In progress", "Snoozed", "Blocked"];
+  let created = 0;
+  let updated = 0;
+  let snoozed = 0;
+  let doneMatches = 0;
+  const existingStatement = db.prepare(`
+    SELECT status
+    FROM weekly_actions
+    WHERE dedupe_key = ?
+    ORDER BY updated_at DESC
+  `);
+  for (const candidate of candidates) {
+    const rows = existingStatement.all(candidate.dedupeKey);
+    const unresolvedMatch = rows.find(row => unresolved.includes(row.status));
+    if (unresolvedMatch) {
+      updated += 1;
+      if (unresolvedMatch.status === "Snoozed") snoozed += 1;
+    } else {
+      created += 1;
+      if (rows.some(row => row.status === "Done")) doneMatches += 1;
+    }
+  }
+  return { created, updated, snoozed, recurringDone: doneMatches, total: candidates.length };
+}
+
+function weeklyActionsMetrics(actions) {
+  const today = todayIsoDate();
+  const weekAgo = addDaysIso(today, -7);
+  return {
+    total: actions.length,
+    open: actions.filter(action => action.status !== "Done").length,
+    highPriority: actions.filter(action => action.status !== "Done" && action.priority === "High").length,
+    dueSoon: actions.filter(action => action.status !== "Done" && action.dueDate && action.dueDate <= addDaysIso(today, 3)).length,
+    completedThisWeek: actions.filter(action => action.status === "Done" && action.completedAt && action.completedAt.slice(0, 10) >= weekAgo).length
+  };
+}
+
+function readWeeklyActions(url) {
+  const db = openOrderSqliteDb();
+  const params = {
+    status: String(url.searchParams.get("status") || "").trim(),
+    owner: String(url.searchParams.get("owner") || "").trim(),
+    priority: String(url.searchParams.get("priority") || "").trim(),
+    type: String(url.searchParams.get("type") || "").trim(),
+    season: String(url.searchParams.get("season") || "").trim(),
+    search: String(url.searchParams.get("search") || "").trim().toLowerCase()
+  };
+  const rows = db.prepare(`
+    SELECT *
+    FROM weekly_actions
+    ORDER BY
+      CASE status WHEN 'Open' THEN 0 WHEN 'In progress' THEN 1 WHEN 'Blocked' THEN 2 WHEN 'Snoozed' THEN 3 ELSE 4 END,
+      CASE priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END,
+      date(COALESCE(NULLIF(due_date, ''), '9999-12-31')) ASC,
+      updated_at DESC
+  `).all();
+  let actions = rows.map(row => weeklyActionFromRow(row));
+  actions = actions.filter(action => {
+    const haystack = [action.title, action.productTitle, action.sku, action.season, action.category, action.rationale].join(" ").toLowerCase();
+    return (!params.status || action.status === params.status)
+      && (!params.owner || action.owner === params.owner)
+      && (!params.priority || action.priority === params.priority)
+      && (!params.type || action.actionType === params.type)
+      && (!params.season || action.season === params.season)
+      && (!params.search || haystack.includes(params.search));
+  });
+  const selectedId = String(url.searchParams.get("id") || actions[0]?.id || "");
+  const selected = selectedId
+    ? weeklyActionFromRow(db.prepare("SELECT * FROM weekly_actions WHERE id = ?").get(selectedId), readWeeklyActionEvents(selectedId))
+    : null;
+  return {
+    actions,
+    selected,
+    metrics: weeklyActionsMetrics(rows.map(row => weeklyActionFromRow(row))),
+    filters: {
+      statuses: weeklyActionStatuses,
+      owners: weeklyActionOwners,
+      priorities: weeklyActionPriorities,
+      types: ["reorder", "markdown", "feature", "watch"],
+      seasons: [...new Set(rows.map(row => row.season).filter(Boolean))].sort().reverse()
+    },
+    periods: readBestsellersPeriods().filter(period => period.sourceType === "shopify_api")
+  };
+}
+
+function handleWeeklyActionsList(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  sendJson(res, 200, { ...readWeeklyActions(url), generatedAt: new Date().toISOString() });
+}
+
+async function handleWeeklyActionsGenerate(req, res) {
+  const body = await readJsonBody(req);
+  const periodRow = weeklyActionsPeriodFromRequest(body);
+  const payload = buildBestsellersPayload(periodRow);
+  if (!payload?.report) throw new Error("Could not build a bestsellers report for that period.");
+  const candidates = generateWeeklyActionCandidates(payload);
+  if (body.previewOnly) {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    sendJson(res, 200, {
+      ok: true,
+      preview: true,
+      result: previewWeeklyActions(candidates),
+      period: publicReportPeriod(periodRow),
+      ...readWeeklyActions(url)
+    });
+    return;
+  }
+  const result = upsertWeeklyActions(candidates, body.actorName || "");
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  sendJson(res, 200, {
+    ok: true,
+    result,
+    period: publicReportPeriod(periodRow),
+    ...readWeeklyActions(url)
+  });
+}
+
+async function handleWeeklyActionsUpdate(req, res) {
+  const body = await readJsonBody(req);
+  const actionId = String(body.actionId || "").trim();
+  if (!actionId) throw new Error("Missing action id.");
+  const db = openOrderSqliteDb();
+  const row = db.prepare("SELECT * FROM weekly_actions WHERE id = ?").get(actionId);
+  if (!row) throw new Error("Action not found.");
+  const patch = body.patch || {};
+  const current = weeklyActionFromRow(row);
+  const next = {
+    status: Object.prototype.hasOwnProperty.call(patch, "status") ? normalizeWeeklyActionStatus(patch.status) : current.status,
+    owner: Object.prototype.hasOwnProperty.call(patch, "owner") ? normalizeWeeklyActionOwner(patch.owner, current.owner) : current.owner,
+    priority: Object.prototype.hasOwnProperty.call(patch, "priority") ? normalizeWeeklyActionPriority(patch.priority, current.priority) : current.priority,
+    dueDate: Object.prototype.hasOwnProperty.call(patch, "dueDate") ? String(patch.dueDate || "").trim() : current.dueDate
+  };
+  const completedAt = next.status === "Done" && current.status !== "Done"
+    ? new Date().toISOString()
+    : next.status !== "Done" ? "" : current.completedAt;
+  db.prepare(`
+    UPDATE weekly_actions
+    SET status = @status,
+        owner = @owner,
+        priority = @priority,
+        due_date = @dueDate,
+        completed_at = @completedAt,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `).run({ id: actionId, ...next, completedAt });
+
+  const changes = {};
+  for (const key of ["status", "owner", "priority", "dueDate"]) {
+    if (next[key] !== current[key]) changes[key] = { from: current[key], to: next[key] };
+  }
+  if (Object.keys(changes).length) {
+    recordWeeklyActionEvent(actionId, "update", body.actorName || "", "Action updated", changes);
+  }
+  const note = String(body.note || "").trim();
+  if (note) recordWeeklyActionEvent(actionId, "note", body.actorName || "", note);
+
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  url.searchParams.set("id", actionId);
+  sendJson(res, 200, { ok: true, ...readWeeklyActions(url) });
+}
+
 function friendlyShopifyLookupMessage(error) {
   const message = String(error?.message || error || "");
   if (/EACCES|EPERM|ENETUNREACH|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND/i.test(message)) {
@@ -4099,6 +4667,29 @@ async function handleApi(req, res) {
       snapshots: readStockSnapshots(url),
       generatedAt: new Date().toISOString()
     });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/weekly-actions") {
+    handleWeeklyActionsList(req, res);
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/weekly-actions/generate") {
+    try {
+      await handleWeeklyActionsGenerate(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not generate weekly actions" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/weekly-actions/update") {
+    try {
+      await handleWeeklyActionsUpdate(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not update weekly action" });
+    }
     return true;
   }
 

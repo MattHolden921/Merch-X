@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weekly Actions</title>
+<link rel="stylesheet" href="design-system.css">
+<style>
+.wrap{max-width:1540px}
+[hidden]{display:none!important}
+.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.generate-bar{display:grid;grid-template-columns:minmax(360px,2fr) 160px 150px 150px minmax(220px,1fr);gap:10px;align-items:end}
+.toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 150px 150px 140px 140px 150px;gap:10px;align-items:end}
+.toolbar .field,.generate-bar .field{margin-bottom:0}
+#period-select{min-width:0}
+.viewbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--ds-line-strong);border-radius:var(--ds-radius);overflow:hidden;background:var(--ds-bg-muted)}
+.seg button{min-height:32px;border:0;border-right:1px solid var(--ds-line-strong);background:transparent;color:var(--ds-text-muted);padding:0 12px;font-size:12px;font-weight:650;cursor:pointer}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--ds-action);color:#fff}
+.table-panel{display:block}
+.table-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.presetbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.presetbar .btn.on{background:var(--ds-action-soft);border-color:var(--ds-action);color:var(--ds-action)}
+.bulk-tools{display:grid;grid-template-columns:110px 120px 100px 120px 120px minmax(180px,1fr) auto;gap:8px;align-items:end;width:100%;margin-top:10px}
+.bulk-tools .field{margin-bottom:0}
+.sort-btn{display:inline-flex;align-items:center;gap:3px;border:0;background:transparent;color:inherit;font:inherit;text-transform:inherit;letter-spacing:inherit;padding:0;cursor:pointer}
+.age.overdue{color:var(--ds-bad);font-weight:700}
+.age.snoozed{color:var(--ds-info);font-weight:700}
+.table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
+.action-table{width:100%;min-width:1260px;border-collapse:collapse;table-layout:fixed}
+.action-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);white-space:nowrap}
+.action-table td{font-size:11px;color:var(--ds-text-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+.action-table tr:last-child td{border-bottom:0}
+.action-table tr:hover td{background:var(--ds-bg-muted)}
+.action-table strong{display:block;color:var(--ds-text);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.action-table small{display:block;color:var(--ds-text-soft);font-size:10px;line-height:1.35;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.action-table .num{text-align:right;white-space:nowrap}
+.action-table input[type="checkbox"]{width:16px;min-height:16px}
+.table-select{width:100%;min-height:28px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);font-size:11px;padding:0 5px}
+.row-open{min-height:28px;padding:0 8px;font-size:11px}
+.layout{display:grid;grid-template-columns:430px minmax(0,1fr);gap:14px;align-items:start}
+.action-list{display:flex;flex-direction:column;gap:8px;max-height:calc(100vh - 340px);overflow:auto;padding-right:2px}
+.action-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;width:100%;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);padding:10px;text-align:left;cursor:pointer}
+.action-row:hover,.action-row.active{border-color:var(--ds-action);background:var(--ds-bg-muted)}
+.action-main strong{display:block;font-size:13px;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.action-main span,.action-side span{display:block;font-size:11px;color:var(--ds-text-muted);line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.action-side{text-align:right;min-width:104px}
+.badge{display:inline-flex;align-items:center;min-height:20px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:2px 7px;font-size:10px;font-weight:650;color:var(--ds-text-muted);background:var(--ds-bg-muted);white-space:nowrap}
+.badge.high{color:var(--ds-bad);border-color:rgba(185,28,28,.35)}
+.badge.medium{color:var(--ds-warn);border-color:rgba(180,83,9,.35)}
+.badge.low{color:var(--ds-info);border-color:rgba(37,99,235,.35)}
+.badge.good{color:var(--ds-good);border-color:rgba(21,128,61,.35)}
+.badge.blocked{color:var(--ds-bad);border-color:rgba(185,28,28,.35)}
+.badge.progress{color:var(--ds-info);border-color:rgba(37,99,235,.35)}
+.detail-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;margin-bottom:14px}
+.detail-title h2{font-size:20px;font-weight:650;margin-bottom:4px}
+.detail-title p{font-size:12px;color:var(--ds-text-muted);line-height:1.55}
+.summary-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:14px}
+.summary-item{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:9px 10px;min-width:0}
+.summary-item label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);margin-bottom:4px}
+.summary-item strong{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workflow-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:end}
+.note-grid{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end;margin-top:10px}
+.rationale{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:11px 12px;margin-bottom:14px;font-size:13px;line-height:1.6;color:var(--ds-text-muted)}
+.rationale b{color:var(--ds-text)}
+.activity{display:flex;flex-direction:column;gap:8px;max-height:300px;overflow:auto}
+.event{border-top:1px solid var(--ds-line);padding-top:8px;font-size:12px;color:var(--ds-text-muted);line-height:1.5}
+.event:first-child{border-top:0;padding-top:0}
+.event strong{display:block;color:var(--ds-text);font-size:12px}
+.empty-state{padding:38px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.6}
+@media(max-width:1180px){.layout{grid-template-columns:1fr}.action-list{max-height:none}.metric-grid,.summary-grid{grid-template-columns:repeat(2,1fr)}.toolbar,.generate-bar{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:720px){.toolbar,.generate-bar,.workflow-grid,.note-grid,.bulk-tools{grid-template-columns:1fr}.metric-grid,.summary-grid{grid-template-columns:1fr}.detail-head{grid-template-columns:1fr}.actions{justify-content:flex-start}.action-row{grid-template-columns:1fr}.action-side{text-align:left;display:flex;gap:6px;flex-wrap:wrap;min-width:0}.action-side span{display:inline-flex;width:auto}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>Weekly actions</h1>
+      <p class="sub">Saved trading tasks generated from server-side bestsellers reports. Use this as the weekly follow-up board for reorders, markdown risks, feature winners, and watch items.</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="bestsellers.html">Bestsellers</a>
+      <button class="btn primary" type="button" id="refresh-btn">Refresh</button>
+    </div>
+  </section>
+
+  <section class="metric-grid" id="metrics"></section>
+
+  <section class="panel">
+    <div class="generate-bar">
+      <div class="field"><label>Saved report</label><select class="select" id="period-select"></select></div>
+      <div class="field"><label>Updated by</label><input id="actor-name" placeholder="Your name"></div>
+      <div class="field"><label>&nbsp;</label><button class="btn primary" type="button" id="generate-btn">Generate actions</button></div>
+      <div class="field"><label>&nbsp;</label><button class="btn" type="button" id="preview-generate-btn">Preview generation</button></div>
+      <p class="status" id="status-note">Loading saved reports.</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label>Search</label><input id="search" placeholder="Product, SKU, rationale"></div>
+      <div class="field"><label>Type</label><select class="select" id="type-filter"></select></div>
+      <div class="field"><label>Owner</label><select class="select" id="owner-filter"></select></div>
+      <div class="field"><label>Status</label><select class="select" id="status-filter"></select></div>
+      <div class="field"><label>Priority</label><select class="select" id="priority-filter"></select></div>
+      <div class="field"><label>Season</label><select class="select" id="season-filter"></select></div>
+    </div>
+    <div class="presetbar" aria-label="Saved views">
+      <button class="btn" type="button" data-preset="markdown">Markdown review</button>
+      <button class="btn" type="button" data-preset="reorders">Buyer reorders</button>
+      <button class="btn" type="button" data-preset="high">High priority open</button>
+      <button class="btn" type="button" data-preset="snoozed">Snoozed</button>
+      <button class="btn" type="button" data-preset="clear">Clear view</button>
+    </div>
+    <div class="viewbar">
+      <div class="seg" aria-label="View mode">
+        <button type="button" id="list-view-btn">List</button>
+        <button type="button" id="table-view-btn">Table</button>
+      </div>
+      <div class="actions">
+        <span class="pill" id="selected-count">0 selected</span>
+        <button class="btn" type="button" id="export-markdown-btn">Export markdown CSV</button>
+        <button class="btn" type="button" id="export-filtered-btn">Export filtered CSV</button>
+        <button class="btn" type="button" id="export-selected-btn">Export selected CSV</button>
+        <button class="btn" type="button" id="export-progress-btn">Export selected + in progress</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel table-panel" id="table-section" hidden>
+    <div class="table-tools">
+      <div>
+        <p class="section-title">Action table</p>
+        <p class="status" id="table-note">Use checkboxes for export, or update status, owner, and priority inline.</p>
+      </div>
+      <div class="actions">
+        <button class="btn" type="button" id="select-all-btn">Select all filtered</button>
+        <button class="btn" type="button" id="clear-selected-btn">Clear selection</button>
+      </div>
+      <div class="bulk-tools">
+        <div class="field"><label>Status</label><select class="select" id="bulk-status"></select></div>
+        <div class="field"><label>Owner</label><select class="select" id="bulk-owner"></select></div>
+        <div class="field"><label>Priority</label><select class="select" id="bulk-priority"></select></div>
+        <div class="field"><label>Due date</label><input id="bulk-due" type="date"></div>
+        <div class="field"><label>Snooze</label><select class="select" id="bulk-snooze"><option value="">No snooze</option><option value="14">2 weeks</option><option value="28">4 weeks</option><option value="56">8 weeks</option><option value="84">12 weeks</option></select></div>
+        <div class="field"><label>Bulk note</label><input id="bulk-note" placeholder="Optional note for selected actions"></div>
+        <button class="btn primary" type="button" id="apply-bulk-btn">Apply to selected</button>
+      </div>
+    </div>
+    <div class="table-wrap" id="table-wrap"></div>
+  </section>
+
+  <section class="layout" id="list-section">
+    <aside class="panel">
+      <div class="section-head">
+        <p class="section-title">Action list</p>
+        <span class="pill" id="action-count">0 actions</span>
+      </div>
+      <div class="action-list" id="action-list"></div>
+    </aside>
+
+    <section id="detail"></section>
+  </section>
+</main>
+
+<script>
+const LOCAL_API_ORIGINS=["","http://localhost:3016","http://localhost:3003","http://localhost:3001","http://localhost:3000"];
+const API_ORIGINS=location.protocol==="file:"
+  ? LOCAL_API_ORIGINS.slice(1)
+  : /^(localhost|127\.0\.0\.1)$/.test(location.hostname)?LOCAL_API_ORIGINS:[""];
+const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
+const numberFmt=new Intl.NumberFormat("en-GB",{maximumFractionDigits:1});
+const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+const typeLabels={reorder:"Reorder risk",markdown:"Markdown risk",feature:"Feature winner",watch:"Watch item"};
+let state={actions:[],selected:null,metrics:null,filters:{statuses:[],owners:[],priorities:[],types:[],seasons:[]},periods:[],selectedId:"",view:localStorage.getItem("weeklyActionsView")||"list",sortKey:localStorage.getItem("weeklyActionsSortKey")||"priority",sortDir:Number(localStorage.getItem("weeklyActionsSortDir")||1)};
+let selectedRows=new Set();
+
+const el=id=>document.getElementById(id);
+const val=id=>el(id)?.value?.trim()||"";
+
+async function apiFetch(path,options){
+  let lastError;
+  for(let index=0;index<API_ORIGINS.length;index+=1){
+    const origin=API_ORIGINS[index];
+    try{
+      const response=await fetch(`${origin}${path}`,options);
+      if(response.status===404&&index<API_ORIGINS.length-1){
+        lastError=new Error(`API not found at ${origin||location.origin}`);
+        continue;
+      }
+      if(response.ok||response.status>=400)return response;
+      lastError=new Error(`API returned ${response.status}`);
+    }catch(error){lastError=error;}
+  }
+  throw lastError||new Error("API unavailable");
+}
+
+async function apiJson(path,options){
+  const response=await apiFetch(path,options);
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.error||data.message||`Request failed (${response.status})`);
+  return data;
+}
+
+function escapeHtml(value){
+  return String(value||"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+}
+
+function attr(value){return escapeHtml(value).replaceAll("`","&#96;");}
+
+function options(items,value,blank,labels={}){
+  return `${blank?`<option value="">${escapeHtml(blank)}</option>`:""}${items.map(item=>`<option value="${attr(item)}"${item===value?" selected":""}>${escapeHtml(labels[item]||item)}</option>`).join("")}`;
+}
+
+function formatDate(value){
+  if(!value)return "";
+  const date=new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime())?value:dateFmt.format(date);
+}
+
+function badgeClass(action){
+  if(!action)return"";
+  if(action.status==="Done")return"good";
+  if(action.status==="Blocked")return"blocked";
+  if(action.status==="In progress")return"progress";
+  return String(action.priority||"").toLowerCase();
+}
+
+function metric(label,value,small){
+  return `<div class="metric"><label>${escapeHtml(label)}</label><span>${escapeHtml(value)}</span><small>${escapeHtml(small)}</small></div>`;
+}
+
+function renderMetrics(){
+  const m=state.metrics||{open:0,highPriority:0,dueSoon:0,completedThisWeek:0};
+  el("metrics").innerHTML=[
+    metric("Open",m.open,"actions not done"),
+    metric("High priority",m.highPriority,"open high-priority tasks"),
+    metric("Due soon",m.dueSoon,"due in the next 3 days"),
+    metric("Completed",m.completedThisWeek,"done this week")
+  ].join("");
+}
+
+function renderFilters(){
+  const f=state.filters||{};
+  el("type-filter").innerHTML=options(f.types||[],val("type-filter"),"All types",typeLabels);
+  el("owner-filter").innerHTML=options(f.owners||[],val("owner-filter"),"All owners");
+  el("status-filter").innerHTML=options(f.statuses||[],val("status-filter"),"All statuses");
+  el("priority-filter").innerHTML=options(f.priorities||[],val("priority-filter"),"All priorities");
+  el("season-filter").innerHTML=options(f.seasons||[],val("season-filter"),"All seasons");
+  el("bulk-status").innerHTML=options(f.statuses||[],val("bulk-status"),"Leave");
+  el("bulk-owner").innerHTML=options(f.owners||[],val("bulk-owner"),"Leave");
+  el("bulk-priority").innerHTML=options(f.priorities||[],val("bulk-priority"),"Leave");
+}
+
+function renderPeriods(){
+  const periods=state.periods||[];
+  el("period-select").innerHTML=periods.length
+    ? periods.map(period=>`<option value="${attr(period.id)}">${escapeHtml(period.label)} (${Number(period.summary?.productCount||0).toLocaleString("en-GB")} lines)</option>`).join("")
+    : '<option value="">No saved Shopify reports</option>';
+  el("period-select").title=periods.find(period=>period.id===val("period-select"))?.label||"";
+  el("generate-btn").disabled=!periods.length;
+  el("preview-generate-btn").disabled=!periods.length;
+}
+
+function renderActions(){
+  const actions=state.actions||[];
+  el("action-count").textContent=`${actions.length} action${actions.length===1?"":"s"}`;
+  el("action-list").innerHTML=actions.length?actions.map(action=>`
+    <button type="button" class="action-row ${action.id===state.selectedId?"active":""}" onclick="selectAction('${attr(action.id)}')">
+      <span class="action-main">
+        <strong>${escapeHtml(action.title)}</strong>
+        <span>${escapeHtml(action.productTitle)}${action.sku?` - ${escapeHtml(action.sku)}`:""}</span>
+        <span>${escapeHtml(action.owner)} - ${escapeHtml(action.rationale)}</span>
+      </span>
+      <span class="action-side">
+        <span class="badge ${badgeClass(action)}">${escapeHtml(action.priority)}</span>
+        <span>${escapeHtml(typeLabels[action.actionType]||action.actionType)}</span>
+        <span>${formatDate(action.dueDate)||"No due date"}</span>
+      </span>
+    </button>`).join(""):`<p class="empty-state">No actions match the current filters.</p>`;
+}
+
+function daysBetweenIso(left,right){
+  if(!left||!right)return null;
+  const a=new Date(`${String(left).slice(0,10)}T00:00:00`);
+  const b=new Date(`${String(right).slice(0,10)}T00:00:00`);
+  if(Number.isNaN(a.getTime())||Number.isNaN(b.getTime()))return null;
+  return Math.floor((b-a)/86400000);
+}
+
+function todayIso(){
+  return new Date().toISOString().slice(0,10);
+}
+
+function addDaysFromToday(days){
+  const date=new Date();
+  date.setDate(date.getDate()+Number(days||0));
+  return date.toISOString().slice(0,10);
+}
+
+function actionAgeDays(action){
+  return Math.max(0,daysBetweenIso(action.createdAt,todayIso())||0);
+}
+
+function ageLabel(action){
+  if(action.status==="Done")return action.completedAt?`Done ${Math.max(0,daysBetweenIso(action.completedAt,todayIso())||0)}d`:"Done";
+  if(action.status==="Snoozed"&&action.dueDate)return`Until ${formatDate(action.dueDate)}`;
+  if(action.dueDate&&action.dueDate<todayIso())return`${Math.abs(daysBetweenIso(action.dueDate,todayIso())||0)}d late`;
+  return `${actionAgeDays(action)}d`;
+}
+
+function ageClass(action){
+  if(action.status==="Snoozed")return"age snoozed";
+  if(action.status!=="Done"&&action.dueDate&&action.dueDate<todayIso())return"age overdue";
+  return"age";
+}
+
+function sortValue(action,key){
+  const m=action.metrics||{};
+  if(key==="type")return typeLabels[action.actionType]||action.actionType||"";
+  if(key==="priority")return {High:0,Medium:1,Low:2}[action.priority]??9;
+  if(key==="status")return {Open:0,"In progress":1,Blocked:2,Snoozed:3,Done:4}[action.status]??9;
+  if(key==="owner")return action.owner||"";
+  if(key==="product")return action.productTitle||"";
+  if(key==="sku")return action.sku||"";
+  if(key==="season")return action.season||"";
+  if(key==="category")return action.category||"";
+  if(key==="stock")return m.stock==null?-1:Number(m.stock||0);
+  if(key==="units")return Number(m.units||0);
+  if(key==="cover")return m.coverWks==null?999999:Number(m.coverWks||0);
+  if(key==="value")return Number(m.stockValue||0);
+  if(key==="md")return m.isMarkedDown?1:0;
+  if(key==="age")return action.status!=="Done"&&action.dueDate&&action.dueDate<todayIso()?-9999:actionAgeDays(action);
+  if(key==="due")return action.dueDate||"9999-12-31";
+  return action.updatedAt||"";
+}
+
+function actionRows(){
+  const rows=[...(state.actions||[])];
+  const key=state.sortKey||"priority";
+  const dir=state.sortDir||1;
+  return rows.sort((a,b)=>{
+    const av=sortValue(a,key);
+    const bv=sortValue(b,key);
+    if(typeof av==="number"&&typeof bv==="number")return(av-bv)*dir;
+    return String(av).localeCompare(String(bv),undefined,{numeric:true,sensitivity:"base"})*dir;
+  });
+}
+
+function sortHeader(key,label,extra=""){
+  const active=state.sortKey===key;
+  const arrow=active?(state.sortDir===1?"asc":"desc"):"";
+  return `<button class="sort-btn" type="button" onclick="setSort('${attr(key)}')" ${extra}>${escapeHtml(label)}${arrow?` <span>${arrow}</span>`:""}</button>`;
+}
+
+function markdownLabel(action){
+  const m=action.metrics||{};
+  if(!m.isMarkedDown)return"No";
+  return"Yes";
+}
+
+function markdownTitle(action){
+  const m=action.metrics||{};
+  if(!m.isMarkedDown)return"No";
+  if(m.price&&m.compareAtPrice)return`Marked down: ${money.format(Number(m.price||0))} from ${money.format(Number(m.compareAtPrice||0))}`;
+  return"Marked down";
+}
+
+function renderTable(){
+  const rows=actionRows();
+  const validIds=new Set(rows.map(action=>action.id));
+  selectedRows=new Set([...selectedRows].filter(id=>validIds.has(id)));
+  renderSelectedCount();
+  if(!rows.length){
+    el("table-wrap").innerHTML='<p class="empty-state">No actions match the current filters.</p>';
+    return;
+  }
+  const statuses=state.filters.statuses||[];
+  const owners=state.filters.owners||[];
+  const priorities=state.filters.priorities||[];
+  el("table-wrap").innerHTML=`<table class="action-table">
+    <thead><tr>
+      <th style="width:34px"><input type="checkbox" aria-label="Select all visible" ${rows.every(action=>selectedRows.has(action.id))?"checked":""} onchange="setAllVisible(this.checked)"></th>
+      <th style="width:108px">${sortHeader("type","Type")}</th>
+      <th style="width:78px">${sortHeader("priority","Priority")}</th>
+      <th style="width:78px">${sortHeader("status","Status")}</th>
+      <th style="width:100px">${sortHeader("owner","Owner")}</th>
+      <th style="width:330px">${sortHeader("product","Product")}</th>
+      <th style="width:62px">${sortHeader("sku","SKU")}</th>
+      <th style="width:60px">${sortHeader("season","Season")}</th>
+      <th style="width:92px">${sortHeader("category","Category")}</th>
+      <th class="num" style="width:56px">${sortHeader("stock","Stock")}</th>
+      <th class="num" style="width:50px">${sortHeader("units","Units")}</th>
+      <th class="num" style="width:58px">${sortHeader("cover","Cover")}</th>
+      <th class="num" style="width:78px">${sortHeader("value","Value")}</th>
+      <th style="width:48px">${sortHeader("md","MD")}</th>
+      <th style="width:64px">${sortHeader("age","Age")}</th>
+      <th style="width:88px">${sortHeader("due","Due")}</th>
+      <th style="width:58px">Open</th>
+    </tr></thead>
+    <tbody>${rows.map(action=>tableRow(action,statuses,owners,priorities)).join("")}</tbody>
+  </table>`;
+}
+
+function tableRow(action,statuses,owners,priorities){
+  const m=action.metrics||{};
+  return `<tr>
+    <td><input type="checkbox" aria-label="Select ${attr(action.productTitle)}" ${selectedRows.has(action.id)?"checked":""} onchange="toggleRow('${attr(action.id)}',this.checked)"></td>
+    <td><span class="badge ${badgeClass(action)}">${escapeHtml(typeLabels[action.actionType]||action.actionType)}</span></td>
+    <td><select class="table-select" onchange="quickUpdateAction('${attr(action.id)}','priority',this.value)">${options(priorities,action.priority)}</select></td>
+    <td><select class="table-select" onchange="quickUpdateAction('${attr(action.id)}','status',this.value)">${options(statuses,action.status)}</select></td>
+    <td><select class="table-select" onchange="quickUpdateAction('${attr(action.id)}','owner',this.value)">${options(owners,action.owner)}</select></td>
+    <td><strong title="${attr(action.productTitle)}">${escapeHtml(action.productTitle)}</strong><small title="${attr(action.rationale)}">${escapeHtml(action.rationale)}</small></td>
+    <td title="${attr(action.sku)}">${escapeHtml(action.sku||"-")}</td>
+    <td>${escapeHtml(action.season||"-")}</td>
+    <td title="${attr(action.category)}">${escapeHtml(action.category||"-")}</td>
+    <td class="num">${m.stock==null?"-":Number(m.stock||0).toLocaleString("en-GB")}</td>
+    <td class="num">${Number(m.units||0).toLocaleString("en-GB")}</td>
+    <td class="num">${m.coverWks==null?"-":`${numberFmt.format(Number(m.coverWks||0))}w`}</td>
+    <td class="num">${money.format(Number(m.stockValue||0))}</td>
+    <td title="${attr(markdownTitle(action))}">${escapeHtml(markdownLabel(action))}</td>
+    <td class="${ageClass(action)}" title="${attr(action.status==="Snoozed"?"Snoozed actions are deduped during generation and will not be recreated while snoozed.":"")}">${escapeHtml(ageLabel(action))}</td>
+    <td><input class="table-select" type="date" value="${attr(action.dueDate||"")}" onchange="quickUpdateAction('${attr(action.id)}','dueDate',this.value)"></td>
+    <td><button class="btn row-open" type="button" onclick="openFromTable('${attr(action.id)}')">Open</button></td>
+  </tr>`;
+}
+
+function renderSelectedCount(){
+  const count=selectedRows.size;
+  el("selected-count").textContent=`${count.toLocaleString("en-GB")} selected`;
+  el("export-selected-btn").disabled=count===0;
+  el("apply-bulk-btn").disabled=count===0;
+}
+
+function renderView(){
+  const tableMode=state.view==="table";
+  el("table-section").hidden=!tableMode;
+  el("list-section").hidden=tableMode;
+  el("list-view-btn").classList.toggle("on",!tableMode);
+  el("table-view-btn").classList.toggle("on",tableMode);
+  renderSelectedCount();
+  if(tableMode)renderTable();
+}
+
+function summaryItem(label,value){
+  return `<div class="summary-item"><label>${escapeHtml(label)}</label><strong title="${attr(value||"-")}">${escapeHtml(value||"-")}</strong></div>`;
+}
+
+function renderEvents(events){
+  return events&&events.length?events.map(event=>`
+    <div class="event">
+      <strong>${escapeHtml(event.message)}</strong>
+      <span>${escapeHtml(event.actorName||"Team")} - ${escapeHtml(new Date(event.createdAt).toLocaleString("en-GB"))}</span>
+    </div>`).join(""):`<p class="empty-state" style="padding:12px">No activity yet.</p>`;
+}
+
+function input(id,label,value,type="text"){
+  return `<div class="field"><label>${escapeHtml(label)}</label><input id="${id}" type="${type}" value="${attr(value||"")}"></div>`;
+}
+
+function select(id,label,items,value,labels={}){
+  return `<div class="field"><label>${escapeHtml(label)}</label><select class="select" id="${id}">${options(items,value,"",labels)}</select></div>`;
+}
+
+function renderDetail(){
+  const action=state.selected;
+  if(!action){
+    el("detail").innerHTML=`<section class="panel"><p class="empty-state">Select an action to manage it.</p></section>`;
+    return;
+  }
+  const m=action.metrics||{};
+  const sourceUrl=action.data?.sourceUrl||"bestsellers.html";
+  state.selectedId=action.id;
+  el("detail").innerHTML=`
+    <section class="panel">
+      <div class="detail-head">
+        <div class="detail-title">
+          <h2>${escapeHtml(action.title)}</h2>
+          <p>${escapeHtml(action.productTitle)}${action.sku?` - ${escapeHtml(action.sku)}`:""} - ${escapeHtml(action.sourceLabel||"Saved report")}</p>
+        </div>
+        <div class="actions">
+          <span class="badge ${badgeClass(action)}">${escapeHtml(action.status)}</span>
+          <a class="btn" href="${attr(sourceUrl)}">Open source</a>
+        </div>
+      </div>
+      <div class="summary-grid">
+        ${summaryItem("Sales",money.format(Number(m.revenue||0)))}
+        ${summaryItem("Units",Number(m.units||0).toLocaleString("en-GB"))}
+        ${summaryItem("Stock",m.stock==null?"Unknown":Number(m.stock||0).toLocaleString("en-GB"))}
+        ${summaryItem("Cover",m.coverWks==null?"-":`${numberFmt.format(Number(m.coverWks||0))} wks`)}
+        ${summaryItem("Forecast buy",m.forecastBuy==null?"-":Number(m.forecastBuy||0).toLocaleString("en-GB"))}
+        ${summaryItem("GP",Number(m.gpPct||0)?`${Math.round(Number(m.gpPct||0))}%`:"-")}
+        ${summaryItem("Markdown",m.isMarkedDown?`Yes${m.compareAtPrice&&m.price?` (${money.format(Number(m.price||0))} from ${money.format(Number(m.compareAtPrice||0))})`:""}`:"No")}
+      </div>
+      <p class="rationale"><b>Rationale:</b> ${escapeHtml(action.rationale)}</p>
+      <div class="workflow-grid">
+        ${input("detail-actor","Updated by",localStorage.getItem("weeklyActionsActorName")||val("actor-name"))}
+        ${select("detail-status","Status",state.filters.statuses||[],action.status)}
+        ${select("detail-owner","Owner",state.filters.owners||[],action.owner)}
+        ${select("detail-priority","Priority",state.filters.priorities||[],action.priority)}
+        ${input("detail-due","Due date",action.dueDate,"date")}
+        <div class="field"><label>Snooze</label><select class="select" id="detail-snooze" onchange="applyDetailSnooze(this.value)"><option value="">No preset</option><option value="14">2 weeks</option><option value="28">4 weeks</option><option value="56">8 weeks</option><option value="84">12 weeks</option></select></div>
+      </div>
+      <div class="note-grid">
+        <div class="field"><label>Note</label><input id="detail-note" placeholder="Add a note or follow-up"></div>
+        <button type="button" class="btn primary" onclick="saveSelected()">Save action</button>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="section-head"><p class="section-title">Activity</p><span class="pill">${(action.events||[]).length} events</span></div>
+      <div class="activity">${renderEvents(action.events)}</div>
+    </section>`;
+}
+
+function queryString(){
+  const params=new URLSearchParams();
+  if(state.selectedId)params.set("id",state.selectedId);
+  if(val("search"))params.set("search",val("search"));
+  if(val("type-filter"))params.set("type",val("type-filter"));
+  if(val("owner-filter"))params.set("owner",val("owner-filter"));
+  if(val("status-filter"))params.set("status",val("status-filter"));
+  if(val("priority-filter"))params.set("priority",val("priority-filter"));
+  if(val("season-filter"))params.set("season",val("season-filter"));
+  const text=params.toString();
+  return text?`?${text}`:"";
+}
+
+function applyData(data){
+  state.actions=data.actions||[];
+  state.selected=data.selected||null;
+  state.selectedId=state.selected?.id||state.actions[0]?.id||"";
+  state.metrics=data.metrics||state.metrics;
+  state.filters=data.filters||state.filters;
+  state.periods=data.periods||state.periods;
+  renderMetrics();
+  renderFilters();
+  renderPeriods();
+  renderActions();
+  renderDetail();
+  renderView();
+}
+
+async function loadActions(){
+  try{
+    const data=await apiJson(`/api/weekly-actions${queryString()}`);
+    applyData(data);
+    el("status-note").className="status ok";
+    el("status-note").textContent=(state.periods||[]).length?"Ready.":"Sync a Shopify bestsellers report first.";
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+  }
+}
+
+async function selectAction(id){
+  state.selectedId=id;
+  await loadActions();
+}
+
+async function generateActions(){
+  const periodId=val("period-select");
+  const actor=val("actor-name");
+  if(actor)localStorage.setItem("weeklyActionsActorName",actor);
+  el("generate-btn").disabled=true;
+  el("status-note").className="status";
+  el("status-note").textContent="Generating actions.";
+  try{
+    const data=await apiJson("/api/weekly-actions/generate",{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({periodId,actorName:actor})
+    });
+    applyData(data);
+    el("status-note").className="status ok";
+    el("status-note").textContent=`Generated ${data.result.created} new and updated ${data.result.updated} existing actions.`;
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+  }finally{
+    el("generate-btn").disabled=!(state.periods||[]).length;
+  }
+}
+
+async function previewGeneration(){
+  const periodId=val("period-select");
+  el("preview-generate-btn").disabled=true;
+  el("status-note").className="status";
+  el("status-note").textContent="Previewing generation.";
+  try{
+    const data=await apiJson("/api/weekly-actions/generate",{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({periodId,previewOnly:true})
+    });
+    const r=data.result||{};
+    el("status-note").className="status ok";
+    el("status-note").textContent=`Preview: ${r.created||0} new, ${r.updated||0} existing updates, ${r.snoozed||0} snoozed preserved${r.recurringDone?`, ${r.recurringDone} recurring after done`:""}.`;
+    applyData(data);
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+  }finally{
+    el("preview-generate-btn").disabled=!(state.periods||[]).length;
+  }
+}
+
+async function saveSelected(){
+  const action=state.selected;
+  if(!action)return;
+  const actor=val("detail-actor");
+  if(actor)localStorage.setItem("weeklyActionsActorName",actor);
+  const patch={
+    status:val("detail-status"),
+    owner:val("detail-owner"),
+    priority:val("detail-priority"),
+    dueDate:val("detail-due")
+  };
+  try{
+    const data=await apiJson("/api/weekly-actions/update",{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({actionId:action.id,actorName:actor,note:val("detail-note"),patch})
+    });
+    applyData(data);
+    el("status-note").className="status ok";
+    el("status-note").textContent="Action saved.";
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+  }
+}
+
+function applyDetailSnooze(days){
+  if(!days)return;
+  el("detail-status").value="Snoozed";
+  el("detail-due").value=addDaysFromToday(Number(days));
+}
+
+function setView(view){
+  state.view=view==="table"?"table":"list";
+  localStorage.setItem("weeklyActionsView",state.view);
+  renderView();
+}
+
+function setSort(key){
+  if(state.sortKey===key)state.sortDir=state.sortDir===1?-1:1;
+  else{
+    state.sortKey=key;
+    state.sortDir=["priority","status","due","cover"].includes(key)?1:-1;
+  }
+  localStorage.setItem("weeklyActionsSortKey",state.sortKey);
+  localStorage.setItem("weeklyActionsSortDir",String(state.sortDir));
+  renderTable();
+}
+
+function applyPreset(name){
+  const set=(id,value)=>{el(id).value=value||"";};
+  if(name==="clear"){
+    ["search","type-filter","owner-filter","status-filter","priority-filter","season-filter"].forEach(id=>set(id,""));
+    selectedRows.clear();
+    loadActions();
+    return;
+  }
+  if(name==="markdown"){
+    set("type-filter","markdown");
+    set("owner-filter","");
+    set("status-filter","Open");
+    set("priority-filter","");
+    set("season-filter","");
+    set("search","");
+    state.view="table";
+  }else if(name==="reorders"){
+    set("type-filter","reorder");
+    set("owner-filter","Buyer");
+    set("status-filter","Open");
+    set("priority-filter","");
+    set("season-filter","");
+    set("search","");
+    state.view="table";
+  }else if(name==="high"){
+    set("type-filter","");
+    set("owner-filter","");
+    set("status-filter","Open");
+    set("priority-filter","High");
+    set("season-filter","");
+    set("search","");
+    state.view="table";
+  }else if(name==="snoozed"){
+    set("type-filter","");
+    set("owner-filter","");
+    set("status-filter","Snoozed");
+    set("priority-filter","");
+    set("season-filter","");
+    set("search","");
+    state.view="table";
+  }
+  localStorage.setItem("weeklyActionsView",state.view);
+  selectedRows.clear();
+  loadActions();
+}
+
+function toggleRow(id,checked){
+  if(checked)selectedRows.add(id);
+  else selectedRows.delete(id);
+  renderSelectedCount();
+}
+
+function setAllVisible(checked){
+  for(const action of actionRows()){
+    if(checked)selectedRows.add(action.id);
+    else selectedRows.delete(action.id);
+  }
+  renderTable();
+}
+
+function openFromTable(id){
+  state.view="list";
+  localStorage.setItem("weeklyActionsView","list");
+  selectAction(id);
+}
+
+async function quickUpdateAction(id,field,value){
+  const action=state.actions.find(item=>item.id===id);
+  if(!action)return;
+  const actor=val("actor-name")||localStorage.getItem("weeklyActionsActorName")||"";
+  const patch={ [field]: value };
+  if(actor)localStorage.setItem("weeklyActionsActorName",actor);
+  try{
+    const data=await apiJson("/api/weekly-actions/update",{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({actionId:id,actorName:actor,patch})
+    });
+    applyData(data);
+    el("status-note").className="status ok";
+    el("status-note").textContent="Table action saved.";
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+    renderTable();
+  }
+}
+
+async function applyBulkUpdate(){
+  const ids=[...selectedRows];
+  if(!ids.length){
+    el("status-note").className="status warn";
+    el("status-note").textContent="Select at least one action first.";
+    return;
+  }
+  const patch={};
+  if(val("bulk-status"))patch.status=val("bulk-status");
+  if(val("bulk-owner"))patch.owner=val("bulk-owner");
+  if(val("bulk-priority"))patch.priority=val("bulk-priority");
+  if(val("bulk-due"))patch.dueDate=val("bulk-due");
+  if(val("bulk-snooze")){
+    patch.status="Snoozed";
+    patch.dueDate=addDaysFromToday(Number(val("bulk-snooze")));
+  }
+  const note=val("bulk-note");
+  if(!Object.keys(patch).length&&!note){
+    el("status-note").className="status warn";
+    el("status-note").textContent="Choose a status, owner, priority, due date, snooze, or note to apply.";
+    return;
+  }
+  const actor=val("actor-name")||localStorage.getItem("weeklyActionsActorName")||"";
+  if(actor)localStorage.setItem("weeklyActionsActorName",actor);
+  el("apply-bulk-btn").disabled=true;
+  el("status-note").className="status";
+  el("status-note").textContent=`Updating ${ids.length.toLocaleString("en-GB")} selected actions.`;
+  try{
+    let latest=null;
+    for(const id of ids){
+      latest=await apiJson("/api/weekly-actions/update",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({actionId:id,actorName:actor,note,patch})
+      });
+    }
+    if(latest)applyData(latest);
+    el("bulk-status").value="";
+    el("bulk-owner").value="";
+    el("bulk-priority").value="";
+    el("bulk-due").value="";
+    el("bulk-snooze").value="";
+    el("bulk-note").value="";
+    el("status-note").className="status ok";
+    el("status-note").textContent=`Updated ${ids.length.toLocaleString("en-GB")} selected actions.`;
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+    await loadActions();
+  }finally{
+    renderSelectedCount();
+  }
+}
+
+function csvCell(value){
+  const text=String(value==null?"":value);
+  return /[",\r\n]/.test(text)?`"${text.replace(/"/g,'""')}"`:text;
+}
+
+function actionExportRows(actions){
+  const headers=[
+    "Action type","Priority","Status","Owner","Product","SKU","Season","Category","Stock","Units sold",
+    "Cover weeks","Forecast buy","Stock value","Revenue","GP %","Already marked down","Price","Compare at price",
+    "Due date","Source report","Rationale"
+  ];
+  const rows=actions.map(action=>{
+    const m=action.metrics||{};
+    return [
+      typeLabels[action.actionType]||action.actionType,
+      action.priority,
+      action.status,
+      action.owner,
+      action.productTitle,
+      action.sku,
+      action.season,
+      action.category,
+      m.stock==null?"":Number(m.stock||0),
+      Number(m.units||0),
+      m.coverWks==null?"":Number(m.coverWks||0).toFixed(1),
+      m.forecastBuy==null?"":Number(m.forecastBuy||0),
+      Number(m.stockValue||0).toFixed(2),
+      Number(m.revenue||0).toFixed(2),
+      m.gpPct==null?"":Math.round(Number(m.gpPct||0)),
+      m.isMarkedDown?"Yes":"No",
+      m.price==null?"":Number(m.price||0).toFixed(2),
+      m.compareAtPrice==null?"":Number(m.compareAtPrice||0).toFixed(2),
+      action.dueDate,
+      action.sourceLabel,
+      action.rationale
+    ];
+  });
+  return [headers,...rows].map(row=>row.map(csvCell).join(",")).join("\r\n");
+}
+
+function exportActions(mode){
+  const actions=mode==="selected"
+    ? actionRows().filter(action=>selectedRows.has(action.id))
+    : actionRows();
+  if(!actions.length){
+    el("status-note").className="status warn";
+    el("status-note").textContent=mode==="selected"?"Select at least one action to export.":"No filtered actions to export.";
+    return;
+  }
+  const blob=new Blob([actionExportRows(actions)],{type:"text/csv;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement("a");
+  const type=val("type-filter")||"weekly-actions";
+  link.href=url;
+  link.download=`${type}-${mode}-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  el("status-note").className="status ok";
+  el("status-note").textContent=`Exported ${actions.length.toLocaleString("en-GB")} action${actions.length===1?"":"s"}.`;
+}
+
+function exportMarkdownActions(){
+  const actions=actionRows().filter(action=>action.actionType==="markdown");
+  if(!actions.length){
+    el("status-note").className="status warn";
+    el("status-note").textContent="No markdown actions match the current filters.";
+    return;
+  }
+  const headers=["Product","SKU","Season","Category","Status","Priority","Owner","Stock","Units sold","Cover weeks","Stock value","Already marked down","Price","Compare at price","Due date","Rationale"];
+  const rows=actions.map(action=>{
+    const m=action.metrics||{};
+    return [
+      action.productTitle,action.sku,action.season,action.category,action.status,action.priority,action.owner,
+      m.stock==null?"":Number(m.stock||0),Number(m.units||0),m.coverWks==null?"":Number(m.coverWks||0).toFixed(1),
+      Number(m.stockValue||0).toFixed(2),m.isMarkedDown?"Yes":"No",
+      m.price==null?"":Number(m.price||0).toFixed(2),m.compareAtPrice==null?"":Number(m.compareAtPrice||0).toFixed(2),
+      action.dueDate,action.rationale
+    ];
+  });
+  downloadCsv([headers,...rows].map(row=>row.map(csvCell).join(",")).join("\r\n"),`markdown-actions-${new Date().toISOString().slice(0,10)}.csv`);
+  el("status-note").className="status ok";
+  el("status-note").textContent=`Exported ${actions.length.toLocaleString("en-GB")} markdown action${actions.length===1?"":"s"}.`;
+}
+
+function downloadCsv(content,fileName){
+  const blob=new Blob([content],{type:"text/csv;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement("a");
+  link.href=url;
+  link.download=fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function exportSelectedAndMarkProgress(){
+  const actions=actionRows().filter(action=>selectedRows.has(action.id));
+  if(!actions.length){
+    el("status-note").className="status warn";
+    el("status-note").textContent="Select at least one action first.";
+    return;
+  }
+  downloadCsv(actionExportRows(actions),`selected-actions-in-progress-${new Date().toISOString().slice(0,10)}.csv`);
+  const actor=val("actor-name")||localStorage.getItem("weeklyActionsActorName")||"";
+  let latest=null;
+  try{
+    for(const action of actions){
+      latest=await apiJson("/api/weekly-actions/update",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({
+          actionId:action.id,
+          actorName:actor,
+          note:"Exported for handoff and marked in progress.",
+          patch:{status:"In progress"}
+        })
+      });
+    }
+    if(latest)applyData(latest);
+    el("status-note").className="status ok";
+    el("status-note").textContent=`Exported and marked ${actions.length.toLocaleString("en-GB")} selected actions in progress.`;
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+    await loadActions();
+  }
+}
+
+["search","type-filter","owner-filter","status-filter","priority-filter","season-filter"].forEach(id=>{
+  el(id).addEventListener("input",()=>{state.selectedId="";loadActions();});
+});
+el("refresh-btn").addEventListener("click",loadActions);
+el("generate-btn").addEventListener("click",generateActions);
+el("preview-generate-btn").addEventListener("click",previewGeneration);
+el("list-view-btn").addEventListener("click",()=>setView("list"));
+el("table-view-btn").addEventListener("click",()=>setView("table"));
+el("select-all-btn").addEventListener("click",()=>setAllVisible(true));
+el("clear-selected-btn").addEventListener("click",()=>setAllVisible(false));
+el("apply-bulk-btn").addEventListener("click",applyBulkUpdate);
+document.querySelectorAll("[data-preset]").forEach(button=>button.addEventListener("click",()=>applyPreset(button.dataset.preset)));
+el("export-markdown-btn").addEventListener("click",exportMarkdownActions);
+el("export-filtered-btn").addEventListener("click",()=>exportActions("filtered"));
+el("export-selected-btn").addEventListener("click",()=>exportActions("selected"));
+el("export-progress-btn").addEventListener("click",exportSelectedAndMarkProgress);
+el("actor-name").value=localStorage.getItem("weeklyActionsActorName")||"";
+loadActions();
+</script>
+</body>
+</html>
