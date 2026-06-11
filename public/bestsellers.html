@@ -757,6 +757,15 @@ function currentWeekToDateRange(){
   start.setDate(start.getDate()-delta);
   return{startDate:localIsoDate(start),endDate:localIsoDate(end)};
 }
+function daysInclusive(startDate,endDate){
+  const start=new Date(`${startDate}T00:00:00`);
+  const end=new Date(`${endDate}T00:00:00`);
+  return Math.max((end-start)/864e5+1,1);
+}
+function isCurrentWeekToDateRange(startDate,endDate){
+  const current=currentWeekToDateRange();
+  return startDate===current.startDate&&endDate===current.endDate;
+}
 function apiDateParams(prefix='api'){
   const startDate=document.getElementById(`${prefix}-start-date`)?.value||'';
   const endDate=document.getElementById(`${prefix}-end-date`)?.value||'';
@@ -783,7 +792,12 @@ function setWeekSelectValues(prefix,startDate,endDate){
   const periods=cachedTyPeriods();
   const fromPeriod=periods.find(period=>period.startDate===startDate);
   const toPeriod=periods.find(period=>period.endDate===endDate);
+  const current=currentWeekToDateRange();
+  if(from&&startDate===current.startDate)from.value=`${current.startDate}|${current.endDate}`;
+  else
   if(from&&fromPeriod)from.value=`${fromPeriod.startDate}|${fromPeriod.endDate}`;
+  if(to&&endDate===current.endDate&&startDate===current.startDate)to.value=`${current.startDate}|${current.endDate}`;
+  else
   if(to&&toPeriod)to.value=`${toPeriod.startDate}|${toPeriod.endDate}`;
 }
 function setServerPeriodFromSelect(value,prefix='api',autoLoad=false){
@@ -803,15 +817,16 @@ function applyTyWeekRange(prefix='api'){
   if(!fromStart||!toEnd)return;
   if(fromStart>toEnd){st('From week must be before To week.','err');return;}
   setApiDateParams(prefix,fromStart,toEnd);
-  setRangePresetValue(prefix,'custom');
+  setRangePresetValue(prefix,isCurrentWeekToDateRange(fromStart,toEnd)?'current':'custom');
 }
 function applyTyRangePreset(prefix='api',preset='latest'){
   const periods=cachedTyPeriods();
   if(preset==='current'){
     const range=currentWeekToDateRange();
     setApiDateParams(prefix,range.startDate,range.endDate);
+    setWeekSelectValues(prefix,range.startDate,range.endDate);
     setRangePresetValue(prefix,'current');
-    syncBestsellersFromApi(prefix);
+    loadCachedBestsellers(prefix);
     return;
   }
   if(!periods.length)return;
@@ -838,8 +853,10 @@ function renderServerPeriods(){
       to.innerHTML='<option value="">No saved weeks</option>';
       return;
     }
+    const current=currentWeekToDateRange();
+    const currentOption=`<option value="${current.startDate}|${current.endDate}">Current week to date (live)</option>`;
     const chronological=[...items].sort((a,b)=>a.startDate.localeCompare(b.startDate));
-    const options=chronological.map(period=>`<option value="${period.startDate}|${period.endDate}">${period.label}</option>`).join('');
+    const options=currentOption+chronological.map(period=>`<option value="${period.startDate}|${period.endDate}">${period.label}</option>`).join('');
     from.innerHTML=options;
     to.innerHTML=options;
   };
@@ -972,6 +989,10 @@ async function loadLyServerPeriod(startDate,endDate,prefix='ly-api'){
 async function loadCachedBestsellers(prefix='api'){
   try{
     const {startDate,endDate}=apiDateParams(prefix);
+    if(isCurrentWeekToDateRange(startDate,endDate)||daysInclusive(startDate,endDate)<7){
+      await syncBestsellersFromApi(prefix);
+      return;
+    }
     st('Loading cached bestsellers report...','info');
     const data=await apiJson(`/api/reports/bestsellers?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&sourceType=shopify_api`);
     applyServerBestsellers(data);
