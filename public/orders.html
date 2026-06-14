@@ -148,7 +148,7 @@ const invoiceTypes=["Deposit invoice","Balance invoice","Full invoice","Credit n
 const invoiceStatuses=["Awaiting FD","Sent to FD","Paid","Query"];
 const currencyOptions=["EUR","GBP","USD","Other"];
 const owners=["Buyer","Buying Director","FD / Finance","Merchandising","Supplier"];
-let state={orders:[],selectedId:"",selected:null,events:[],invoices:[],metrics:null,editingInvoiceId:"",invoiceEditorOpen:false};
+let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false};
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
@@ -253,6 +253,10 @@ function lineCostEur(line,order){
 
 function options(items,value,blank){
   return `${blank?`<option value="">${escapeHtml(blank)}</option>`:""}${items.map(item=>`<option${item===value?" selected":""}>${escapeHtml(item)}</option>`).join("")}`;
+}
+
+function userOptions(value,blank="Unassigned"){
+  return `${blank?`<option value="">${escapeHtml(blank)}</option>`:""}${(state.users||[]).map(user=>`<option value="${attr(user.id)}"${user.id===value?" selected":""}>${escapeHtml(user.displayName||user.email)}</option>`).join("")}`;
 }
 
 function badgeClass(value){
@@ -507,6 +511,7 @@ function renderInvoiceGroup(order){
   const formCurrency=formInvoice.currency||order.currency||"EUR";
   const formAmount=formInvoice.id?formInvoice.amount:invoiceDefaultAmount(order,formCurrency);
   const formOpen=state.invoiceEditorOpen||Boolean(editing);
+  const canManagePayment=canManageInvoicePayment();
   return `<div class="invoice-group">
     <div class="work-head"><h3>Invoices</h3><div class="actions"><span class="pill">${invoices.length} invoice${invoices.length===1?"":"s"}</span><button type="button" class="btn" onclick="toggleCreateInvoice()">${editing?"Edit invoice":"Create invoice"}</button></div></div>
     <div class="invoice-totals">
@@ -525,8 +530,8 @@ function renderInvoiceGroup(order){
         ${input("invoice-date","Invoice date",formInvoice.invoiceDate||"","date")}
         ${input("invoice-due","Due date",formInvoice.dueDate||"","date")}
         <div class="field"><label>Invoice file</label><input class="file-input" id="invoice-file" type="file" accept=".pdf,image/*"></div>
-        <div class="field"><label>Status</label><select class="select" id="invoice-status">${options(invoiceStatuses,formInvoice.status||"Awaiting FD")}</select></div>
-        <div class="field"><label>Checks</label><div class="invoice-checks"><label><input id="invoice-received" type="checkbox" ${formInvoice.id?(formInvoice.isReceived?"checked":""):"checked"}> Received</label><label><input id="invoice-sent" type="checkbox" ${formInvoice.sentToFd?"checked":""}> Sent to FD</label><label><input id="invoice-paid" type="checkbox" ${formInvoice.status==="Paid"?"checked":""}> Paid</label></div></div>
+        <div class="field"><label>Status</label><select class="select" id="invoice-status" ${canManagePayment?"":"disabled"}>${options(invoiceStatuses,formInvoice.status||"Awaiting FD")}</select></div>
+        <div class="field"><label>Checks</label><div class="invoice-checks"><label><input id="invoice-received" type="checkbox" ${formInvoice.id?(formInvoice.isReceived?"checked":""):"checked"}> Received</label><label><input id="invoice-sent" type="checkbox" ${formInvoice.sentToFd?"checked":""} ${canManagePayment?"":"disabled"}> Sent to FD</label><label><input id="invoice-paid" type="checkbox" ${formInvoice.status==="Paid"?"checked":""} ${canManagePayment?"":"disabled"}> Paid</label></div></div>
         ${input("invoice-notes","Invoice notes",formInvoice.notes||"","text")}
       </div>
       <div class="actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn primary" onclick="saveInvoice()">${editing?"Save invoice":"Upload invoice"}</button>${editing?`<button type="button" class="btn" onclick="cancelInvoiceEdit()">Cancel</button>`:""}</div>
@@ -559,6 +564,7 @@ function renderInvoiceRow(order,invoice){
   const fileLink=invoice.fileUrl?`<a class="file-icon" href="${attr(invoice.fileUrl)}" download="${attr(invoice.fileName||"invoice")}" target="_blank" title="${attr(invoice.fileName||"Open invoice")}" aria-label="Open invoice"></a>`:`<span class="file-icon empty" title="No file attached" aria-label="No file attached"></span>`;
   const code=String(invoice.currency||"GBP").toUpperCase();
   const equivalent=code==="EUR"?money.format(invoiceAmountGbp(invoice,order)):eurMoney.format(invoiceAmountEur(invoice,order));
+  const canManagePayment=canManageInvoicePayment();
   return `<tr>
     <td><strong title="${attr(invoice.invoiceType||"")}">${escapeHtml(invoice.invoiceNumber||invoice.invoiceType||"Invoice")}</strong><div class="invoice-row-actions"><button type="button" class="mini-btn" onclick="editInvoice('${attr(invoice.id)}')">Edit</button><button type="button" class="mini-btn danger" onclick="deleteInvoice('${attr(invoice.id)}')">Delete</button></div></td>
     <td>${fileLink}</td>
@@ -566,9 +572,16 @@ function renderInvoiceRow(order,invoice){
     <td>${formatDate(invoice.dueDate)||"-"}</td>
     <td><span class="badge ${badgeClass(invoice.status)}">${escapeHtml(invoice.status||"Awaiting FD")}</span></td>
     <td><input type="checkbox" ${invoice.isReceived?"checked":""} onchange="toggleInvoice('${attr(invoice.id)}','isReceived',this.checked)" aria-label="Received"></td>
-    <td><input type="checkbox" ${invoice.sentToFd?"checked":""} onchange="toggleInvoice('${attr(invoice.id)}','sentToFd',this.checked)" aria-label="Sent to FD"></td>
-    <td><input type="checkbox" ${invoice.status==="Paid"?"checked":""} onchange="toggleInvoice('${attr(invoice.id)}','paid',this.checked)" aria-label="Paid"></td>
+    <td><input type="checkbox" ${invoice.sentToFd?"checked":""} ${canManagePayment?"":"disabled"} onchange="toggleInvoice('${attr(invoice.id)}','sentToFd',this.checked)" aria-label="Sent to FD"></td>
+    <td><input type="checkbox" ${invoice.status==="Paid"?"checked":""} ${canManagePayment?"":"disabled"} onchange="toggleInvoice('${attr(invoice.id)}','paid',this.checked)" aria-label="Paid"></td>
   </tr>`;
+}
+
+function canManageInvoicePayment(){
+  return !window.MERCH_AUTH
+    || window.MERCH_AUTH.state.authMode !== "google"
+    || window.MERCH_AUTH.hasRole("Finance")
+    || window.MERCH_AUTH.hasRole("Admin");
 }
 
 function orderActionButtons(order){
@@ -652,6 +665,7 @@ function renderDetail(){
       <div class="grid3">
         ${input("actor-name","Updated by",localStorage.getItem("ordersActorName")||"")}
         ${select("next-owner","Next owner",owners,w.nextActionOwner)}
+        <div class="field"><label>Assignee</label><select class="select" id="next-assignee">${userOptions(w.nextActionUserId)}</select></div>
         ${input("next-action","Next action",w.nextAction)}
       </div>
       <div class="actions" style="justify-content:flex-start;margin-top:10px">
@@ -732,7 +746,7 @@ async function saveWorkflow(section,patch){
 }
 
 async function saveNextAction(){
-  await saveWorkflow("next action",{nextActionOwner:val("next-owner"),nextAction:val("next-action")}).catch(showError);
+  await saveWorkflow("next action",{nextActionOwner:val("next-owner"),nextActionUserId:val("next-assignee"),nextAction:val("next-action")}).catch(showError);
 }
 
 async function saveApproval(){
@@ -887,6 +901,7 @@ async function setArchiveSelected(archived){
   state.selected=result.order;
   state.events=result.events||[];
   state.invoices=result.invoices||[];
+  state.users=result.users||state.users||[];
   const index=state.orders.findIndex(order=>order.id===result.order.id);
   if(index!==-1)state.orders[index]=result.order;
   recalcMetrics();
@@ -968,6 +983,7 @@ async function loadWorkspace(){
   const data=await response.json();
   state.orders=data.orders||[];
   state.metrics=data.metrics||{};
+  state.users=data.users||[];
   recalcMetrics();
   renderMetrics();
   renderFilters();

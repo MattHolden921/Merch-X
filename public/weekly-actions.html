@@ -175,7 +175,7 @@ const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maxim
 const numberFmt=new Intl.NumberFormat("en-GB",{maximumFractionDigits:1});
 const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:"numeric"});
 const typeLabels={reorder:"Reorder risk",markdown:"Markdown risk",feature:"Feature winner",watch:"Watch item"};
-let state={actions:[],selected:null,metrics:null,filters:{statuses:[],owners:[],priorities:[],types:[],seasons:[]},periods:[],selectedId:"",view:localStorage.getItem("weeklyActionsView")||"list",sortKey:localStorage.getItem("weeklyActionsSortKey")||"priority",sortDir:Number(localStorage.getItem("weeklyActionsSortDir")||1)};
+let state={actions:[],selected:null,metrics:null,filters:{statuses:[],owners:[],priorities:[],types:[],seasons:[]},periods:[],users:[],selectedId:new URLSearchParams(location.search).get("id")||"",view:localStorage.getItem("weeklyActionsView")||"list",sortKey:localStorage.getItem("weeklyActionsSortKey")||"priority",sortDir:Number(localStorage.getItem("weeklyActionsSortDir")||1)};
 let selectedRows=new Set();
 
 const el=id=>document.getElementById(id);
@@ -213,6 +213,10 @@ function attr(value){return escapeHtml(value).replaceAll("`","&#96;");}
 
 function options(items,value,blank,labels={}){
   return `${blank?`<option value="">${escapeHtml(blank)}</option>`:""}${items.map(item=>`<option value="${attr(item)}"${item===value?" selected":""}>${escapeHtml(labels[item]||item)}</option>`).join("")}`;
+}
+
+function userOptions(value,blank="Unassigned"){
+  return `${blank?`<option value="">${escapeHtml(blank)}</option>`:""}${(state.users||[]).map(user=>`<option value="${attr(user.id)}"${user.id===value?" selected":""}>${escapeHtml(user.displayName||user.email)}</option>`).join("")}`;
 }
 
 function formatDate(value){
@@ -500,6 +504,7 @@ function renderDetail(){
         ${input("detail-actor","Updated by",localStorage.getItem("weeklyActionsActorName")||val("actor-name"))}
         ${select("detail-status","Status",state.filters.statuses||[],action.status)}
         ${select("detail-owner","Owner",state.filters.owners||[],action.owner)}
+        <div class="field"><label>Assignee</label><select class="select" id="detail-assignee">${userOptions(action.assigneeUserId)}</select></div>
         ${select("detail-priority","Priority",state.filters.priorities||[],action.priority)}
         ${input("detail-due","Due date",action.dueDate,"date")}
         <div class="field"><label>Snooze</label><select class="select" id="detail-snooze" onchange="applyDetailSnooze(this.value)"><option value="">No preset</option><option value="14">2 weeks</option><option value="28">4 weeks</option><option value="56">8 weeks</option><option value="84">12 weeks</option></select></div>
@@ -535,6 +540,7 @@ function applyData(data){
   state.metrics=data.metrics||state.metrics;
   state.filters=data.filters||state.filters;
   state.periods=data.periods||state.periods;
+  state.users=data.users||state.users||[];
   renderMetrics();
   renderFilters();
   renderPeriods();
@@ -615,6 +621,7 @@ async function saveSelected(){
   const patch={
     status:val("detail-status"),
     owner:val("detail-owner"),
+    assigneeUserId:val("detail-assignee"),
     priority:val("detail-priority"),
     dueDate:val("detail-due")
   };

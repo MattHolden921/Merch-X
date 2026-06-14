@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Users</title>
+<link rel="stylesheet" href="design-system.css">
+<style>
+.wrap{max-width:1180px}
+.user-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.user-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:8px;border-bottom:1px solid var(--ds-line)}
+.user-table td{font-size:12px;color:var(--ds-text-muted);padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:top}
+.user-table strong{display:block;color:var(--ds-text);font-size:13px;margin-bottom:2px}
+.role-grid{display:flex;flex-wrap:wrap;gap:8px}
+.role-grid label{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ds-text-muted)}
+.role-grid input{width:auto;min-height:0}
+.switch{display:inline-flex;align-items:center;gap:6px}
+.switch input{width:auto;min-height:0}
+@media(max-width:760px){.user-table{min-width:860px}.table-wrap{overflow:auto}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>Users</h1>
+      <p class="sub">Activate Google Workspace users and assign Merch X roles.</p>
+    </div>
+    <div class="actions"><button class="btn primary" id="refresh-btn" type="button">Refresh</button></div>
+  </section>
+  <section class="panel">
+    <p class="status" id="status-note">Loading users.</p>
+    <div class="table-wrap" id="users"></div>
+  </section>
+</main>
+<script>
+let roles=[];
+let users=[];
+const el=id=>document.getElementById(id);
+function escapeHtml(value){return String(value||"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));}
+async function apiJson(path,options){
+  const response=await fetch(path,options);
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.error||"Request failed");
+  return data;
+}
+function render(){
+  if(!users.length){
+    el("users").innerHTML='<p class="empty-state">No Google users have signed in yet.</p>';
+    return;
+  }
+  el("users").innerHTML=`<table class="user-table">
+    <thead><tr><th>User</th><th style="width:110px">Active</th><th>Roles</th><th style="width:130px">Last login</th><th style="width:100px"></th></tr></thead>
+    <tbody>${users.map(user=>`
+      <tr>
+        <td><strong>${escapeHtml(user.displayName||user.email)}</strong><span>${escapeHtml(user.email)}</span></td>
+        <td><label class="switch"><input type="checkbox" data-active="${escapeHtml(user.id)}" ${user.isActive?"checked":""}> Active</label></td>
+        <td><div class="role-grid">${roles.map(role=>`<label><input type="checkbox" data-role="${escapeHtml(user.id)}" value="${escapeHtml(role)}" ${(user.roles||[]).includes(role)?"checked":""}> ${escapeHtml(role)}</label>`).join("")}</div></td>
+        <td>${escapeHtml(user.lastLoginAt?new Date(user.lastLoginAt).toLocaleString("en-GB"):"Never")}</td>
+        <td><button class="btn" type="button" onclick="saveUser('${escapeHtml(user.id)}')">Save</button></td>
+      </tr>`).join("")}</tbody>
+  </table>`;
+}
+async function load(){
+  el("status-note").textContent="Loading users.";
+  try{
+    const data=await apiJson("/api/admin/users");
+    users=data.users||[];
+    roles=data.roles||[];
+    render();
+    el("status-note").textContent=`${users.length} users loaded.`;
+  }catch(error){
+    el("status-note").textContent=error.message;
+    el("status-note").className="status err";
+  }
+}
+async function saveUser(id){
+  const active=Boolean(document.querySelector(`[data-active="${CSS.escape(id)}"]`)?.checked);
+  const selected=[...document.querySelectorAll(`[data-role="${CSS.escape(id)}"]:checked`)].map(input=>input.value);
+  el("status-note").className="status";
+  el("status-note").textContent="Saving user.";
+  try{
+    const data=await apiJson("/api/admin/users/update",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({userId:id,patch:{isActive:active,roles:selected}})});
+    users=data.users||[];
+    roles=data.roles||roles;
+    render();
+    el("status-note").textContent="User saved.";
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+  }
+}
+el("refresh-btn").addEventListener("click",load);
+load();
+</script>
+</body>
+</html>

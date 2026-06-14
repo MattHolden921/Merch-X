@@ -58,6 +58,12 @@ loadEnvFile();
 const port = Number(process.env.PORT || 3000);
 const sqliteDbPath = process.env.DATABASE_PATH || path.join(dataDir, "merch-x.sqlite");
 const uploadsDir = process.env.UPLOADS_DIR || path.join(dataDir, "uploads");
+const authCookieName = "mx_session";
+const oauthStateCookieName = "mx_oauth_state";
+const oauthNextCookieName = "mx_oauth_next";
+const csrfHeaderName = "x-csrf-token";
+const sessionDurationMs = 14 * 24 * 60 * 60 * 1000;
+const authRoles = ["Admin", "Buyer", "Buying Director", "Finance", "Merchandising"];
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -74,15 +80,26 @@ const mimeTypes = {
   ".ico": "image/x-icon"
 };
 
+function authMode() {
+  return String(process.env.AUTH_MODE || (process.env.APP_USERNAME && process.env.APP_PASSWORD ? "basic" : "none")).trim().toLowerCase();
+}
+
+function corsHeaders() {
+  if (authMode() === "google") return {};
+  return {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+    "access-control-allow-headers": `content-type, authorization, ${csrfHeaderName}`
+  };
+}
+
 function sendJson(res, status, payload) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store, no-cache, must-revalidate",
     "pragma": "no-cache",
     "expires": "0",
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
-    "access-control-allow-headers": "content-type, authorization"
+    ...corsHeaders()
   });
   res.end(JSON.stringify(payload));
 }
@@ -2546,11 +2563,185 @@ function timingSafeEqual(a, b) {
   return left.length === right.length && require("node:crypto").timingSafeEqual(left, right);
 }
 
-function isAuthorized(req) {
+function splitEnvList(value) {
+  return String(value || "").split(/[,\s]+/).map(item => item.trim()).filter(Boolean);
+}
+
+function adminEmailSet() {
+  return new Set(splitEnvList(process.env.APP_ADMIN_EMAILS).map(email => email.toLowerCase()));
+}
+
+function allowedGoogleDomains() {
+  const configured = splitEnvList(process.env.GOOGLE_ALLOWED_DOMAINS).map(domain => domain.toLowerCase().replace(/^@/, ""));
+  if (configured.length) return configured;
+  return [...adminEmailSet()].map(email => email.split("@")[1]).filter(Boolean);
+}
+
+function parseCookies(req) {
+  const cookies = {};
+  for (const part of String(req.headers.cookie || "").split(";")) {
+    const equalsAt = part.indexOf("=");
+    if (equalsAt === -1) continue;
+    const key = part.slice(0, equalsAt).trim();
+    const value = part.slice(equalsAt + 1).trim();
+    if (key) cookies[key] = decodeURIComponent(value);
+  }
+  return cookies;
+}
+
+function isSecureRequest(req) {
+  return req.socket.encrypted || String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
+}
+
+function appendHeader(res, name, value) {
+  const current = res.getHeader(name);
+  if (!current) {
+    res.setHeader(name, value);
+  } else if (Array.isArray(current)) {
+    res.setHeader(name, [...current, value]);
+  } else {
+    res.setHeader(name, [current, value]);
+  }
+}
+
+function setCookie(req, res, name, value, options = {}) {
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax"
+  ];
+  if (options.maxAge != null) parts.push(`Max-Age=${Math.max(0, Number(options.maxAge || 0))}`);
+  if (options.expires) parts.push(`Expires=${options.expires.toUTCString()}`);
+  if (isSecureRequest(req)) parts.push("Secure");
+  appendHeader(res, "Set-Cookie", parts.join("; "));
+}
+
+function clearCookie(req, res, name) {
+  setCookie(req, res, name, "", { maxAge: 0, expires: new Date(0) });
+}
+
+function sessionHash(token) {
+  return crypto.createHmac("sha256", process.env.SESSION_SECRET || "merch-x-dev-session-secret").update(String(token || "")).digest("hex");
+}
+
+function publicUser(row) {
+  if (!row) return null;
+  const roles = parseJson(row.roles_json, []);
+  return {
+    id: row.id,
+    email: row.email || "",
+    displayName: row.display_name || row.email || "",
+    roles: Array.isArray(roles) ? roles.filter(role => authRoles.includes(role)) : [],
+    isAdmin: Boolean(row.is_admin),
+    isActive: Boolean(row.is_active),
+    lastLoginAt: row.last_login_at || "",
+    createdAt: row.created_at || ""
+  };
+}
+
+function systemUser() {
+  return {
+    id: "system",
+    email: "",
+    displayName: "Team",
+    roles: ["Admin"],
+    isAdmin: true,
+    isActive: true,
+    csrfToken: ""
+  };
+}
+
+function actorName(req) {
+  return req.currentUser?.displayName || req.currentUser?.email || "Team";
+}
+
+function actorData(req) {
+  return req.currentUser?.id && req.currentUser.id !== "system"
+    ? { actorUserId: req.currentUser.id, actorEmail: req.currentUser.email || "" }
+    : {};
+}
+
+function userHasRole(user, roles) {
+  if (!user?.isActive) return false;
+  if (user.isAdmin || (user.roles || []).includes("Admin")) return true;
+  return roles.some(role => (user.roles || []).includes(role));
+}
+
+function requireRoles(req, res, roles, message = "You do not have permission to do that.") {
+  if (authMode() !== "google") return true;
+  if (userHasRole(req.currentUser, roles)) return true;
+  sendJson(res, 403, { error: message });
+  return false;
+}
+
+function rolesFromEnv(key, fallback) {
+  const configured = splitEnvList(process.env[key]).filter(role => authRoles.includes(role));
+  return configured.length ? configured : fallback;
+}
+
+function skuRegisterRoles() {
+  return rolesFromEnv("SKU_REGISTER_ROLES", ["Admin", "Buyer"]);
+}
+
+function readSessionUser(req) {
+  const token = parseCookies(req)[authCookieName];
+  if (!token) return null;
+  const db = openOrderSqliteDb();
+  const row = db.prepare(`
+    SELECT s.csrf_token, s.expires_at, u.*
+    FROM auth_sessions s
+    JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ?
+  `).get(sessionHash(token));
+  if (!row || !row.is_active || new Date(row.expires_at).getTime() <= Date.now()) return null;
+  db.prepare("UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = ?").run(sessionHash(token));
+  return { ...publicUser(row), csrfToken: row.csrf_token || "" };
+}
+
+function createSession(req, res, userId) {
+  const token = crypto.randomBytes(32).toString("base64url");
+  const csrfToken = crypto.randomBytes(24).toString("base64url");
+  const expiresAt = new Date(Date.now() + sessionDurationMs).toISOString();
+  openOrderSqliteDb().prepare(`
+    INSERT INTO auth_sessions (id, user_id, token_hash, csrf_token, expires_at, created_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).run(crypto.randomUUID(), userId, sessionHash(token), csrfToken, expiresAt);
+  setCookie(req, res, authCookieName, token, { maxAge: Math.floor(sessionDurationMs / 1000), expires: new Date(Date.now() + sessionDurationMs) });
+}
+
+function destroySession(req, res) {
+  const token = parseCookies(req)[authCookieName];
+  if (token) openOrderSqliteDb().prepare("DELETE FROM auth_sessions WHERE token_hash = ?").run(sessionHash(token));
+  clearCookie(req, res, authCookieName);
+}
+
+function sendRedirect(res, location) {
+  res.writeHead(302, { location });
+  res.end();
+}
+
+function isPublicAuthPath(req) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  return url.pathname === "/login.html"
+    || url.pathname === "/design-system.css"
+    || url.pathname === "/auth.js"
+    || url.pathname === "/favicon.ico"
+    || url.pathname === "/api/auth/me"
+    || url.pathname === "/api/auth/google/start"
+    || url.pathname === "/api/auth/google/callback";
+}
+
+function hasBasicCredentials() {
   const username = process.env.APP_USERNAME;
   const password = process.env.APP_PASSWORD;
-  if (!username || !password) return true;
+  return Boolean(username && password);
+}
 
+function isBasicAuthorized(req) {
+  if (!hasBasicCredentials()) return true;
+  const username = process.env.APP_USERNAME;
+  const password = process.env.APP_PASSWORD;
   const header = req.headers.authorization || "";
   if (!header.startsWith("Basic ")) return false;
 
@@ -2563,7 +2754,50 @@ function isAuthorized(req) {
   return timingSafeEqual(givenUser, username) && timingSafeEqual(givenPass, password);
 }
 
-function requireAuth(res) {
+function isAuthorized(req) {
+  const mode = authMode();
+  if ((mode === "google" || mode === "basic") && hasBasicCredentials() && !isBasicAuthorized(req)) {
+    req.authFailure = "basic";
+    return false;
+  }
+
+  if (mode === "google") {
+    if (isPublicAuthPath(req)) return true;
+    const user = readSessionUser(req);
+    if (!user) {
+      req.authFailure = "google";
+      return false;
+    }
+    req.currentUser = user;
+    return true;
+  }
+
+  if (mode === "basic" || mode === "none") {
+    req.currentUser = systemUser();
+    return true;
+  }
+
+  req.currentUser = systemUser();
+  return true;
+}
+
+function requireAuth(req, res) {
+  if (req.authFailure === "basic") {
+    res.writeHead(401, {
+      "www-authenticate": 'Basic realm="Merch X", charset="UTF-8"',
+      "content-type": "text/plain; charset=utf-8"
+    });
+    res.end("Authentication required");
+    return;
+  }
+  if (authMode() === "google") {
+    if (req.url.startsWith("/api/") || req.url.startsWith("/uploads/")) {
+      sendJson(res, 401, { error: "Authentication required", loginUrl: "/login.html" });
+      return;
+    }
+    sendRedirect(res, `/login.html?next=${encodeURIComponent(req.url || "/")}`);
+    return;
+  }
   res.writeHead(401, {
     "www-authenticate": 'Basic realm="Merch X", charset="UTF-8"',
     "content-type": "text/plain; charset=utf-8"
@@ -2574,9 +2808,10 @@ function requireAuth(res) {
 function sendJson(res, status, payload) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "content-type, authorization"
+    "cache-control": "no-store, no-cache, must-revalidate",
+    "pragma": "no-cache",
+    "expires": "0",
+    ...corsHeaders()
   });
   res.end(JSON.stringify(payload));
 }
@@ -2604,6 +2839,170 @@ function readJsonBody(req) {
     });
     req.on("error", reject);
   });
+}
+
+function verifyCsrf(req, res) {
+  if (authMode() !== "google") return true;
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return true;
+  if (req.url.startsWith("/api/auth/google/")) return true;
+  const sent = String(req.headers[csrfHeaderName] || "");
+  const expected = String(req.currentUser?.csrfToken || "");
+  if (sent && expected && timingSafeEqual(sent, expected)) return true;
+  sendJson(res, 403, { error: "Security check failed. Refresh the page and try again." });
+  return false;
+}
+
+function googleAuthConfig(req) {
+  const protocol = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() || (req.socket.encrypted ? "https" : "http");
+  return {
+    clientId: process.env.GOOGLE_AUTH_CLIENT_ID || "",
+    clientSecret: process.env.GOOGLE_AUTH_CLIENT_SECRET || "",
+    redirectUri: process.env.GOOGLE_AUTH_REDIRECT_URI || `${protocol}://${req.headers.host}/api/auth/google/callback`
+  };
+}
+
+function startGoogleAppAuth(req, res) {
+  const { clientId, redirectUri } = googleAuthConfig(req);
+  if (!clientId) {
+    sendHtml(res, 500, "<p>Google sign-in is not configured. Set GOOGLE_AUTH_CLIENT_ID and GOOGLE_AUTH_CLIENT_SECRET.</p>");
+    return;
+  }
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const state = crypto.randomBytes(24).toString("base64url");
+  const next = String(url.searchParams.get("next") || "/");
+  setCookie(req, res, oauthStateCookieName, state, { maxAge: 600 });
+  setCookie(req, res, oauthNextCookieName, next.startsWith("/") ? next : "/", { maxAge: 600 });
+  const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  authUrl.searchParams.set("client_id", clientId);
+  authUrl.searchParams.set("redirect_uri", redirectUri);
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("scope", "openid email profile");
+  authUrl.searchParams.set("state", state);
+  authUrl.searchParams.set("nonce", crypto.randomBytes(16).toString("base64url"));
+  const domains = allowedGoogleDomains();
+  if (domains.length === 1) authUrl.searchParams.set("hd", domains[0]);
+  sendRedirect(res, authUrl.toString());
+}
+
+function base64UrlJson(value) {
+  return JSON.parse(Buffer.from(String(value || ""), "base64url").toString("utf8"));
+}
+
+let googleJwksCache = { expiresAt: 0, keys: [] };
+
+async function googleJwks() {
+  if (Date.now() < googleJwksCache.expiresAt && googleJwksCache.keys.length) return googleJwksCache.keys;
+  const response = await requestJson("https://www.googleapis.com/oauth2/v3/certs");
+  const maxAgeMatch = String(response.headers?.["cache-control"] || "").match(/max-age=(\d+)/i);
+  googleJwksCache = {
+    keys: response.json.keys || [],
+    expiresAt: Date.now() + Number(maxAgeMatch?.[1] || 3600) * 1000
+  };
+  return googleJwksCache.keys;
+}
+
+async function verifyGoogleIdToken(idToken, expectedAudience) {
+  const parts = String(idToken || "").split(".");
+  if (parts.length !== 3) throw new Error("Invalid Google ID token.");
+  const header = base64UrlJson(parts[0]);
+  const payload = base64UrlJson(parts[1]);
+  const key = (await googleJwks()).find(item => item.kid === header.kid);
+  if (!key) throw new Error("Google signing key was not found.");
+  const verifier = crypto.createVerify("RSA-SHA256");
+  verifier.update(`${parts[0]}.${parts[1]}`);
+  verifier.end();
+  const ok = verifier.verify(crypto.createPublicKey({ key, format: "jwk" }), Buffer.from(parts[2], "base64url"));
+  if (!ok) throw new Error("Google ID token signature could not be verified.");
+  if (!["accounts.google.com", "https://accounts.google.com"].includes(payload.iss)) throw new Error("Invalid Google token issuer.");
+  if (payload.aud !== expectedAudience) throw new Error("Invalid Google token audience.");
+  if (Number(payload.exp || 0) * 1000 <= Date.now()) throw new Error("Google token has expired.");
+  if (!payload.email || payload.email_verified !== true) throw new Error("Google account email is not verified.");
+  const domain = String(payload.hd || payload.email.split("@")[1] || "").toLowerCase();
+  const allowed = allowedGoogleDomains();
+  if (!allowed.length) throw new Error("No Google Workspace domain is configured for Merch X.");
+  if (!allowed.includes(domain)) throw new Error("That Google account is not allowed for Merch X.");
+  return payload;
+}
+
+function upsertGoogleUser(profile) {
+  const db = openOrderSqliteDb();
+  const email = String(profile.email || "").toLowerCase();
+  const existing = db.prepare("SELECT * FROM users WHERE google_sub = ? OR email = ?").get(String(profile.sub || ""), email);
+  const adminEmails = adminEmailSet();
+  const isEnvAdmin = adminEmails.has(email);
+  const roles = isEnvAdmin ? ["Admin"] : parseJson(existing?.roles_json, []);
+  const active = isEnvAdmin ? 1 : existing ? Number(existing.is_active || 0) : 0;
+  const isAdmin = isEnvAdmin ? 1 : Number(existing?.is_admin || 0);
+  const id = existing?.id || crypto.randomUUID();
+  db.prepare(`
+    INSERT INTO users (id, google_sub, email, display_name, roles_json, is_active, is_admin, created_at, updated_at, last_login_at)
+    VALUES (@id, @googleSub, @email, @displayName, @rolesJson, @isActive, @isAdmin, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      google_sub = excluded.google_sub,
+      email = excluded.email,
+      display_name = excluded.display_name,
+      roles_json = excluded.roles_json,
+      is_active = excluded.is_active,
+      is_admin = excluded.is_admin,
+      updated_at = CURRENT_TIMESTAMP,
+      last_login_at = CURRENT_TIMESTAMP
+  `).run({
+    id,
+    googleSub: String(profile.sub || ""),
+    email,
+    displayName: String(profile.name || email).trim(),
+    rolesJson: JSON.stringify(Array.isArray(roles) ? roles.filter(role => authRoles.includes(role)) : []),
+    isActive: active,
+    isAdmin
+  });
+  return db.prepare("SELECT * FROM users WHERE id = ?").get(id);
+}
+
+async function finishGoogleAppAuth(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const expectedState = parseCookies(req)[oauthStateCookieName] || "";
+  const returnedState = String(url.searchParams.get("state") || "");
+  clearCookie(req, res, oauthStateCookieName);
+  const next = parseCookies(req)[oauthNextCookieName] || "/";
+  clearCookie(req, res, oauthNextCookieName);
+  if (!expectedState || !returnedState || !timingSafeEqual(expectedState, returnedState)) {
+    sendHtml(res, 401, "<p>Google sign-in failed the security check. Please try again.</p>");
+    return;
+  }
+  const code = String(url.searchParams.get("code") || "");
+  if (!code) {
+    sendHtml(res, 400, "<p>Google did not return an authorization code.</p>");
+    return;
+  }
+  const { clientId, clientSecret, redirectUri } = googleAuthConfig(req);
+  const tokenResponse = await requestJson("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code"
+    }).toString()
+  });
+  if (!tokenResponse.ok || !tokenResponse.json.id_token) {
+    throw new Error(tokenResponse.json.error_description || tokenResponse.json.error || "Google token exchange failed.");
+  }
+  const profile = await verifyGoogleIdToken(tokenResponse.json.id_token, clientId);
+  const user = upsertGoogleUser(profile);
+  if (!user.is_active) {
+    sendHtml(res, 403, `
+      <main style="font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;line-height:1.6">
+        <h1>Access pending</h1>
+        <p>Your Google account is valid, but a Merch X admin needs to activate <strong>${escapeHtml(user.email)}</strong> before you can use the app.</p>
+        <p><a href="/login.html">Back to sign in</a></p>
+      </main>
+    `);
+    return;
+  }
+  createSession(req, res, user.id);
+  sendRedirect(res, next.startsWith("/") ? next : "/");
 }
 
 function emptyOrderDb() {
@@ -2653,6 +3052,61 @@ function openOrderSqliteDb() {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      google_sub TEXT UNIQUE,
+      email TEXT NOT NULL UNIQUE,
+      display_name TEXT,
+      roles_json TEXT NOT NULL DEFAULT '[]',
+      is_active INTEGER NOT NULL DEFAULT 0,
+      is_admin INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_login_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      csrf_token TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS work_handoffs (
+      id TEXT PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      from_role TEXT,
+      to_role TEXT,
+      from_user_id TEXT,
+      to_user_id TEXT,
+      message TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_by_user_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_by_user_id TEXT,
+      completed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      entity_type TEXT,
+      entity_id TEXT,
+      title TEXT NOT NULL,
+      body TEXT,
+      url TEXT,
+      is_read INTEGER NOT NULL DEFAULT 0,
+      email_status TEXT NOT NULL DEFAULT 'not_configured',
+      email_error TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      read_at TEXT,
+      emailed_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS suppliers (
@@ -2715,6 +3169,7 @@ function openOrderSqliteDb() {
       intake_reference TEXT,
       intake_notes TEXT,
       next_action_owner TEXT,
+      next_action_user_id TEXT,
       next_action TEXT,
       data TEXT,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -2906,6 +3361,7 @@ function openOrderSqliteDb() {
       season TEXT,
       category TEXT,
       owner TEXT NOT NULL,
+      assignee_user_id TEXT,
       status TEXT NOT NULL DEFAULT 'Open',
       priority TEXT NOT NULL DEFAULT 'Medium',
       due_date TEXT,
@@ -2934,6 +3390,10 @@ function openOrderSqliteDb() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_gid ON collection_reorder_audit(collection_gid);
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_work_handoffs_entity ON work_handoffs(entity_type, entity_id, status);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at);
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_applied ON collection_reorder_audit(applied_at);
     CREATE INDEX IF NOT EXISTS idx_issued_skus_issued_at ON issued_skus(issued_at);
     CREATE INDEX IF NOT EXISTS idx_order_events_order_created ON order_events(order_id, created_at);
@@ -2963,6 +3423,14 @@ function openOrderSqliteDb() {
   }
   if (!invoiceColumns.includes("file_size")) {
     orderSqliteDb.prepare("ALTER TABLE order_invoices ADD COLUMN file_size INTEGER DEFAULT 0").run();
+  }
+  const workflowColumns = orderSqliteDb.prepare("PRAGMA table_info(order_workflows)").all().map(column => column.name);
+  if (!workflowColumns.includes("next_action_user_id")) {
+    orderSqliteDb.prepare("ALTER TABLE order_workflows ADD COLUMN next_action_user_id TEXT").run();
+  }
+  const weeklyColumns = orderSqliteDb.prepare("PRAGMA table_info(weekly_actions)").all().map(column => column.name);
+  if (weeklyColumns.length && !weeklyColumns.includes("assignee_user_id")) {
+    orderSqliteDb.prepare("ALTER TABLE weekly_actions ADD COLUMN assignee_user_id TEXT").run();
   }
   const metricColumns = orderSqliteDb.prepare("PRAGMA table_info(report_product_metrics)").all().map(column => column.name);
   if (!metricColumns.includes("product_status")) {
@@ -3388,6 +3856,7 @@ const workflowFields = {
   intakeReference: "intake_reference",
   intakeNotes: "intake_notes",
   nextActionOwner: "next_action_owner",
+  nextActionUserId: "next_action_user_id",
   nextAction: "next_action"
 };
 
@@ -3397,6 +3866,7 @@ function todayIsoDate() {
 
 function normalizeWorkflowValue(key, value) {
   if (key === "paymentAmount") return Number(value || 0);
+  if (key === "nextActionUserId") return normalizeAssignableUserId(value);
   return value == null ? "" : String(value).trim();
 }
 
@@ -3523,6 +3993,7 @@ function defaultWorkflowForOrder(order) {
     intakeReference: "",
     intakeNotes: "",
     nextActionOwner: isPending ? "Buying Director" : isApproved ? "Buyer" : "Buyer",
+    nextActionUserId: "",
     nextAction: isPending ? "Review order for approval" : isApproved ? "Awaiting supplier invoice" : "Prepare or submit order",
     data: {},
     updatedAt: order?.savedAt || new Date().toISOString()
@@ -3552,6 +4023,7 @@ function workflowFromRow(row, order) {
     intakeReference: row.intake_reference || "",
     intakeNotes: row.intake_notes || "",
     nextActionOwner: row.next_action_owner || defaults.nextActionOwner,
+    nextActionUserId: row.next_action_user_id || "",
     nextAction: row.next_action || defaults.nextAction,
     data: parseJson(row.data, {}),
     updatedAt: row.updated_at || defaults.updatedAt
@@ -3679,12 +4151,12 @@ function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") 
       order_id, approval_status, approval_by, approval_decided_at, approval_notes,
       payment_status, payment_type, payment_amount, payment_due_date, payment_paid_date, payment_reference, payment_notes,
       intake_status, intake_eta_date, intake_confirmed_date, intake_actual_date, intake_reference, intake_notes,
-      next_action_owner, next_action, data, updated_at
+      next_action_owner, next_action_user_id, next_action, data, updated_at
     ) VALUES (
       @orderId, @approvalStatus, @approvalBy, @approvalDecidedAt, @approvalNotes,
       @paymentStatus, @paymentType, @paymentAmount, @paymentDueDate, @paymentPaidDate, @paymentReference, @paymentNotes,
       @intakeStatus, @intakeEtaDate, @intakeConfirmedDate, @intakeActualDate, @intakeReference, @intakeNotes,
-      @nextActionOwner, @nextAction, @data, CURRENT_TIMESTAMP
+      @nextActionOwner, @nextActionUserId, @nextAction, @data, CURRENT_TIMESTAMP
     )
     ON CONFLICT(order_id) DO UPDATE SET
       approval_status = excluded.approval_status,
@@ -3705,6 +4177,7 @@ function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") 
       intake_reference = excluded.intake_reference,
       intake_notes = excluded.intake_notes,
       next_action_owner = excluded.next_action_owner,
+      next_action_user_id = excluded.next_action_user_id,
       next_action = excluded.next_action,
       data = excluded.data,
       updated_at = CURRENT_TIMESTAMP
@@ -3890,12 +4363,20 @@ function invoiceSummary(orderOrId) {
   };
 }
 
-function saveOrderInvoice(order, body) {
+function saveOrderInvoice(order, body, options = {}) {
   const db = openOrderSqliteDb();
-  const invoice = body.invoice || {};
-  const id = String(invoice.id || crypto.randomUUID());
+  const canManagePayment = options.canManagePayment !== false;
+  const rawInvoice = body.invoice || {};
+  const id = String(rawInvoice.id || crypto.randomUUID());
   const existing = db.prepare("SELECT * FROM order_invoices WHERE id = ? AND order_id = ?").get(id, String(order.id));
   const existingInvoice = existing ? invoiceFromRow(existing) : {};
+  const invoice = canManagePayment
+    ? rawInvoice
+    : {
+        ...rawInvoice,
+        sentToFd: existingInvoice.sentToFd || false,
+        status: existingInvoice.status || "Awaiting FD"
+      };
   const uploadedFile = writeInvoiceUpload(order, id, invoice);
   const filePath = uploadedFile?.filePath || existingInvoice.filePath || "";
   const fileSize = uploadedFile?.fileSize || existingInvoice.fileSize || 0;
@@ -3937,8 +4418,10 @@ function saveOrderInvoice(order, body) {
     amount: Number(invoice.amount || 0),
     currency: String(invoice.currency || order.terms?.currency || "GBP").trim(),
     isReceived: invoice.isReceived ? 1 : 0,
-    sentToFd: invoice.sentToFd ? 1 : 0,
-    status: String(invoice.status || (invoice.sentToFd ? "Sent to FD" : "Awaiting FD")).trim(),
+    sentToFd: canManagePayment && invoice.sentToFd ? 1 : existingInvoice.sentToFd ? 1 : 0,
+    status: canManagePayment
+      ? String(invoice.status || (invoice.sentToFd ? "Sent to FD" : "Awaiting FD")).trim()
+      : String(existingInvoice.status || "Awaiting FD").trim(),
     fileName,
     mimeType,
     filePath,
@@ -3950,14 +4433,14 @@ function saveOrderInvoice(order, body) {
     removeUploadFile(existingInvoice.filePath);
   }
 
-  const action = invoice.sentToFd ? "Invoice uploaded and sent to FD" : "Invoice uploaded";
+  const action = canManagePayment && invoice.sentToFd ? "Invoice uploaded and sent to FD" : "Invoice uploaded";
   recordOrderEvent(order.id, "invoice", body.actorName || "", action, { invoiceId: id, invoiceNumber: invoice.invoiceNumber || "", fileName });
-  syncPaymentWorkflowFromInvoices(order, body.actorName || "");
+  syncPaymentWorkflowFromInvoices(order, body.actorName || "", { invoiceUploaded: true });
 
   return readOrderInvoices(order.id);
 }
 
-function syncPaymentWorkflowFromInvoices(order, actorName = "") {
+function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
   const invoices = readOrderInvoices(order.id, false);
   const current = workflowFromRow(openOrderSqliteDb().prepare("SELECT * FROM order_workflows WHERE order_id = ?").get(String(order.id)), order);
   if (!invoices.length) {
@@ -3997,7 +4480,7 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "") {
       nextAction: "Pay remaining supplier invoice"
     }, actorName, "invoice");
     updateStoredOrderStatus(order.id, "Payment pending");
-  } else if (anyReceived || anySent) {
+  } else if (anyReceived || anySent || options.invoiceUploaded) {
     writeOrderWorkflow(order, {
       paymentStatus: "Ready to pay",
       paymentAmount: totals.orderTotal || totals.totalDue,
@@ -4079,6 +4562,7 @@ function weeklyActionFromRow(row, events = null) {
     season: row.season || "",
     category: row.category || "",
     owner: row.owner || "Merchandising",
+    assigneeUserId: row.assignee_user_id || "",
     status: row.status || "Open",
     priority: row.priority || "Medium",
     dueDate: row.due_date || "",
@@ -4113,6 +4597,584 @@ function recordWeeklyActionEvent(actionId, eventType, actorName, message, data =
     INSERT INTO weekly_action_events (id, action_id, event_type, actor_name, message, data, created_at)
     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `).run(crypto.randomUUID(), String(actionId), eventType || "update", actorName || "", message || "Updated", JSON.stringify(data || {}));
+}
+
+function roleForOwner(owner) {
+  return ({
+    "Buyer": "Buyer",
+    "Buying Director": "Buying Director",
+    "FD / Finance": "Finance",
+    "Finance": "Finance",
+    "Merchandising": "Merchandising"
+  })[String(owner || "").trim()] || "";
+}
+
+function publicAssignableUsers() {
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM users
+    WHERE is_active = 1
+    ORDER BY display_name COLLATE NOCASE, email COLLATE NOCASE
+  `).all().map(publicUser).filter(Boolean);
+}
+
+function normalizeAssignableUserId(value) {
+  const id = String(value || "").trim();
+  if (!id) return "";
+  const row = openOrderSqliteDb().prepare("SELECT id FROM users WHERE id = ? AND is_active = 1").get(id);
+  return row ? id : "";
+}
+
+function userById(userId) {
+  if (!userId) return null;
+  return publicUser(openOrderSqliteDb().prepare("SELECT * FROM users WHERE id = ?").get(String(userId)));
+}
+
+function resolveNotificationUserIds(userId, role) {
+  const explicit = normalizeAssignableUserId(userId);
+  if (explicit) return [explicit];
+  const appRole = roleForOwner(role);
+  if (!appRole) return [];
+  const users = publicAssignableUsers();
+  const matches = users.filter(user => (user.roles || []).includes(appRole)).map(user => user.id);
+  if (matches.length) return matches;
+  return users.filter(user => user.isAdmin || (user.roles || []).includes("Admin")).map(user => user.id);
+}
+
+function smtpConfigured() {
+  return Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM);
+}
+
+function notificationDigestDelayMinutes() {
+  const minutes = Number(process.env.NOTIFICATION_DIGEST_DELAY_MINUTES || 10);
+  return Number.isFinite(minutes) && minutes >= 0 ? minutes : 10;
+}
+
+function appBaseUrl() {
+  return String(process.env.APP_BASE_URL || process.env.PUBLIC_APP_URL || `http://localhost:${port}`).replace(/\/+$/, "");
+}
+
+function absoluteAppUrl(value) {
+  const raw = String(value || "/");
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `${appBaseUrl()}${raw.startsWith("/") ? raw : `/${raw}`}`;
+}
+
+function smtpRead(socket, label = "SMTP response") {
+  return new Promise((resolve, reject) => {
+    let buffer = "";
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`${label} timed out`));
+    }, 30_000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off("data", onData);
+      socket.off("error", onError);
+    };
+    const onData = (chunk) => {
+      buffer += chunk.toString("utf8");
+      const lines = buffer.split(/\r?\n/).filter(Boolean);
+      const last = lines[lines.length - 1] || "";
+      if (/^\d{3}\s/.test(last)) {
+        cleanup();
+        resolve(buffer);
+      }
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    socket.on("data", onData);
+    socket.on("error", onError);
+  });
+}
+
+async function smtpCommand(socket, command, expected = /^[23]/) {
+  if (command) socket.write(`${command}\r\n`);
+  const response = await smtpRead(socket, command ? `SMTP ${String(command).split(/\s+/)[0]}` : "SMTP greeting");
+  if (!expected.test(response)) throw new Error(response.trim().split(/\r?\n/).slice(-1)[0] || "SMTP command failed");
+  return response;
+}
+
+function smtpConnect(host, port) {
+  const net = require("node:net");
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, host);
+    const timer = setTimeout(() => {
+      cleanup();
+      socket.destroy();
+      reject(new Error("SMTP connection timed out"));
+    }, 30_000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off("connect", onConnect);
+      socket.off("error", onError);
+    };
+    const onConnect = () => {
+      cleanup();
+      resolve(socket);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    socket.once("connect", onConnect);
+    socket.once("error", onError);
+  });
+}
+
+function smtpStartTls(socket, host) {
+  const tls = require("node:tls");
+  return new Promise((resolve, reject) => {
+    const secure = tls.connect({ socket, servername: host });
+    const timer = setTimeout(() => {
+      cleanup();
+      secure.destroy();
+      reject(new Error("SMTP TLS handshake timed out"));
+    }, 30_000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      secure.off("secureConnect", onSecureConnect);
+      secure.off("error", onError);
+    };
+    const onSecureConnect = () => {
+      cleanup();
+      resolve(secure);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    secure.once("secureConnect", onSecureConnect);
+    secure.once("error", onError);
+  });
+}
+
+function dotStuff(value) {
+  return String(value || "")
+    .replace(/\r?\n/g, "\r\n")
+    .split("\r\n")
+    .map(line => line.startsWith(".") ? `.${line}` : line)
+    .join("\r\n");
+}
+
+function htmlShell(title, bodyHtml, actionUrl = "") {
+  const safeTitle = escapeHtml(title || "Merch X");
+  const safeActionUrl = actionUrl ? escapeHtml(actionUrl) : "";
+  return `<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#eef2f6;font-family:Arial,sans-serif;color:#172033">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eef2f6;padding:24px 0">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="620" cellspacing="0" cellpadding="0" style="max-width:620px;width:100%;background:#ffffff;border:1px solid #d6dee9;border-radius:6px;overflow:hidden">
+          <tr><td style="padding:16px 20px;border-bottom:1px solid #d6dee9;background:#f6f8fb"><strong style="font-size:16px;color:#172033">Merch X</strong></td></tr>
+          <tr><td style="padding:22px 20px">
+            <h1 style="font-size:20px;line-height:1.3;margin:0 0 12px;color:#172033">${safeTitle}</h1>
+            <div style="font-size:14px;line-height:1.6;color:#5f6f86">${bodyHtml}</div>
+            ${safeActionUrl ? `<p style="margin:20px 0 0"><a href="${safeActionUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:4px;font-weight:bold">Open in Merch X</a></p>` : ""}
+          </td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function simpleEmailHtml(title, bodyText, actionUrl = "") {
+  const lines = String(bodyText || "").split(/\r?\n/).filter(Boolean).map(line => `<p style="margin:0 0 10px">${escapeHtml(line)}</p>`).join("");
+  return htmlShell(title, lines || "<p style=\"margin:0\">You have a Merch X update.</p>", actionUrl);
+}
+
+async function sendSmtpEmail(to, subject, bodyText, htmlBody = "") {
+  const host = process.env.SMTP_HOST || "";
+  const port = Number(process.env.SMTP_PORT || 587);
+  const from = process.env.SMTP_FROM || "";
+  if (!host || !from || !to) throw new Error("SMTP is not configured.");
+  let socket = await smtpConnect(host, port);
+  await smtpCommand(socket, "");
+  let ehlo = await smtpCommand(socket, `EHLO ${process.env.SMTP_HELO || "merch-x.local"}`);
+  if (/STARTTLS/i.test(ehlo)) {
+    await smtpCommand(socket, "STARTTLS");
+    socket = await smtpStartTls(socket, host);
+    ehlo = await smtpCommand(socket, `EHLO ${process.env.SMTP_HELO || "merch-x.local"}`);
+  }
+  if (process.env.SMTP_USERNAME && process.env.SMTP_PASSWORD) {
+    const auth = Buffer.from(`\0${process.env.SMTP_USERNAME}\0${process.env.SMTP_PASSWORD}`).toString("base64");
+    await smtpCommand(socket, `AUTH PLAIN ${auth}`);
+  }
+  const escapeAddress = (value) => String(value || "").replace(/[<>\r\n]/g, "");
+  const cleanSubject = String(subject || "Merch X notification").replace(/[\r\n]+/g, " ").slice(0, 160);
+  const boundary = `merch-x-${crypto.randomBytes(12).toString("hex")}`;
+  const safeBody = dotStuff(bodyText);
+  const safeHtml = dotStuff(htmlBody || simpleEmailHtml(cleanSubject, bodyText));
+  const headers = [
+    `From: Merch X <${escapeAddress(from)}>`,
+    `To: ${escapeAddress(to)}`,
+    `Subject: ${cleanSubject}`,
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/alternative; boundary="${boundary}"`
+  ].join("\r\n");
+  const message = [
+    headers,
+    "",
+    `--${boundary}`,
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    safeBody,
+    `--${boundary}`,
+    "Content-Type: text/html; charset=utf-8",
+    "",
+    safeHtml,
+    `--${boundary}--`,
+    "."
+  ].join("\r\n");
+  await smtpCommand(socket, `MAIL FROM:<${escapeAddress(from)}>`);
+  await smtpCommand(socket, `RCPT TO:<${escapeAddress(to)}>`);
+  await smtpCommand(socket, "DATA", /^3/);
+  await smtpCommand(socket, message);
+  socket.write("QUIT\r\n");
+}
+
+async function notifyUser(userId, notification) {
+  if (!userId) return null;
+  const user = userById(userId);
+  if (!user?.isActive) return null;
+  const db = openOrderSqliteDb();
+  const id = crypto.randomUUID();
+  const emailMode = notification.emailMode || (notification.entityType === "weekly_action" ? "digest" : "immediate");
+  const initialEmailStatus = smtpConfigured()
+    ? emailMode === "digest" ? "digest_pending" : "pending"
+    : "not_configured";
+  db.prepare(`
+    INSERT INTO notifications (
+      id, user_id, entity_type, entity_id, title, body, url, is_read,
+      email_status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, CURRENT_TIMESTAMP)
+  `).run(
+    id,
+    userId,
+    notification.entityType || "",
+    notification.entityId || "",
+    notification.title || "Merch X notification",
+    notification.body || "",
+    notification.url || "",
+    initialEmailStatus
+  );
+  if (smtpConfigured() && emailMode !== "digest") {
+    try {
+      const actionUrl = absoluteAppUrl(notification.url || "/");
+      const text = `${notification.body || ""}\n\nOpen in Merch X: ${actionUrl}`;
+      await sendSmtpEmail(
+        user.email,
+        notification.title,
+        text,
+        simpleEmailHtml(notification.title, notification.body || "", actionUrl)
+      );
+      db.prepare("UPDATE notifications SET email_status = 'sent', emailed_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    } catch (error) {
+      db.prepare("UPDATE notifications SET email_status = 'failed', email_error = ? WHERE id = ?").run(String(error.message || error).slice(0, 500), id);
+    }
+  }
+  return id;
+}
+
+function digestEmailText(rows) {
+  const lines = [`You have ${rows.length} Weekly Action update${rows.length === 1 ? "" : "s"} in Merch X.`, ""];
+  for (const row of rows) {
+    lines.push(`- ${row.title}`);
+    if (row.body) lines.push(`  ${row.body}`);
+    lines.push(`  ${absoluteAppUrl(row.url || "/weekly-actions.html")}`);
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
+function digestEmailHtml(rows) {
+  const list = rows.map(row => {
+    const url = absoluteAppUrl(row.url || "/weekly-actions.html");
+    return `<tr>
+      <td style="padding:10px 0;border-bottom:1px solid #d6dee9">
+        <p style="margin:0 0 4px;color:#172033;font-weight:bold">${escapeHtml(row.title)}</p>
+        ${row.body ? `<p style="margin:0 0 8px;color:#5f6f86">${escapeHtml(row.body)}</p>` : ""}
+        <a href="${escapeHtml(url)}" style="color:#2563eb;text-decoration:none;font-weight:bold">Open action</a>
+      </td>
+    </tr>`;
+  }).join("");
+  return htmlShell(
+    `${rows.length} Weekly Action update${rows.length === 1 ? "" : "s"}`,
+    `<p style="margin:0 0 12px">Here are the Weekly Action updates grouped from the last few minutes.</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${list}</table>`,
+    absoluteAppUrl("/weekly-actions.html")
+  );
+}
+
+async function flushWeeklyActionEmailDigests() {
+  if (!smtpConfigured()) return;
+  const db = openOrderSqliteDb();
+  const delay = notificationDigestDelayMinutes();
+  const rows = db.prepare(`
+    SELECT n.id, n.user_id AS userId, n.title, n.body, n.url, n.created_at AS createdAt,
+           u.email, u.display_name AS displayName
+    FROM notifications n
+    JOIN users u ON u.id = n.user_id
+    WHERE n.email_status = 'digest_pending'
+      AND n.entity_type = 'weekly_action'
+      AND datetime(n.created_at) <= datetime('now', ?)
+      AND u.is_active = 1
+    ORDER BY n.user_id, n.created_at ASC
+    LIMIT 500
+  `).all(`-${delay} minutes`);
+  const byUser = new Map();
+  for (const row of rows) {
+    if (!byUser.has(row.userId)) byUser.set(row.userId, []);
+    byUser.get(row.userId).push(row);
+  }
+  for (const group of byUser.values()) {
+    const ids = group.map(row => row.id);
+    const placeholders = ids.map(() => "?").join(",");
+    try {
+      await sendSmtpEmail(
+        group[0].email,
+        `Merch X: ${group.length} Weekly Action update${group.length === 1 ? "" : "s"}`,
+        digestEmailText(group),
+        digestEmailHtml(group)
+      );
+      db.prepare(`UPDATE notifications SET email_status = 'sent', emailed_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).run(...ids);
+    } catch (error) {
+      db.prepare(`UPDATE notifications SET email_status = 'failed', email_error = ? WHERE id IN (${placeholders})`).run(String(error.message || error).slice(0, 500), ...ids);
+    }
+  }
+}
+
+function startNotificationDigestTimer() {
+  if (!smtpConfigured()) return;
+  setInterval(() => {
+    flushWeeklyActionEmailDigests().catch(error => {
+      console.error("Weekly action digest failed:", error.message || error);
+    });
+  }, 60_000).unref();
+  setTimeout(() => {
+    flushWeeklyActionEmailDigests().catch(error => {
+      console.error("Weekly action digest failed:", error.message || error);
+    });
+  }, 5_000).unref();
+}
+
+async function notifyMentionedUsers(req, message, entity) {
+  const text = String(message || "");
+  const emails = [...new Set((text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).map(email => email.toLowerCase()))];
+  if (!emails.length) return;
+  const db = openOrderSqliteDb();
+  for (const email of emails) {
+    const row = db.prepare("SELECT id FROM users WHERE lower(email) = ? AND is_active = 1").get(email);
+    if (!row) continue;
+    await notifyUser(row.id, {
+      entityType: entity.entityType,
+      entityId: entity.entityId,
+      title: entity.title || "You were mentioned in Merch X",
+      body: `${actorName(req)} mentioned you: ${text}`,
+      url: entity.url || "/"
+    });
+  }
+}
+
+async function recordWorkHandoff(req, handoff) {
+  const toUserIds = resolveNotificationUserIds(handoff.toUserId, handoff.toRole);
+  const db = openOrderSqliteDb();
+  const id = crypto.randomUUID();
+  db.prepare(`
+    INSERT INTO work_handoffs (
+      id, entity_type, entity_id, from_role, to_role, from_user_id, to_user_id,
+      message, status, created_by_user_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, CURRENT_TIMESTAMP)
+  `).run(
+    id,
+    handoff.entityType,
+    handoff.entityId,
+    handoff.fromRole || "",
+    handoff.toRole || "",
+    handoff.fromUserId || "",
+    toUserIds[0] || "",
+    handoff.message || "",
+    req.currentUser?.id && req.currentUser.id !== "system" ? req.currentUser.id : ""
+  );
+  for (const toUserId of toUserIds) {
+    await notifyUser(toUserId, {
+      entityType: handoff.entityType,
+      entityId: handoff.entityId,
+      title: handoff.title || "Merch X handoff",
+      body: handoff.message || "",
+      url: handoff.url || "/"
+    });
+  }
+  return id;
+}
+
+async function notifyOrderHandoffIfChanged(req, order, updatedOrder, previousWorkflow, workflow) {
+  if (!previousWorkflow || !workflow) return;
+  if (previousWorkflow.nextActionOwner === workflow.nextActionOwner && previousWorkflow.nextActionUserId === workflow.nextActionUserId) return;
+  const assignedUser = userById(workflow.nextActionUserId);
+  const message = assignedUser
+    ? `Handoff to ${assignedUser.displayName} (${workflow.nextActionOwner || "No role"})`
+    : `Handoff to ${workflow.nextActionOwner || "No owner"}`;
+  recordOrderEvent(order.id, "handoff", actorName(req), message, {
+    fromRole: previousWorkflow.nextActionOwner || "",
+    toRole: workflow.nextActionOwner || "",
+    fromUserId: previousWorkflow.nextActionUserId || "",
+    toUserId: workflow.nextActionUserId || "",
+    ...actorData(req)
+  });
+  await recordWorkHandoff(req, {
+    entityType: "order",
+    entityId: String(order.id),
+    fromRole: previousWorkflow.nextActionOwner || "",
+    toRole: workflow.nextActionOwner || "",
+    fromUserId: previousWorkflow.nextActionUserId || "",
+    toUserId: workflow.nextActionUserId || "",
+    title: `Order ${updatedOrder.orderNumber || order.orderNumber || ""} handed off`,
+    message: `${actorName(req)} assigned ${updatedOrder.orderNumber || "an order"}: ${workflow.nextAction || "Next action"}`,
+    url: `/orders.html?id=${encodeURIComponent(String(order.id))}`
+  });
+}
+
+function userPermissions(user) {
+  if (!user?.isActive) return [];
+  if (userHasRole(user, ["Admin"])) return ["all"];
+  const permissions = new Set(["view"]);
+  if (userHasRole(user, ["Buyer"])) {
+    permissions.add("orders:create");
+    permissions.add("orders:buyer");
+    permissions.add("skus:issue");
+    permissions.add("weekly:update");
+  }
+  if (userHasRole(user, ["Buying Director"])) permissions.add("orders:approve");
+  if (userHasRole(user, ["Finance"])) {
+    permissions.add("orders:payment");
+    permissions.add("orders:invoice");
+  }
+  if (userHasRole(user, ["Merchandising"])) {
+    permissions.add("orders:intake");
+    permissions.add("orders:archive");
+    permissions.add("weekly:update");
+  }
+  return [...permissions];
+}
+
+function rolesForOrderSection(section) {
+  return ({
+    approval: ["Buying Director", "Admin"],
+    payment: ["Finance", "Admin"],
+    invoice: ["Finance", "Admin"],
+    intake: ["Merchandising", "Admin"],
+    "next action": ["Buyer", "Buying Director", "Finance", "Merchandising", "Admin"],
+    workflow: ["Buyer", "Buying Director", "Finance", "Merchandising", "Admin"]
+  })[String(section || "workflow").trim().toLowerCase()] || ["Admin"];
+}
+
+function adminUserRows() {
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM users
+    ORDER BY is_active DESC, display_name COLLATE NOCASE, email COLLATE NOCASE
+  `).all().map(publicUser).filter(Boolean);
+}
+
+async function handleAuthApi(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  if (req.method === "GET" && url.pathname === "/api/auth/google/start") {
+    startGoogleAppAuth(req, res);
+    return true;
+  }
+  if (req.method === "GET" && url.pathname === "/api/auth/google/callback") {
+    await finishGoogleAppAuth(req, res);
+    return true;
+  }
+  if (req.method === "GET" && url.pathname === "/api/auth/me") {
+    const user = authMode() === "google" ? readSessionUser(req) : systemUser();
+    sendJson(res, 200, {
+      authMode: authMode(),
+      user,
+      permissions: userPermissions(user),
+      roles: authRoles,
+      csrfToken: user?.csrfToken || ""
+    });
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/auth/logout") {
+    destroySession(req, res);
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+  return false;
+}
+
+async function handleAdminApi(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  if (!requireRoles(req, res, ["Admin"])) return true;
+  if (req.method === "GET" && url.pathname === "/api/admin/users") {
+    sendJson(res, 200, { users: adminUserRows(), roles: authRoles });
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/admin/users/update") {
+    const body = await readJsonBody(req);
+    const userId = String(body.userId || "").trim();
+    const patch = body.patch || {};
+    const row = openOrderSqliteDb().prepare("SELECT * FROM users WHERE id = ?").get(userId);
+    if (!row) {
+      sendJson(res, 404, { error: "User not found." });
+      return true;
+    }
+    const roles = Array.isArray(patch.roles) ? patch.roles.filter(role => authRoles.includes(role)) : parseJson(row.roles_json, []);
+    const active = Object.prototype.hasOwnProperty.call(patch, "isActive") ? (patch.isActive ? 1 : 0) : Number(row.is_active || 0);
+    const admin = roles.includes("Admin") || patch.isAdmin ? 1 : 0;
+    openOrderSqliteDb().prepare(`
+      UPDATE users
+      SET roles_json = ?, is_active = ?, is_admin = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(JSON.stringify(roles), active, admin, userId);
+    sendJson(res, 200, { ok: true, users: adminUserRows(), roles: authRoles });
+    return true;
+  }
+  return false;
+}
+
+async function handleNotificationApi(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  if (req.method === "GET" && url.pathname === "/api/notifications") {
+    if (!req.currentUser?.id || req.currentUser.id === "system") {
+      sendJson(res, 200, { notifications: [], unreadCount: 0 });
+      return true;
+    }
+    const rows = openOrderSqliteDb().prepare(`
+      SELECT id, entity_type AS entityType, entity_id AS entityId, title, body, url,
+             is_read AS isRead, email_status AS emailStatus, created_at AS createdAt, read_at AS readAt
+      FROM notifications
+      WHERE user_id = ?
+      ORDER BY is_read ASC, created_at DESC
+      LIMIT 60
+    `).all(req.currentUser.id).map(row => ({ ...row, isRead: Boolean(row.isRead) }));
+    sendJson(res, 200, { notifications: rows, unreadCount: rows.filter(row => !row.isRead).length });
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/notifications/read") {
+    const body = await readJsonBody(req);
+    const id = String(body.id || "").trim();
+    const db = openOrderSqliteDb();
+    if (body.all) {
+      db.prepare("UPDATE notifications SET is_read = 1, read_at = CURRENT_TIMESTAMP WHERE user_id = ?").run(req.currentUser.id || "");
+    } else if (id) {
+      db.prepare("UPDATE notifications SET is_read = 1, read_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?").run(id, req.currentUser.id || "");
+    }
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+  if (req.method === "GET" && url.pathname === "/api/users/assignees") {
+    sendJson(res, 200, { users: publicAssignableUsers() });
+    return true;
+  }
+  return false;
 }
 
 function latestBestsellersPeriodRow() {
@@ -4185,6 +5247,7 @@ function weeklyCandidate(type, product, period, priority, rationale, title) {
     season: product.season || "",
     category: product.cat || product.productType || "",
     owner: type === "reorder" ? "Buyer" : "Merchandising",
+    assigneeUserId: "",
     status: "Open",
     priority,
     dueDate: addDaysIso("", 7),
@@ -4332,11 +5395,11 @@ function upsertWeeklyActions(candidates, actorName = "") {
   const insert = db.prepare(`
     INSERT INTO weekly_actions (
       id, dedupe_key, action_type, title, product_key, product_title, sku, season, category,
-      owner, status, priority, due_date, source_type, source_period_id, source_start_date,
+      owner, assignee_user_id, status, priority, due_date, source_type, source_period_id, source_start_date,
       source_end_date, source_label, rationale, metrics_json, data, generated_at, created_at, updated_at
     ) VALUES (
       @id, @dedupeKey, @actionType, @title, @productKey, @productTitle, @sku, @season, @category,
-      @owner, @status, @priority, @dueDate, 'bestsellers', @sourcePeriodId, @sourceStartDate,
+      @owner, @assigneeUserId, @status, @priority, @dueDate, 'bestsellers', @sourcePeriodId, @sourceStartDate,
       @sourceEndDate, @sourceLabel, @rationale, @metricsJson, @data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
     )
   `);
@@ -4348,6 +5411,7 @@ function upsertWeeklyActions(candidates, actorName = "") {
         sku = @sku,
         season = @season,
         category = @category,
+        assignee_user_id = @assigneeUserId,
         source_period_id = @sourcePeriodId,
         source_start_date = @sourceStartDate,
         source_end_date = @sourceEndDate,
@@ -4476,6 +5540,7 @@ function readWeeklyActions(url) {
       types: ["reorder", "markdown", "feature", "watch"],
       seasons: [...new Set(rows.map(row => row.season).filter(Boolean))].sort().reverse()
     },
+    users: publicAssignableUsers(),
     periods: readBestsellersPeriods().filter(period => period.sourceType === "shopify_api")
   };
 }
@@ -4502,7 +5567,7 @@ async function handleWeeklyActionsGenerate(req, res) {
     });
     return;
   }
-  const result = upsertWeeklyActions(candidates, body.actorName || "");
+  const result = upsertWeeklyActions(candidates, actorName(req));
   const url = new URL(req.url, `http://${req.headers.host}`);
   sendJson(res, 200, {
     ok: true,
@@ -4524,6 +5589,7 @@ async function handleWeeklyActionsUpdate(req, res) {
   const next = {
     status: Object.prototype.hasOwnProperty.call(patch, "status") ? normalizeWeeklyActionStatus(patch.status) : current.status,
     owner: Object.prototype.hasOwnProperty.call(patch, "owner") ? normalizeWeeklyActionOwner(patch.owner, current.owner) : current.owner,
+    assigneeUserId: Object.prototype.hasOwnProperty.call(patch, "assigneeUserId") ? normalizeAssignableUserId(patch.assigneeUserId) : current.assigneeUserId,
     priority: Object.prototype.hasOwnProperty.call(patch, "priority") ? normalizeWeeklyActionPriority(patch.priority, current.priority) : current.priority,
     dueDate: Object.prototype.hasOwnProperty.call(patch, "dueDate") ? String(patch.dueDate || "").trim() : current.dueDate
   };
@@ -4534,6 +5600,7 @@ async function handleWeeklyActionsUpdate(req, res) {
     UPDATE weekly_actions
     SET status = @status,
         owner = @owner,
+        assignee_user_id = @assigneeUserId,
         priority = @priority,
         due_date = @dueDate,
         completed_at = @completedAt,
@@ -4542,14 +5609,55 @@ async function handleWeeklyActionsUpdate(req, res) {
   `).run({ id: actionId, ...next, completedAt });
 
   const changes = {};
-  for (const key of ["status", "owner", "priority", "dueDate"]) {
+  for (const key of ["status", "owner", "assigneeUserId", "priority", "dueDate"]) {
     if (next[key] !== current[key]) changes[key] = { from: current[key], to: next[key] };
   }
   if (Object.keys(changes).length) {
-    recordWeeklyActionEvent(actionId, "update", body.actorName || "", "Action updated", changes);
+    recordWeeklyActionEvent(actionId, "update", actorName(req), "Action updated", { ...changes, ...actorData(req) });
   }
   const note = String(body.note || "").trim();
-  if (note) recordWeeklyActionEvent(actionId, "note", body.actorName || "", note);
+  if (note) {
+    recordWeeklyActionEvent(actionId, "note", actorName(req), note, actorData(req));
+    await notifyMentionedUsers(req, note, {
+      entityType: "weekly_action",
+      entityId: actionId,
+      title: "You were mentioned on a weekly action",
+      url: `/weekly-actions.html?id=${encodeURIComponent(actionId)}`
+    });
+  }
+  if (changes.status && next.assigneeUserId && (next.status === "Blocked" || current.status === "Blocked")) {
+    await notifyUser(next.assigneeUserId, {
+      entityType: "weekly_action",
+      entityId: actionId,
+      title: `Weekly action ${next.status === "Blocked" ? "blocked" : "unblocked"}`,
+      body: `${actorName(req)} changed ${current.title || "a weekly action"} from ${current.status} to ${next.status}.`,
+      url: `/weekly-actions.html?id=${encodeURIComponent(actionId)}`
+    });
+  }
+  if (changes.owner || changes.assigneeUserId) {
+    const assignedUser = userById(next.assigneeUserId);
+    const message = assignedUser
+      ? `Handoff to ${assignedUser.displayName} (${next.owner || "No role"})`
+      : `Handoff to ${next.owner || "No owner"}`;
+    recordWeeklyActionEvent(actionId, "handoff", actorName(req), message, {
+      fromRole: current.owner || "",
+      toRole: next.owner || "",
+      fromUserId: current.assigneeUserId || "",
+      toUserId: next.assigneeUserId || "",
+      ...actorData(req)
+    });
+    await recordWorkHandoff(req, {
+      entityType: "weekly_action",
+      entityId: actionId,
+      fromRole: current.owner || "",
+      toRole: next.owner || "",
+      fromUserId: current.assigneeUserId || "",
+      toUserId: next.assigneeUserId || "",
+      title: `Weekly action handed off`,
+      message: `${actorName(req)} assigned ${current.title || "a weekly action"}.`,
+      url: `/weekly-actions.html?id=${encodeURIComponent(actionId)}`
+    });
+  }
 
   const url = new URL(req.url, `http://${req.headers.host}`);
   url.searchParams.set("id", actionId);
@@ -4712,6 +5820,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/reports/bestsellers/sync") {
+    if (!requireRoles(req, res, ["Merchandising", "Admin"])) return true;
     try {
       await syncBestsellersReport(req, res);
     } catch (error) {
@@ -4721,6 +5830,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/reports/bestsellers/sync-job") {
+    if (!requireRoles(req, res, ["Merchandising", "Admin"])) return true;
     try {
       const body = await readJsonBody(req);
       const range = body.startDate && body.endDate
@@ -4745,6 +5855,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/reports/bestsellers/import-csv") {
+    if (!requireRoles(req, res, ["Merchandising", "Admin"])) return true;
     try {
       await importBestsellersCsv(req, res);
     } catch (error) {
@@ -4767,6 +5878,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/weekly-actions/generate") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
     try {
       await handleWeeklyActionsGenerate(req, res);
     } catch (error) {
@@ -4776,6 +5888,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/weekly-actions/update") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
     try {
       await handleWeeklyActionsUpdate(req, res);
     } catch (error) {
@@ -4803,6 +5916,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/order-form/local-skus") {
+    if (!requireRoles(req, res, skuRegisterRoles(), "You do not have access to the SKU register.")) return true;
     const db = readOrderDb();
     const lastIssuedSku = getLastIssuedSku(db);
     const products = savedLocalSkuRows(db);
@@ -4816,6 +5930,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "DELETE" && url.pathname === "/api/order-form/local-skus") {
+    if (!requireRoles(req, res, ["Admin"])) return true;
     const sku = normalizeSku(url.searchParams.get("sku"));
     if (!sku) {
       sendJson(res, 400, { error: "Missing SKU" });
@@ -4834,6 +5949,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/order-form/next-sku") {
+    if (!requireRoles(req, res, ["Buyer", "Admin"])) return true;
     try {
       await readJsonBody(req);
       const dbData = readOrderDb();
@@ -4879,6 +5995,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/order-form/image") {
+    if (!requireRoles(req, res, ["Buyer", "Admin"])) return true;
     try {
       const body = await readJsonBody(req);
       const stored = writeImageUpload(["order-images", body.orderNumber || "drafts"], {
@@ -4896,6 +6013,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/order-form/orders") {
+    if (!requireRoles(req, res, ["Buyer", "Admin"])) return true;
     try {
       const order = await readJsonBody(req);
       const db = readOrderDb();
@@ -4928,7 +6046,9 @@ async function handleApi(req, res) {
     sendJson(res, 200, {
       orders,
       metrics: orderWorkflowMetrics(orders),
-      authMode: "shared-password",
+      authMode: authMode(),
+      currentUser: req.currentUser || null,
+      users: publicAssignableUsers(),
       googleWorkspaceReady: true,
       generatedAt: new Date().toISOString()
     });
@@ -4948,7 +6068,8 @@ async function handleApi(req, res) {
     sendJson(res, 200, {
       order: publicManagedOrder(syncedOrder, workflow),
       events: readOrderEvents(orderId),
-      invoices: readOrderInvoices(orderId)
+      invoices: readOrderInvoices(orderId),
+      users: publicAssignableUsers()
     });
     return true;
   }
@@ -4956,6 +6077,8 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/orders/workflow") {
     try {
       const body = await readJsonBody(req);
+      const section = body.section || "workflow";
+      if (!requireRoles(req, res, rolesForOrderSection(section))) return true;
       const orderId = String(body.orderId || "");
       const db = readOrderDb();
       const order = db.orders.find(item => String(item.id) === orderId);
@@ -4963,9 +6086,11 @@ async function handleApi(req, res) {
         sendJson(res, 404, { error: "Order not found" });
         return true;
       }
-      const workflow = writeOrderWorkflow(order, body.patch || {}, body.actorName || "", body.section || "workflow");
-      const status = orderStatusForWorkflowPatch(body.section || "", workflow);
+      const previousWorkflow = workflowFromRow(readOrderWorkflowMap().get(orderId), order);
+      const workflow = writeOrderWorkflow(order, body.patch || {}, actorName(req), section);
+      const status = orderStatusForWorkflowPatch(section || "", workflow);
       const updatedOrder = status ? updateStoredOrderStatus(order.id, status) || order : order;
+      await notifyOrderHandoffIfChanged(req, order, updatedOrder, previousWorkflow, workflow);
       const publicOrder = publicManagedOrder(updatedOrder, null);
       publicOrder.workflow = workflow;
       publicOrder.compositeStatus = orderCompositeStatus(updatedOrder, workflow);
@@ -4983,8 +6108,10 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/orders/invoices") {
+    if (!requireRoles(req, res, ["Buyer", "Finance", "Admin"])) return true;
     try {
       const body = await readJsonBody(req);
+      body.actorName = actorName(req);
       const orderId = String(body.orderId || "");
       const db = readOrderDb();
       const order = db.orders.find(item => String(item.id) === orderId);
@@ -4992,9 +6119,11 @@ async function handleApi(req, res) {
         sendJson(res, 404, { error: "Order not found" });
         return true;
       }
-      const invoices = saveOrderInvoice(order, body);
+      const previousWorkflow = workflowFromRow(readOrderWorkflowMap().get(orderId), order);
+      const invoices = saveOrderInvoice(order, body, { canManagePayment: userHasRole(req.currentUser, ["Finance", "Admin"]) });
       const refreshedOrder = readOrderDb().orders.find(item => String(item.id) === orderId) || order;
       const workflow = readOrderWorkflowMap().get(orderId);
+      await notifyOrderHandoffIfChanged(req, order, refreshedOrder, previousWorkflow, workflowFromRow(workflow, refreshedOrder));
       sendJson(res, 200, {
         ok: true,
         order: publicManagedOrder(refreshedOrder, workflow),
@@ -5008,8 +6137,10 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/orders/invoices/delete") {
+    if (!requireRoles(req, res, ["Finance", "Admin"])) return true;
     try {
       const body = await readJsonBody(req);
+      body.actorName = actorName(req);
       const orderId = String(body.orderId || "");
       const db = readOrderDb();
       const order = db.orders.find(item => String(item.id) === orderId);
@@ -5033,10 +6164,11 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/orders/archive") {
+    if (!requireRoles(req, res, ["Merchandising", "Admin"])) return true;
     try {
       const body = await readJsonBody(req);
       const orderId = String(body.orderId || "");
-      const order = setOrderArchived(orderId, Boolean(body.archived), body.actorName || "");
+      const order = setOrderArchived(orderId, Boolean(body.archived), actorName(req));
       const workflow = readOrderWorkflowMap().get(orderId);
       sendJson(res, 200, {
         ok: true,
@@ -5051,9 +6183,10 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/orders/delete") {
+    if (!requireRoles(req, res, ["Admin"])) return true;
     try {
       const body = await readJsonBody(req);
-      const deleted = deleteStoredOrder(body.orderId, body.actorName || "");
+      const deleted = deleteStoredOrder(body.orderId, actorName(req));
       sendJson(res, 200, { ok: true, deleted });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not delete order" });
@@ -5076,7 +6209,13 @@ async function handleApi(req, res) {
         sendJson(res, 404, { error: "Order not found" });
         return true;
       }
-      recordOrderEvent(orderId, "note", body.actorName || "", message);
+      recordOrderEvent(orderId, "note", actorName(req), message, actorData(req));
+      await notifyMentionedUsers(req, message, {
+        entityType: "order",
+        entityId: orderId,
+        title: "You were mentioned on an order",
+        url: `/orders.html?id=${encodeURIComponent(orderId)}`
+      });
       sendJson(res, 200, { ok: true, events: readOrderEvents(orderId) });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not add note" });
@@ -5125,6 +6264,21 @@ function serveStatic(req, res) {
     return;
   }
 
+  const sendStaticData = (targetPath, data) => {
+    const ext = path.extname(targetPath).toLowerCase();
+    if (ext === ".html" && path.basename(targetPath).toLowerCase() !== "login.html") {
+      const html = data.toString("utf8");
+      const injected = html.includes("/auth.js")
+        ? html
+        : html.replace("</head>", `<script src="/auth.js"></script>\n</head>`);
+      res.writeHead(200, staticHeaders(ext));
+      res.end(injected);
+      return;
+    }
+    res.writeHead(200, staticHeaders(ext));
+    res.end(data);
+  };
+
   fs.readFile(filePath, (error, data) => {
     if (error) {
       fs.readFile(path.join(publicDir, "index.html"), (indexError, indexData) => {
@@ -5133,33 +6287,48 @@ function serveStatic(req, res) {
           res.end("Not found");
           return;
         }
-        res.writeHead(200, staticHeaders(".html"));
-        res.end(indexData);
+        sendStaticData(path.join(publicDir, "index.html"), indexData);
       });
       return;
     }
 
-    const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, staticHeaders(ext));
-    res.end(data);
+    sendStaticData(filePath, data);
   });
 }
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS" && req.url.startsWith("/api/")) {
     res.writeHead(204, {
-      "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET, POST, OPTIONS",
-      "access-control-allow-headers": "content-type, authorization"
+      ...corsHeaders()
     });
     res.end();
     return;
   }
 
   if (!isAuthorized(req)) {
-    requireAuth(res);
+    requireAuth(req, res);
     return;
   }
+
+  if (!verifyCsrf(req, res)) return;
+
+  if (req.url.startsWith("/api/auth/")) {
+    const handled = await handleAuthApi(req, res);
+    if (handled) return;
+  }
+
+  if (req.url.startsWith("/api/admin/")) {
+    const handled = await handleAdminApi(req, res);
+    if (handled) return;
+  }
+
+  if (req.url.startsWith("/api/notifications") || req.url.startsWith("/api/users/assignees")) {
+    const handled = await handleNotificationApi(req, res);
+    if (handled) return;
+  }
+
+  const requestPath = new URL(req.url, `http://${req.headers.host}`).pathname;
+  if (requestPath === "/sku-register.html" && !requireRoles(req, res, skuRegisterRoles(), "You do not have access to the SKU register.")) return;
 
   if (req.url.startsWith("/api/shopify-merchandising")) {
     fetchShopifyMerchandising(req, res).catch((error) => {
@@ -5176,6 +6345,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && req.url.startsWith("/api/shopify-collection-reorder/start")) {
+    if (!requireRoles(req, res, ["Admin"], "Only an admin can apply Shopify collection reorders.")) return;
     startCollectionReorder(req, res).catch((error) => {
       sendJson(res, 500, { message: error.message });
     });
@@ -5210,4 +6380,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(port, () => {
   console.log(`Merch X running at http://localhost:${port}`);
+  startNotificationDigestTimer();
 });

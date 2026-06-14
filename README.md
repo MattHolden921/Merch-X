@@ -24,7 +24,40 @@ Open:
 http://localhost:3000
 ```
 
-Password protection is enabled when `APP_USERNAME` and `APP_PASSWORD` are set. Leave them unset only for local throwaway testing.
+For local throwaway testing you can leave auth unset. Shared-password fallback is enabled with:
+
+```text
+AUTH_MODE=basic
+APP_USERNAME=merch
+APP_PASSWORD=change-this-long-password
+```
+
+For hosted production, use the shared password as the outer browser gate, then Google Workspace sign-in for named users and roles:
+
+```text
+AUTH_MODE=google
+APP_USERNAME=merch
+APP_PASSWORD=change-this-long-password
+GOOGLE_AUTH_CLIENT_ID=...
+GOOGLE_AUTH_CLIENT_SECRET=...
+GOOGLE_AUTH_REDIRECT_URI=https://your-domain/api/auth/google/callback
+GOOGLE_ALLOWED_DOMAINS=your-domain.com
+APP_ADMIN_EMAILS=admin@your-domain.com
+SKU_REGISTER_ROLES=Admin,Buyer
+```
+
+With both `AUTH_MODE=google` and `APP_USERNAME` / `APP_PASSWORD` set, users see the original browser username/password prompt first, then the Google sign-in screen. The first admin must be listed in `APP_ADMIN_EMAILS`. Other same-domain Google users are created as pending until an admin activates them on the Users page.
+
+The SKU Register is restricted separately with `SKU_REGISTER_ROLES`. Leave it as `Admin,Buyer`, or change it to another comma-separated role list such as `Admin,Merchandising`.
+
+Email links use `APP_BASE_URL`, and Weekly Action emails are batched before sending:
+
+```text
+APP_BASE_URL=https://your-domain
+NOTIFICATION_DIGEST_DELAY_MINUTES=10
+```
+
+Order handoff emails are sent immediately. Weekly Action handoffs, owner changes, and blocked/unblocked updates are grouped into one email per user after the digest delay.
 
 ## Database
 

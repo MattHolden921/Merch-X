@@ -24,7 +24,11 @@ The app favours simple operational tools over a large framework:
 - Runtime: Node 20+.
 - Main database path: `DATABASE_PATH`, defaulting to `./data/merch-x.sqlite`.
 - Upload storage path: `UPLOADS_DIR`, defaulting to `./data/uploads`.
-- Shared password protection is enabled when `APP_USERNAME` and `APP_PASSWORD` are set.
+- Shared password protection is enabled when `APP_USERNAME` and `APP_PASSWORD` are set. In Google auth mode, this remains the outer browser-level gate before Google sign-in.
+- Google Workspace sign-in is enabled with `AUTH_MODE=google`, `GOOGLE_AUTH_CLIENT_ID`, `GOOGLE_AUTH_CLIENT_SECRET`, `GOOGLE_ALLOWED_DOMAINS`, and `APP_ADMIN_EMAILS`.
+- SKU Register access is controlled by `SKU_REGISTER_ROLES`, defaulting to `Admin,Buyer`.
+- Email notifications use SMTP settings when configured: `SMTP_HOST`, `SMTP_PORT`, and `SMTP_FROM`.
+- Email links use `APP_BASE_URL`. Weekly Action email notifications are batched using `NOTIFICATION_DIGEST_DELAY_MINUTES`, defaulting to 10 minutes.
 - Hetzner/VPS setup details live in `DEPLOY_HETZNER.md`.
 
 ## Repository Map
@@ -50,7 +54,7 @@ Request flow:
 
 1. Load `.env` values if present.
 2. Resolve server port, SQLite path, and uploads path.
-3. Apply shared-password auth when configured.
+3. Apply auth: shared-password gate first when credentials are configured, then Google session auth when `AUTH_MODE=google`, shared-password-only auth when `AUTH_MODE=basic`, or no auth for local throwaway mode.
 4. Route integration endpoints such as Shopify, collection reorder, and Google OAuth.
 5. Route other `/api/*` requests through `handleApi`.
 6. Serve `/uploads/*` from the configured uploads directory.
@@ -64,7 +68,8 @@ SQLite is the system of record for current app data. The schema is created and l
 
 Primary table groups:
 
-- App/config: `app_settings`.
+- App/config/auth: `app_settings`, `users`, `auth_sessions`.
+- Work management: `work_handoffs`, `notifications`.
 - Buying/order form: `suppliers`, `products`, `issued_skus`, `orders`.
 - Order management: `order_workflows`, `order_events`, `order_invoices`.
 - Collection reorder: `collection_reorder_audit`.
@@ -132,6 +137,15 @@ Reports and actions:
 - `GET /api/weekly-actions`
 - `POST /api/weekly-actions/generate`
 - `POST /api/weekly-actions/update`
+- `GET /api/auth/google/start`
+- `GET /api/auth/google/callback`
+- `GET /api/auth/me`
+- `POST /api/auth/logout`
+- `GET /api/admin/users`
+- `POST /api/admin/users/update`
+- `GET /api/notifications`
+- `POST /api/notifications/read`
+- `GET /api/users/assignees`
 
 Order form and local SKUs:
 
@@ -187,6 +201,10 @@ Order workflow is split into approval, payment, and intake sections. The composi
 Important principles:
 
 - Workflow updates should record events.
+- In Google auth mode, workflow actors come from the signed-in user, not browser-supplied free text.
+- Next-action handoff can target a role owner and an optional active user assignee.
+- Handoffs create work handoff records and in-app notifications. Order handoff email is sent immediately when SMTP is configured; Weekly Action email is grouped into a per-user digest after the configured delay.
+- Buyers can upload invoice documents and invoice metadata. Finance/Admin retain control of payment-facing invoice state such as sent-to-FD and paid.
 - Invoice changes can update payment workflow.
 - Archiving hides orders from active creation/bootstrap views but preserves history.
 - Deleting an order should remove related invoice records/files and workflow data only through the server's delete logic.
@@ -230,6 +248,7 @@ Weekly actions are generated from saved Shopify bestsellers periods. Candidate a
 - `watch`: mixed signals such as missing cost, medium cover, or sales with no stock showing.
 
 Actions use a `dedupe_key` by type/product so unresolved existing actions are updated rather than duplicated. Statuses are `Open`, `In progress`, `Snoozed`, `Blocked`, and `Done`.
+Actions keep their role owner and can also be assigned to an active user. Owner/assignee changes create handoff records and notifications.
 
 ### Collection Reorder Planner
 
@@ -261,7 +280,9 @@ Guardrails:
 
 ## Security And Safety
 
-- Use shared-password auth for hosted access.
+- Use shared-password plus Google Workspace auth for hosted production access: the shared password is the outer gate, Google provides named user identity and roles. Keep shared-password-only auth as an explicit fallback with `AUTH_MODE=basic`.
+- Google auth uses HttpOnly session cookies and CSRF checks for write APIs.
+- Uploaded files under `/uploads/*` are protected by the same auth layer as pages and APIs.
 - Do not commit `.env`, SQLite databases, uploads, or secrets.
 - File upload paths must remain inside `UPLOADS_DIR`.
 - Keep upload size limits in place unless storage/backups have been reconsidered.
