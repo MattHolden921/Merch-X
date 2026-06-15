@@ -441,16 +441,16 @@ function summaryItem(label,value){
   return `<div class="summary-item"><label>${escapeHtml(label)}</label><strong>${escapeHtml(value||"-")}</strong></div>`;
 }
 
-function input(id,label,value,type="text"){
-  return `<div class="field"><label>${escapeHtml(label)}</label><input id="${id}" type="${type}" value="${attr(value||"")}"></div>`;
+function input(id,label,value,type="text",attrs=""){
+  return `<div class="field"><label>${escapeHtml(label)}</label><input id="${id}" type="${type}" value="${attr(value||"")}" ${attrs}></div>`;
 }
 
-function select(id,label,items,value){
-  return `<div class="field"><label>${escapeHtml(label)}</label><select class="select" id="${id}">${options(items,value)}</select></div>`;
+function select(id,label,items,value,attrs=""){
+  return `<div class="field"><label>${escapeHtml(label)}</label><select class="select" id="${id}" ${attrs}>${options(items,value)}</select></div>`;
 }
 
-function textarea(id,label,value){
-  return `<div class="field"><label>${escapeHtml(label)}</label><textarea id="${id}">${escapeHtml(value||"")}</textarea></div>`;
+function textarea(id,label,value,attrs=""){
+  return `<div class="field"><label>${escapeHtml(label)}</label><textarea id="${id}" ${attrs}>${escapeHtml(value||"")}</textarea></div>`;
 }
 
 function renderLineTable(order){
@@ -668,6 +668,8 @@ function renderDetail(){
     return;
   }
   const w=order.workflow;
+  const canSavePayment=userHasAppRole("Finance");
+  const paymentAttrs=canSavePayment?"":"disabled";
   el("detail").innerHTML=`
     <section class="panel">
       <div class="detail-head">
@@ -714,13 +716,13 @@ function renderDetail(){
       <div class="work-panel">
         <div class="work-head"><h3>FD / Finance</h3><span class="badge ${badgeClass(w.paymentStatus)}">${escapeHtml(w.paymentStatus)}</span></div>
         <div class="grid2">
-          ${select("payment-status","Payment status",paymentStatuses,w.paymentStatus)}
-          ${input("payment-type","Payment type",w.paymentType)}
-          ${input("payment-due","Due date",w.paymentDueDate,"date")}
-          ${input("payment-paid","Paid date",w.paymentPaidDate,"date")}
+          ${select("payment-status","Payment status",paymentStatuses,w.paymentStatus,paymentAttrs)}
+          ${input("payment-type","Payment type",w.paymentType,"text",paymentAttrs)}
+          ${input("payment-due","Due date",w.paymentDueDate,"date",paymentAttrs)}
+          ${input("payment-paid","Paid date",w.paymentPaidDate,"date",paymentAttrs)}
         </div>
-        ${textarea("payment-notes","Payment notes",w.paymentNotes)}
-        <button type="button" class="btn primary" onclick="savePayment()">Save payment</button>
+        ${textarea("payment-notes","Payment notes",w.paymentNotes,paymentAttrs)}
+        <button type="button" class="btn primary" onclick="savePayment()" ${paymentAttrs}>Save payment</button>
         ${renderInvoiceGroup(order)}
       </div>
 
@@ -789,13 +791,18 @@ async function saveApproval(){
 
 async function savePayment(){
   const status=val("payment-status");
-  await saveWorkflow("payment",{
-    paymentStatus:status,
-    paymentType:val("payment-type"),
-    paymentDueDate:val("payment-due"),
-    paymentPaidDate:val("payment-paid")||(status==="Paid"?today():""),
-    paymentNotes:val("payment-notes")
-  }).catch(showError);
+  try{
+    await saveWorkflow("payment",{
+      paymentStatus:status,
+      paymentType:val("payment-type"),
+      paymentDueDate:val("payment-due"),
+      paymentPaidDate:val("payment-paid")||(status==="Paid"?today():""),
+      paymentNotes:val("payment-notes")
+    });
+    showStatus("Payment saved.");
+  }catch(error){
+    showError(error);
+  }
 }
 
 function toggleCreateInvoice(){
@@ -982,7 +989,11 @@ async function addNote(){
 }
 
 function showError(error){
-  el("detail").insertAdjacentHTML("afterbegin",`<div class="status err" style="margin-bottom:10px">${escapeHtml(error.message)}</div>`);
+  showStatus(error.message,"err");
+}
+
+function showStatus(message,type="ok"){
+  el("detail").insertAdjacentHTML("afterbegin",`<div class="status ${type}" style="margin-bottom:10px">${escapeHtml(message)}</div>`);
 }
 
 async function selectOrder(id){
