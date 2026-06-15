@@ -4369,6 +4369,11 @@ function invoiceSummary(orderOrId) {
   };
 }
 
+function invoiceSummaryIsFullyPaid(totals) {
+  const orderTotal = Number(totals?.orderTotal || 0);
+  return Number(totals?.totalPaid || 0) >= Math.max(0, orderTotal - 0.01) && orderTotal > 0;
+}
+
 function saveOrderInvoice(order, body, options = {}) {
   const db = openOrderSqliteDb();
   const canManagePayment = options.canManagePayment !== false;
@@ -4464,7 +4469,7 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
   }
 
   const totals = invoiceSummary(order);
-  const allPaid = totals.totalPaid >= Math.max(0, totals.orderTotal - 0.01) && totals.orderTotal > 0;
+  const allPaid = invoiceSummaryIsFullyPaid(totals);
   const somePaid = totals.totalPaid > 0;
   const anySent = totals.sentToFd > 0;
   const anyReceived = totals.received > 0;
@@ -5049,6 +5054,52 @@ async function notifyOrderHandoffIfChanged(req, order, updatedOrder, previousWor
     message: `${actorName(req)} assigned ${updatedOrder.orderNumber || "an order"}: ${workflow.nextAction || "Next action"}`,
     url: `/orders.html?id=${encodeURIComponent(String(order.id))}`
   });
+}
+
+async function notifyOrderCreatedForApproval(req, order, workflow) {
+  if (workflow?.approvalStatus !== "Pending director approval" || workflow?.nextActionOwner !== "Buying Director") return;
+  recordOrderEvent(order.id, "handoff", actorName(req), "Handoff to Buying Director", {
+    fromRole: "",
+    toRole: "Buying Director",
+    fromUserId: "",
+    toUserId: "",
+    ...actorData(req)
+  });
+  await recordWorkHandoff(req, {
+    entityType: "order",
+    entityId: String(order.id),
+    fromRole: "",
+    toRole: "Buying Director",
+    fromUserId: "",
+    toUserId: "",
+    title: `Order ${order.orderNumber || ""} awaiting sign off`,
+    message: `${actorName(req)} created ${order.orderNumber || "an order"} for sign off: ${workflow.nextAction || "Review order for approval"}`,
+    url: `/orders.html?id=${encodeURIComponent(String(order.id))}`
+  });
+}
+
+function resolveOrderBuyerNotificationUserIds(order) {
+  const buyerEmail = String(order?.company?.buyerEmail || "").trim().toLowerCase();
+  if (buyerEmail) {
+    const row = openOrderSqliteDb().prepare("SELECT id FROM users WHERE lower(email) = ? AND is_active = 1").get(buyerEmail);
+    if (row?.id) return [row.id];
+  }
+  return resolveNotificationUserIds("", "Buyer");
+}
+
+async function notifyOrderBuyerInvoicePaid(req, order) {
+  const userIds = resolveOrderBuyerNotificationUserIds(order);
+  if (!userIds.length) return;
+  recordOrderEvent(order.id, "invoice", actorName(req), "Buyer notified invoice paid", actorData(req));
+  for (const userId of userIds) {
+    await notifyUser(userId, {
+      entityType: "order",
+      entityId: String(order.id),
+      title: `Order ${order.orderNumber || ""} invoice paid`,
+      body: `${actorName(req)} marked ${order.orderNumber || "an order"} as paid.`,
+      url: `/orders.html?id=${encodeURIComponent(String(order.id))}`
+    });
+  }
 }
 
 function userPermissions(user) {
@@ -6029,6 +6080,12 @@ async function handleApi(req, res) {
     try {
       const order = await readJsonBody(req);
       const db = readOrderDb();
+      const incomingId = String(order.id || "");
+      const incomingOrderNumber = String(order.orderNumber || "");
+      const isNewOrder = !db.orders.some(item =>
+        (incomingId && String(item.id) === incomingId)
+        || (incomingOrderNumber && String(item.orderNumber || "") === incomingOrderNumber)
+      );
       let savedOrder = {
         ...order,
         id: order.id || `${Date.now()}`,
@@ -6036,7 +6093,8 @@ async function handleApi(req, res) {
         savedAt: new Date().toISOString()
       };
       savedOrder = saveOrderFormOrder(db, savedOrder);
-      syncWorkflowFromOrderStatus(savedOrder);
+      const workflow = syncWorkflowFromOrderStatus(savedOrder);
+      if (isNewOrder) await notifyOrderCreatedForApproval(req, savedOrder, workflow);
       const refreshed = readOrderDb();
       writeLastIssuedSkuSetting(getLastIssuedSku(refreshed));
       sendJson(res, 200, { ok: true, order: savedOrder, nextOrderNumber: nextOrderNumber(refreshed) });
@@ -6132,10 +6190,14 @@ async function handleApi(req, res) {
         return true;
       }
       const previousWorkflow = workflowFromRow(readOrderWorkflowMap().get(orderId), order);
+      const wasFullyPaid = invoiceSummaryIsFullyPaid(invoiceSummary(order));
       const invoices = saveOrderInvoice(order, body, { canManagePayment: userHasRole(req.currentUser, ["Finance", "Admin"]) });
       const refreshedOrder = readOrderDb().orders.find(item => String(item.id) === orderId) || order;
       const workflow = readOrderWorkflowMap().get(orderId);
       await notifyOrderHandoffIfChanged(req, order, refreshedOrder, previousWorkflow, workflowFromRow(workflow, refreshedOrder), { notifyRoleActionChange: true });
+      if (!wasFullyPaid && invoiceSummaryIsFullyPaid(invoiceSummary(refreshedOrder))) {
+        await notifyOrderBuyerInvoicePaid(req, refreshedOrder);
+      }
       sendJson(res, 200, {
         ok: true,
         order: publicManagedOrder(refreshedOrder, workflow),
