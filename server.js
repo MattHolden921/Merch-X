@@ -3188,6 +3188,7 @@ function openOrderSqliteDb() {
     CREATE TABLE IF NOT EXISTS order_invoices (
       id TEXT PRIMARY KEY,
       order_id TEXT NOT NULL,
+      batch_id TEXT,
       invoice_type TEXT,
       invoice_number TEXT,
       invoice_date TEXT,
@@ -3205,6 +3206,40 @@ function openOrderSqliteDb() {
       notes TEXT,
       uploaded_by TEXT,
       uploaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS order_batches (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      batch_number TEXT,
+      title TEXT,
+      style_count REAL DEFAULT 0,
+      units REAL DEFAULT 0,
+      value REAL DEFAULT 0,
+      currency TEXT,
+      payment_status TEXT,
+      intake_status TEXT,
+      eta_date TEXT,
+      shipped_date TEXT,
+      received_date TEXT,
+      tracking_reference TEXT,
+      style_notes TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS order_batch_lines (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      batch_id TEXT NOT NULL,
+      line_index INTEGER NOT NULL,
+      sku TEXT,
+      buying_code TEXT,
+      style TEXT,
+      quantity REAL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -3398,6 +3433,8 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_issued_skus_issued_at ON issued_skus(issued_at);
     CREATE INDEX IF NOT EXISTS idx_order_events_order_created ON order_events(order_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_order_invoices_order ON order_invoices(order_id, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_order_batches_order ON order_batches(order_id, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_order_batch_lines_order ON order_batch_lines(order_id, batch_id, line_index);
     CREATE INDEX IF NOT EXISTS idx_report_sources_lookup ON report_sources(report_type, source_type, start_date, end_date);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_report_periods_unique ON report_periods(report_type, source_type, start_date, end_date);
     CREATE INDEX IF NOT EXISTS idx_report_periods_dates ON report_periods(report_type, start_date, end_date);
@@ -3418,6 +3455,9 @@ function openOrderSqliteDb() {
     orderSqliteDb.prepare("ALTER TABLE orders ADD COLUMN archived_at TEXT").run();
   }
   const invoiceColumns = orderSqliteDb.prepare("PRAGMA table_info(order_invoices)").all().map(column => column.name);
+  if (!invoiceColumns.includes("batch_id")) {
+    orderSqliteDb.prepare("ALTER TABLE order_invoices ADD COLUMN batch_id TEXT").run();
+  }
   if (!invoiceColumns.includes("file_path")) {
     orderSqliteDb.prepare("ALTER TABLE order_invoices ADD COLUMN file_path TEXT").run();
   }
@@ -3442,6 +3482,7 @@ function openOrderSqliteDb() {
   migrateInvoiceFilesToDisk(orderSqliteDb);
   importOrderJsonIfNeeded(orderSqliteDb);
   migrateOrderImagesToDisk(orderSqliteDb);
+  syncAllBatchPaymentStatusesFromInvoices();
   return orderSqliteDb;
 }
 
@@ -3902,6 +3943,9 @@ function workflowPatchForOrderStatus(status, currentWorkflow = {}) {
   if (normalized === "shipped") {
     return { intakeStatus: "Shipped", nextActionOwner: "Merchandising", nextAction: "Track shipment to warehouse" };
   }
+  if (normalized === "part shipped") {
+    return { intakeStatus: "Part shipped", nextActionOwner: "Merchandising", nextAction: "Track remaining supplier shipments" };
+  }
   if (normalized === "received") {
     return { intakeStatus: "Received", intakeActualDate: currentWorkflow.intakeActualDate || todayIsoDate(), nextActionOwner: "Merchandising", nextAction: "Close intake checks" };
   }
@@ -3924,7 +3968,7 @@ function orderStatusForWorkflowPatch(section, workflow) {
     if (workflow.paymentStatus === "Paid") return "Paid";
   }
   if (section === "intake") {
-    if (["In production", "Shipped", "Received"].includes(workflow.intakeStatus)) return workflow.intakeStatus;
+    if (["In production", "Part shipped", "Shipped", "Part received", "Received"].includes(workflow.intakeStatus)) return workflow.intakeStatus;
   }
   return "";
 }
@@ -3932,7 +3976,9 @@ function orderStatusForWorkflowPatch(section, workflow) {
 function orderStatusFromWorkflow(workflow) {
   if (!workflow) return "";
   if (workflow.intakeStatus === "Received") return "Received";
+  if (workflow.intakeStatus === "Part received") return "Part received";
   if (workflow.intakeStatus === "Shipped") return "Shipped";
+  if (workflow.intakeStatus === "Part shipped") return "Part shipped";
   if (workflow.intakeStatus === "In production") return "In production";
   if (workflow.paymentStatus === "Paid") return "Paid";
   if (["Ready to pay", "Part paid", "Overdue"].includes(workflow.paymentStatus)) return "Payment pending";
@@ -3955,12 +4001,13 @@ function nextActionForWorkflow(order, workflow) {
   if (approvalStatus !== "Approved") return { nextActionOwner: "Buyer", nextAction: "Prepare or submit order" };
   if (paymentStatus === "Awaiting invoice") return { nextActionOwner: "Buyer", nextAction: "Awaiting supplier invoice" };
   if (paymentStatus === "Ready to pay") return { nextActionOwner: "FD / Finance", nextAction: "Pay supplier invoice" };
-  if (paymentStatus === "Part paid") return { nextActionOwner: "FD / Finance", nextAction: "Pay remaining supplier invoice" };
+  if (paymentStatus === "Part paid") return { nextActionOwner: "Buyer", nextAction: "Awaiting next supplier invoice" };
   if (paymentStatus === "Overdue") return { nextActionOwner: "FD / Finance", nextAction: "Resolve overdue supplier payment" };
   if (paymentStatus !== "Paid") return { nextActionOwner: "Buyer", nextAction: "Confirm invoice and payment plan" };
   if (intakeStatus === "Received") return { nextActionOwner: "Merchandising", nextAction: "Archive completed order" };
   if (intakeStatus === "Part received") return { nextActionOwner: "Merchandising", nextAction: "Chase remaining intake" };
   if (intakeStatus === "Shipped") return { nextActionOwner: "Merchandising", nextAction: "Track shipment to warehouse" };
+  if (intakeStatus === "Part shipped") return { nextActionOwner: "Merchandising", nextAction: "Track remaining supplier shipments" };
   if (intakeStatus === "Delayed") return { nextActionOwner: "Merchandising", nextAction: "Resolve delayed intake" };
   if (intakeStatus === "In production") return { nextActionOwner: "Merchandising", nextAction: "Track supplier production and ETA" };
   if (intakeStatus === "Confirmed") return { nextActionOwner: "Merchandising", nextAction: "Track confirmed intake date" };
@@ -4051,6 +4098,7 @@ function orderCompositeStatus(order, workflow) {
   if (workflow.intakeStatus === "Received") return "Received";
   if (workflow.intakeStatus === "Part received") return "Part received";
   if (workflow.intakeStatus === "Shipped") return "Shipped";
+  if (workflow.intakeStatus === "Part shipped") return "Part shipped";
   if (workflow.paymentStatus === "Paid") return "Payment complete";
   if (workflow.paymentStatus === "Ready to pay" || workflow.paymentStatus === "Part paid" || workflow.paymentStatus === "Overdue") return "Payment";
   if (workflow.approvalStatus === "Approved") return "Approved";
@@ -4093,6 +4141,7 @@ function publicManagedOrder(order, workflowRow) {
     units,
     categories,
     invoices: invoiceSummary(order),
+    batchSummary: batchSummary(order),
     canDelete: canDeleteOrder(order),
     canArchive: canArchiveOrder(order),
     workflow,
@@ -4116,7 +4165,7 @@ function orderWorkflowMetrics(orders) {
   return {
     totalOrders: orders.length,
     awaitingApproval: orders.filter(order => order.workflow.approvalStatus === "Pending director approval").length,
-    readyToPay: orders.filter(order => ["Ready to pay", "Overdue", "Part paid"].includes(order.workflow.paymentStatus)).length,
+    readyToPay: orders.filter(order => ["Ready to pay", "Overdue"].includes(order.workflow.paymentStatus) || (order.workflow.paymentStatus === "Part paid" && order.workflow.nextActionOwner === "FD / Finance")).length,
     intakeRisk: orders.filter(order => order.workflow.intakeStatus === "Delayed" || (order.workflow.intakeEtaDate && order.workflow.intakeEtaDate < today && order.workflow.intakeStatus !== "Received")).length
   };
 }
@@ -4243,6 +4292,8 @@ function deleteStoredOrder(orderId, actorName = "") {
   const invoiceFiles = db.prepare("SELECT file_path FROM order_invoices WHERE order_id = ?").all(String(orderId));
   const remove = db.transaction(() => {
     db.prepare("DELETE FROM order_invoices WHERE order_id = ?").run(String(orderId));
+    db.prepare("DELETE FROM order_batch_lines WHERE order_id = ?").run(String(orderId));
+    db.prepare("DELETE FROM order_batches WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_events WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_workflows WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM orders WHERE id = ?").run(String(orderId));
@@ -4270,11 +4321,187 @@ function syncWorkflowFromOrderStatus(savedOrder) {
   return writeOrderWorkflow(savedOrder, patch, "Order form", "status");
 }
 
+function batchFromRow(row) {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    batchNumber: row.batch_number || "",
+    title: row.title || "",
+    styleCount: Number(row.style_count || 0),
+    units: Number(row.units || 0),
+    value: Number(row.value || 0),
+    currency: row.currency || "GBP",
+    paymentStatus: row.payment_status || "Awaiting invoice",
+    intakeStatus: row.intake_status || "Not confirmed",
+    etaDate: row.eta_date || "",
+    shippedDate: row.shipped_date || "",
+    receivedDate: row.received_date || "",
+    trackingReference: row.tracking_reference || "",
+    styleNotes: row.style_notes || "",
+    notes: row.notes || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readOrderBatches(orderId) {
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM order_batches
+    WHERE order_id = ?
+    ORDER BY created_at, updated_at
+  `).all(String(orderId)).map(batchFromRow);
+}
+
+function batchLineFromRow(row) {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    batchId: row.batch_id,
+    lineIndex: Number(row.line_index || 0),
+    sku: row.sku || "",
+    buyingCode: row.buying_code || "",
+    style: row.style || "",
+    quantity: Number(row.quantity || 0),
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readOrderBatchLines(orderId) {
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM order_batch_lines
+    WHERE order_id = ?
+    ORDER BY batch_id, line_index
+  `).all(String(orderId)).map(batchLineFromRow);
+}
+
+function lineIdentity(line, index) {
+  return {
+    lineIndex: Number(index || 0),
+    sku: String(line?.sku || "").trim(),
+    buyingCode: String(line?.buyingCode || line?.supplierSku || "").trim(),
+    style: String(line?.style || line?.description || "").trim()
+  };
+}
+
+function allocatedQuantityByLine(orderId, excludingBatchId = "") {
+  const rows = openOrderSqliteDb().prepare(`
+    SELECT line_index AS lineIndex, SUM(quantity) AS quantity
+    FROM order_batch_lines
+    WHERE order_id = ? AND batch_id <> ?
+    GROUP BY line_index
+  `).all(String(orderId), String(excludingBatchId || ""));
+  return new Map(rows.map(row => [Number(row.lineIndex || 0), Number(row.quantity || 0)]));
+}
+
+function normalizeBatchLineAllocations(order, allocations, batchId = "") {
+  const lines = order?.lines || [];
+  const allocatedElsewhere = allocatedQuantityByLine(order?.id, batchId);
+  return (allocations || []).map(allocation => {
+    const lineIndex = Number(allocation.lineIndex);
+    if (!Number.isInteger(lineIndex) || lineIndex < 0 || lineIndex >= lines.length) return null;
+    const line = lines[lineIndex] || {};
+    const orderedQuantity = Number(line.quantity || 0);
+    const availableQuantity = Math.max(0, orderedQuantity - Number(allocatedElsewhere.get(lineIndex) || 0));
+    const quantity = Math.max(0, Math.min(Number(allocation.quantity || 0), availableQuantity));
+    if (!quantity) return null;
+    return {
+      ...lineIdentity(line, lineIndex),
+      quantity,
+      line
+    };
+  }).filter(Boolean);
+}
+
+function batchTotalsFromAllocations(order, allocations) {
+  const styleKeys = new Set();
+  let units = 0;
+  let value = 0;
+  for (const allocation of allocations) {
+    const line = allocation.line || {};
+    const quantity = Number(allocation.quantity || 0);
+    const orderedQuantity = Number(line.quantity || 0);
+    const key = String(allocation.style || allocation.sku || allocation.buyingCode || allocation.lineIndex || "").trim().toLowerCase();
+    if (key) styleKeys.add(key);
+    units += quantity;
+    if (orderedQuantity > 0) value += (Number(line.lineCost || 0) / orderedQuantity) * quantity;
+  }
+  return { styleCount: styleKeys.size, units, value };
+}
+
+function replaceBatchLineAllocations(order, batchId, allocations) {
+  const db = openOrderSqliteDb();
+  const clean = normalizeBatchLineAllocations(order, allocations, batchId);
+  const insert = db.prepare(`
+    INSERT INTO order_batch_lines (
+      id, order_id, batch_id, line_index, sku, buying_code, style, quantity, created_at, updated_at
+    ) VALUES (
+      @id, @orderId, @batchId, @lineIndex, @sku, @buyingCode, @style, @quantity, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+  `);
+  const replace = db.transaction(() => {
+    db.prepare("DELETE FROM order_batch_lines WHERE order_id = ? AND batch_id = ?").run(String(order.id), String(batchId));
+    for (const allocation of clean) {
+      insert.run({
+        id: crypto.randomUUID(),
+        orderId: String(order.id),
+        batchId: String(batchId),
+        lineIndex: allocation.lineIndex,
+        sku: allocation.sku,
+        buyingCode: allocation.buyingCode,
+        style: allocation.style,
+        quantity: allocation.quantity
+      });
+    }
+  });
+  replace();
+  return clean;
+}
+
+function batchSummary(orderOrId) {
+  const order = resolveOrderForInvoiceSummary(orderOrId);
+  const orderId = String(order?.id || orderOrId || "");
+  const batches = readOrderBatches(orderId);
+  const orderUnits = (order?.lines || []).reduce((total, line) => total + Number(line.quantity || 0), 0);
+  const expectedUnits = batches.reduce((total, batch) => total + Number(batch.units || 0), 0);
+  const expectedStyles = batches.reduce((total, batch) => total + Number(batch.styleCount || 0), 0);
+  const receivedUnits = batches
+    .filter(batch => batch.intakeStatus === "Received")
+    .reduce((total, batch) => total + Number(batch.units || 0), 0);
+  const shippedUnits = batches
+    .filter(batch => ["Shipped", "Received"].includes(batch.intakeStatus))
+    .reduce((total, batch) => total + Number(batch.units || 0), 0);
+  const openBatches = batches.filter(batch => batch.intakeStatus !== "Received").length;
+  const received = batches.filter(batch => batch.intakeStatus === "Received").length;
+  const shipped = batches.filter(batch => batch.intakeStatus === "Shipped").length;
+  const delayed = batches.filter(batch => batch.intakeStatus === "Delayed").length;
+  const inProduction = batches.filter(batch => batch.intakeStatus === "In production").length;
+  const confirmed = batches.filter(batch => batch.intakeStatus === "Confirmed").length;
+  return {
+    count: batches.length,
+    expectedUnits,
+    expectedStyles,
+    orderUnits,
+    receivedUnits,
+    shippedUnits,
+    outstandingUnits: Math.max(0, (orderUnits || expectedUnits) - receivedUnits),
+    openBatches,
+    received,
+    shipped,
+    delayed,
+    inProduction,
+    confirmed
+  };
+}
+
 function invoiceFromRow(row, includeFile = true) {
   const filePath = row.file_path || "";
   return {
     id: row.id,
     orderId: row.order_id,
+    batchId: row.batch_id || "",
     invoiceType: row.invoice_type || "",
     invoiceNumber: row.invoice_number || "",
     invoiceDate: row.invoice_date || "",
@@ -4341,6 +4568,7 @@ function invoiceSummary(orderOrId) {
   const order = resolveOrderForInvoiceSummary(orderOrId);
   const orderId = String(order?.id || orderOrId || "");
   const invoices = readOrderInvoices(orderId, false);
+  const unpaidActionable = invoices.filter(invoice => invoice.status !== "Paid" && (invoice.sentToFd || invoice.isReceived));
   const totalDue = invoices.reduce((total, invoice) => total + amountToGbp(invoice.amount, invoice.currency, order), 0);
   const totalDueEur = invoices.reduce((total, invoice) => total + amountToEur(invoice.amount, invoice.currency, order), 0);
   const totalPaid = invoices
@@ -4358,6 +4586,7 @@ function invoiceSummary(orderOrId) {
     sentToFd: invoices.filter(invoice => invoice.sentToFd).length,
     received: invoices.filter(invoice => invoice.isReceived).length,
     paid: invoices.filter(invoice => invoice.status === "Paid").length,
+    unpaidActionable: unpaidActionable.length,
     orderTotal,
     orderTotalEur,
     totalDue,
@@ -4372,6 +4601,40 @@ function invoiceSummary(orderOrId) {
 function invoiceSummaryIsFullyPaid(totals) {
   const orderTotal = Number(totals?.orderTotal || 0);
   return Number(totals?.totalPaid || 0) >= Math.max(0, orderTotal - 0.01) && orderTotal > 0;
+}
+
+function paymentStatusForBatchInvoices(invoices) {
+  if (!invoices.length) return "Awaiting invoice";
+  if (invoices.some(invoice => invoice.status === "Query")) return "Query";
+  const paid = invoices.filter(invoice => invoice.status === "Paid").length;
+  const actionable = invoices.filter(invoice => invoice.status !== "Paid" && (invoice.sentToFd || invoice.isReceived)).length;
+  if (paid === invoices.length) return "Paid";
+  if (paid > 0 && actionable > 0) return "Part paid";
+  if (actionable > 0) return "Ready to pay";
+  if (paid > 0) return "Paid";
+  return "Awaiting invoice";
+}
+
+function syncBatchPaymentStatusesFromInvoices(orderId) {
+  const db = openOrderSqliteDb();
+  const batches = readOrderBatches(orderId);
+  if (!batches.length) return;
+  const invoices = readOrderInvoices(orderId, false);
+  const update = db.prepare(`
+    UPDATE order_batches
+    SET payment_status = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND order_id = ?
+  `);
+  for (const batch of batches) {
+    const status = paymentStatusForBatchInvoices(invoices.filter(invoice => invoice.batchId === batch.id));
+    if (status !== batch.paymentStatus) update.run(status, batch.id, String(orderId));
+  }
+}
+
+function syncAllBatchPaymentStatusesFromInvoices() {
+  const db = openOrderSqliteDb();
+  const rows = db.prepare("SELECT DISTINCT order_id AS orderId FROM order_batches").all();
+  for (const row of rows) syncBatchPaymentStatusesFromInvoices(row.orderId);
 }
 
 function saveOrderInvoice(order, body, options = {}) {
@@ -4395,13 +4658,14 @@ function saveOrderInvoice(order, body, options = {}) {
   const mimeType = uploadedFile?.mimeType || invoice.mimeType || existingInvoice.mimeType || "";
   db.prepare(`
     INSERT INTO order_invoices (
-      id, order_id, invoice_type, invoice_number, invoice_date, due_date, amount, currency,
+      id, order_id, batch_id, invoice_type, invoice_number, invoice_date, due_date, amount, currency,
       is_received, sent_to_fd, status, file_name, mime_type, file_path, file_size, file_data, notes, uploaded_by, uploaded_at, updated_at
     ) VALUES (
-      @id, @orderId, @invoiceType, @invoiceNumber, @invoiceDate, @dueDate, @amount, @currency,
+      @id, @orderId, @batchId, @invoiceType, @invoiceNumber, @invoiceDate, @dueDate, @amount, @currency,
       @isReceived, @sentToFd, @status, @fileName, @mimeType, @filePath, @fileSize, '', @notes, @uploadedBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
     )
     ON CONFLICT(id) DO UPDATE SET
+      batch_id = excluded.batch_id,
       invoice_type = excluded.invoice_type,
       invoice_number = excluded.invoice_number,
       invoice_date = excluded.invoice_date,
@@ -4422,6 +4686,7 @@ function saveOrderInvoice(order, body, options = {}) {
   `).run({
     id,
     orderId: String(order.id),
+    batchId: String(invoice.batchId || "").trim(),
     invoiceType: String(invoice.invoiceType || "").trim(),
     invoiceNumber: String(invoice.invoiceNumber || "").trim(),
     invoiceDate: String(invoice.invoiceDate || "").trim(),
@@ -4446,7 +4711,9 @@ function saveOrderInvoice(order, body, options = {}) {
 
   const action = canManagePayment && invoice.sentToFd ? "Invoice uploaded and sent to FD" : "Invoice uploaded";
   recordOrderEvent(order.id, "invoice", body.actorName || "", action, { invoiceId: id, invoiceNumber: invoice.invoiceNumber || "", fileName });
+  syncBatchPaymentStatusesFromInvoices(order.id);
   syncPaymentWorkflowFromInvoices(order, body.actorName || "", { invoiceUploaded: true });
+  syncBatchWorkflow(order, body.actorName || "");
 
   return readOrderInvoices(order.id);
 }
@@ -4471,6 +4738,7 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
   const totals = invoiceSummary(order);
   const allPaid = invoiceSummaryIsFullyPaid(totals);
   const somePaid = totals.totalPaid > 0;
+  const hasUnpaidActionableInvoice = totals.unpaidActionable > 0;
   const anySent = totals.sentToFd > 0;
   const anyReceived = totals.received > 0;
   if (allPaid) {
@@ -4482,13 +4750,24 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
       nextAction: "Track intake date"
     }, actorName, "invoice");
     updateStoredOrderStatus(order.id, "Paid");
-  } else if (somePaid) {
+  } else if (somePaid && hasUnpaidActionableInvoice) {
     writeOrderWorkflow(order, {
       paymentStatus: "Part paid",
       paymentAmount: totals.orderTotal || totals.totalDue,
       paymentPaidDate: todayIsoDate(),
       nextActionOwner: "FD / Finance",
-      nextAction: "Pay remaining supplier invoice"
+      nextAction: "Pay current supplier invoice"
+    }, actorName, "invoice");
+    updateStoredOrderStatus(order.id, "Payment pending");
+  } else if (somePaid) {
+    const summary = batchSummary(order);
+    const activeIntake = summary.shipped > 0 || summary.received > 0 || summary.delayed > 0 || summary.inProduction > 0 || summary.confirmed > 0;
+    writeOrderWorkflow(order, {
+      paymentStatus: "Part paid",
+      paymentAmount: totals.orderTotal || totals.totalDue,
+      paymentPaidDate: todayIsoDate(),
+      nextActionOwner: activeIntake ? "Merchandising" : "Buyer",
+      nextAction: activeIntake ? "Track open supplier batches" : "Awaiting next supplier invoice"
     }, actorName, "invoice");
     updateStoredOrderStatus(order.id, "Payment pending");
   } else if (anyReceived || anySent || options.invoiceUploaded) {
@@ -4511,6 +4790,129 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
   }
 }
 
+function intakePatchForBatchSummary(summary, current) {
+  if (!summary.count) return {};
+  if (summary.received === summary.count) {
+    return { intakeStatus: "Received", intakeActualDate: current.intakeActualDate || todayIsoDate() };
+  }
+  if (summary.received > 0) return { intakeStatus: "Part received" };
+  if (summary.delayed > 0) return { intakeStatus: "Delayed" };
+  if (summary.shipped > 0) return { intakeStatus: summary.shipped === summary.count ? "Shipped" : "Part shipped" };
+  if (summary.inProduction > 0) return { intakeStatus: "In production" };
+  if (summary.confirmed > 0) return { intakeStatus: "Confirmed" };
+  return { intakeStatus: "Not confirmed" };
+}
+
+function syncBatchWorkflow(order, actorName = "") {
+  const db = openOrderSqliteDb();
+  const current = workflowFromRow(db.prepare("SELECT * FROM order_workflows WHERE order_id = ?").get(String(order.id)), order);
+  const summary = batchSummary(order);
+  const intakePatch = intakePatchForBatchSummary(summary, current);
+  if (!Object.keys(intakePatch).length) return current;
+
+  const invoiceTotals = invoiceSummary(order);
+  const hasPaymentAction = invoiceTotals.unpaidActionable > 0 || ["Ready to pay", "Overdue"].includes(current.paymentStatus);
+  const patch = { ...intakePatch };
+  if (!hasPaymentAction) {
+    if (["Received", "Part received", "Shipped", "Part shipped", "Delayed", "In production", "Confirmed"].includes(patch.intakeStatus)) {
+      patch.nextActionOwner = "Merchandising";
+      patch.nextAction = patch.intakeStatus === "Received"
+        ? "Archive completed order"
+        : patch.intakeStatus === "Part received"
+          ? "Chase remaining intake"
+          : patch.intakeStatus === "Shipped"
+            ? "Track shipment to warehouse"
+            : patch.intakeStatus === "Part shipped"
+              ? "Track remaining supplier shipments"
+              : patch.intakeStatus === "Delayed"
+                ? "Resolve delayed intake"
+                : "Track supplier production and ETA";
+    } else if (current.paymentStatus === "Part paid") {
+      patch.nextActionOwner = "Buyer";
+      patch.nextAction = "Awaiting next supplier invoice";
+    }
+  }
+  const workflow = writeOrderWorkflow(order, patch, actorName, "batch");
+  const status = orderStatusFromWorkflow(workflow);
+  if (status) updateStoredOrderStatus(order.id, status);
+  return workflow;
+}
+
+function saveOrderBatch(order, body) {
+  const db = openOrderSqliteDb();
+  const batch = body.batch || {};
+  const id = String(batch.id || crypto.randomUUID());
+  const existing = db.prepare("SELECT * FROM order_batches WHERE id = ? AND order_id = ?").get(id, String(order.id));
+  const existingBatch = existing ? batchFromRow(existing) : {};
+  const hasLineAllocations = Array.isArray(batch.lineAllocations);
+  const cleanAllocations = hasLineAllocations ? normalizeBatchLineAllocations(order, batch.lineAllocations, id) : [];
+  const allocationTotals = hasLineAllocations ? batchTotalsFromAllocations(order, cleanAllocations) : null;
+  db.prepare(`
+    INSERT INTO order_batches (
+      id, order_id, batch_number, title, style_count, units, value, currency,
+      payment_status, intake_status, eta_date, shipped_date, received_date, tracking_reference,
+      style_notes, notes, created_at, updated_at
+    ) VALUES (
+      @id, @orderId, @batchNumber, @title, @styleCount, @units, @value, @currency,
+      @paymentStatus, @intakeStatus, @etaDate, @shippedDate, @receivedDate, @trackingReference,
+      @styleNotes, @notes, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      batch_number = excluded.batch_number,
+      title = excluded.title,
+      style_count = excluded.style_count,
+      units = excluded.units,
+      value = excluded.value,
+      currency = excluded.currency,
+      payment_status = excluded.payment_status,
+      intake_status = excluded.intake_status,
+      eta_date = excluded.eta_date,
+      shipped_date = excluded.shipped_date,
+      received_date = excluded.received_date,
+      tracking_reference = excluded.tracking_reference,
+      style_notes = excluded.style_notes,
+      notes = excluded.notes,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    id,
+    orderId: String(order.id),
+    batchNumber: String(batch.batchNumber || existingBatch.batchNumber || "").trim(),
+    title: String(batch.title || "").trim(),
+    styleCount: allocationTotals ? allocationTotals.styleCount : Number(batch.styleCount || 0),
+    units: allocationTotals ? allocationTotals.units : Number(batch.units || 0),
+    value: allocationTotals ? allocationTotals.value : Number(batch.value || 0),
+    currency: String(batch.currency || order.terms?.currency || "GBP").trim(),
+    paymentStatus: String(batch.paymentStatus || "Awaiting invoice").trim(),
+    intakeStatus: String(batch.intakeStatus || "Not confirmed").trim(),
+    etaDate: String(batch.etaDate || "").trim(),
+    shippedDate: String(batch.shippedDate || "").trim(),
+    receivedDate: String(batch.receivedDate || "").trim(),
+    trackingReference: String(batch.trackingReference || "").trim(),
+    styleNotes: String(batch.styleNotes || "").trim(),
+    notes: String(batch.notes || "").trim()
+  });
+  if (hasLineAllocations) replaceBatchLineAllocations(order, id, cleanAllocations);
+  recordOrderEvent(order.id, "batch", body.actorName || "", existing ? "Batch updated" : "Batch created", { batchId: id, batchNumber: batch.batchNumber || "", lineAllocations: cleanAllocations.length });
+  syncBatchWorkflow(order, body.actorName || "");
+  return readOrderBatches(order.id);
+}
+
+function deleteOrderBatch(order, body) {
+  const batchId = String(body.batchId || "");
+  if (!batchId) throw new Error("Missing batch");
+  const db = openOrderSqliteDb();
+  const batch = db.prepare("SELECT * FROM order_batches WHERE id = ? AND order_id = ?").get(batchId, String(order.id));
+  if (!batch) throw new Error("Batch not found");
+  db.prepare("UPDATE order_invoices SET batch_id = '' WHERE order_id = ? AND batch_id = ?").run(String(order.id), batchId);
+  db.prepare("DELETE FROM order_batch_lines WHERE order_id = ? AND batch_id = ?").run(String(order.id), batchId);
+  db.prepare("DELETE FROM order_batches WHERE id = ? AND order_id = ?").run(batchId, String(order.id));
+  recordOrderEvent(order.id, "batch", body.actorName || "", "Batch deleted", { batchId, batchNumber: batch.batch_number || "" });
+  syncBatchPaymentStatusesFromInvoices(order.id);
+  syncBatchWorkflow(order, body.actorName || "");
+  syncPaymentWorkflowFromInvoices(order, body.actorName || "");
+  return readOrderBatches(order.id);
+}
+
 function deleteOrderInvoice(order, body) {
   const invoiceId = String(body.invoiceId || "");
   if (!invoiceId) throw new Error("Missing invoice");
@@ -4520,6 +4922,7 @@ function deleteOrderInvoice(order, body) {
   db.prepare("DELETE FROM order_invoices WHERE id = ? AND order_id = ?").run(invoiceId, String(order.id));
   removeUploadFile(invoice.file_path || "");
   recordOrderEvent(order.id, "invoice", body.actorName || "", "Invoice deleted", { invoiceId, invoiceNumber: invoice.invoice_number || "", fileName: invoice.file_name || "" });
+  syncBatchPaymentStatusesFromInvoices(order.id);
   syncPaymentWorkflowFromInvoices(order, body.actorName || "");
   return readOrderInvoices(order.id);
 }
@@ -5741,9 +6144,28 @@ function existingByNormalized(items, key, value) {
   return items.find(item => String(item[key] || "").trim().toLowerCase() === normalized) || null;
 }
 
+function migrateOrderRelations(sqlite, fromId, toId) {
+  const from = String(fromId || "");
+  const to = String(toId || "");
+  if (!from || !to || from === to) return;
+  const hasSourceWorkflow = sqlite.prepare("SELECT COUNT(*) AS count FROM order_workflows WHERE order_id = ?").get(from).count > 0;
+  if (hasSourceWorkflow) sqlite.prepare("DELETE FROM order_workflows WHERE order_id = ?").run(to);
+  sqlite.prepare("UPDATE order_workflows SET order_id = ? WHERE order_id = ?").run(to, from);
+  sqlite.prepare("UPDATE order_events SET order_id = ? WHERE order_id = ?").run(to, from);
+  sqlite.prepare("UPDATE order_invoices SET order_id = ? WHERE order_id = ?").run(to, from);
+  sqlite.prepare("UPDATE order_batches SET order_id = ? WHERE order_id = ?").run(to, from);
+  sqlite.prepare("UPDATE order_batch_lines SET order_id = ? WHERE order_id = ?").run(to, from);
+  sqlite.prepare("UPDATE work_handoffs SET entity_id = ? WHERE entity_type = 'order' AND entity_id = ?").run(to, from);
+  sqlite.prepare("UPDATE notifications SET entity_id = ? WHERE entity_type = 'order' AND entity_id = ?").run(to, from);
+}
+
 function saveOrderFormOrder(dbData, savedOrder) {
   const sqlite = openOrderSqliteDb();
   const storedOrder = materializeOrderImages(savedOrder);
+  const existingOrder = sqlite.prepare("SELECT id FROM orders WHERE order_number = ?").get(String(storedOrder.orderNumber || ""));
+  const incomingOrderId = String(storedOrder.id);
+  const canonicalOrderId = String(existingOrder?.id || incomingOrderId);
+  storedOrder.id = canonicalOrderId;
   const supplierPatch = storedOrder.supplier?.name ? {
     ...(existingByNormalized(dbData.suppliers || [], "name", storedOrder.supplier.name) || {}),
     ...storedOrder.supplier,
@@ -5761,7 +6183,8 @@ function saveOrderFormOrder(dbData, savedOrder) {
     }));
 
   const write = sqlite.transaction(() => {
-    sqlite.prepare("DELETE FROM orders WHERE id = ? OR order_number = ?").run(String(storedOrder.id), storedOrder.orderNumber);
+    migrateOrderRelations(sqlite, incomingOrderId, canonicalOrderId);
+    sqlite.prepare("DELETE FROM orders WHERE id = ? OR order_number = ?").run(canonicalOrderId, storedOrder.orderNumber);
     sqlite.prepare(`
       INSERT INTO orders (id, order_number, supplier_name, order_date, status, saved_at, data, archived_at, updated_at)
       VALUES (@id, @orderNumber, @supplierName, @orderDate, @status, @savedAt, @data, @archivedAt, CURRENT_TIMESTAMP)
@@ -6139,6 +6562,8 @@ async function handleApi(req, res) {
       order: publicManagedOrder(syncedOrder, workflow),
       events: readOrderEvents(orderId),
       invoices: readOrderInvoices(orderId),
+      batches: readOrderBatches(orderId),
+      batchLines: readOrderBatchLines(orderId),
       users: publicAssignableUsers()
     });
     return true;
@@ -6169,7 +6594,9 @@ async function handleApi(req, res) {
         order: publicOrder,
         workflow,
         events: readOrderEvents(orderId),
-        invoices: readOrderInvoices(orderId)
+        invoices: readOrderInvoices(orderId),
+        batches: readOrderBatches(orderId),
+        batchLines: readOrderBatchLines(orderId)
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not update order workflow" });
@@ -6202,6 +6629,8 @@ async function handleApi(req, res) {
         ok: true,
         order: publicManagedOrder(refreshedOrder, workflow),
         invoices,
+        batches: readOrderBatches(orderId),
+        batchLines: readOrderBatchLines(orderId),
         events: readOrderEvents(orderId)
       });
     } catch (error) {
@@ -6231,10 +6660,74 @@ async function handleApi(req, res) {
         ok: true,
         order: publicManagedOrder(refreshedOrder, workflow),
         invoices,
+        batches: readOrderBatches(orderId),
+        batchLines: readOrderBatchLines(orderId),
         events: readOrderEvents(orderId)
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not delete invoice" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/batches") {
+    if (!requireRoles(req, res, ["Buyer", "Finance", "Merchandising", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      body.actorName = actorName(req);
+      const orderId = String(body.orderId || "");
+      const db = readOrderDb();
+      const order = db.orders.find(item => String(item.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      const previousWorkflow = workflowFromRow(readOrderWorkflowMap().get(orderId), order);
+      const batches = saveOrderBatch(order, body);
+      const refreshedOrder = readOrderDb().orders.find(item => String(item.id) === orderId) || order;
+      const workflow = readOrderWorkflowMap().get(orderId);
+      await notifyOrderHandoffIfChanged(req, order, refreshedOrder, previousWorkflow, workflowFromRow(workflow, refreshedOrder), { notifyRoleActionChange: true });
+      sendJson(res, 200, {
+        ok: true,
+        order: publicManagedOrder(refreshedOrder, workflow),
+        batches,
+        invoices: readOrderInvoices(orderId),
+        batchLines: readOrderBatchLines(orderId),
+        events: readOrderEvents(orderId)
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save batch" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/batches/delete") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      body.actorName = actorName(req);
+      const orderId = String(body.orderId || "");
+      const db = readOrderDb();
+      const order = db.orders.find(item => String(item.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      const previousWorkflow = workflowFromRow(readOrderWorkflowMap().get(orderId), order);
+      const batches = deleteOrderBatch(order, body);
+      const refreshedOrder = readOrderDb().orders.find(item => String(item.id) === orderId) || order;
+      const workflow = readOrderWorkflowMap().get(orderId);
+      await notifyOrderHandoffIfChanged(req, order, refreshedOrder, previousWorkflow, workflowFromRow(workflow, refreshedOrder), { notifyRoleActionChange: true });
+      sendJson(res, 200, {
+        ok: true,
+        order: publicManagedOrder(refreshedOrder, workflow),
+        batches,
+        invoices: readOrderInvoices(orderId),
+        batchLines: readOrderBatchLines(orderId),
+        events: readOrderEvents(orderId)
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not delete batch" });
     }
     return true;
   }
@@ -6250,7 +6743,9 @@ async function handleApi(req, res) {
         ok: true,
         order: publicManagedOrder(order, workflow),
         events: readOrderEvents(orderId),
-        invoices: readOrderInvoices(orderId)
+        invoices: readOrderInvoices(orderId),
+        batches: readOrderBatches(orderId),
+        batchLines: readOrderBatchLines(orderId)
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not archive order" });

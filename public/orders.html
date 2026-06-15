@@ -85,6 +85,35 @@ textarea{min-height:70px;resize:vertical}
 .invoice-checks label{display:inline-flex;align-items:center;gap:6px}
 .invoice-checks input{width:auto;min-height:0}
 .file-input{padding:6px 8px;min-height:34px}
+.line-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.line-tabs button{border:1px solid var(--ds-line-strong);border-radius:var(--ds-radius);background:var(--ds-bg-surface);color:var(--ds-text-muted);font-size:11px;line-height:1;padding:6px 8px;cursor:pointer}
+.line-tabs button.active{border-color:var(--ds-action);background:var(--ds-bg-muted);color:var(--ds-text)}
+.line-batches{display:flex;gap:4px;flex-wrap:wrap}
+.batch-group{margin-top:14px}
+.batch-create{display:none;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px;margin-bottom:12px}
+.batch-create.open{display:block}
+.batch-form{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end}
+.batch-form .wide{grid-column:1/-1}
+.batch-totals{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+.batch-table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
+.batch-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.batch-table th{font-size:9px;text-transform:uppercase;letter-spacing:0;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:6px 4px;border-bottom:1px solid var(--ds-line)}
+.batch-table td{font-size:11px;color:var(--ds-text-muted);padding:6px 4px;border-bottom:1px solid var(--ds-line);vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+.batch-table tr:last-child td{border-bottom:0}
+.batch-table th:nth-child(1),.batch-table td:nth-child(1){width:24%}
+.batch-table th:nth-child(2),.batch-table td:nth-child(2){width:72px}
+.batch-table th:nth-child(3),.batch-table td:nth-child(3){width:72px}
+.batch-table th:nth-child(4),.batch-table td:nth-child(4){width:86px}
+.batch-table th:nth-child(5),.batch-table td:nth-child(5){width:86px}
+.batch-table th:nth-child(6),.batch-table td:nth-child(6){width:92px}
+.batch-line-table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);max-height:360px}
+.batch-line-table{width:100%;border-collapse:collapse;min-width:720px}
+.batch-line-table th{font-size:9px;text-transform:uppercase;letter-spacing:0;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:6px 4px;border-bottom:1px solid var(--ds-line);position:sticky;top:0}
+.batch-line-table td{font-size:11px;color:var(--ds-text-muted);padding:6px 4px;border-bottom:1px solid var(--ds-line);vertical-align:middle}
+.batch-line-table input[type="checkbox"]{width:16px;min-height:16px}
+.batch-line-table input[type="number"]{min-height:28px;padding:4px 6px;font-size:11px}
+.batch-line-table th:nth-child(1),.batch-line-table td:nth-child(1){width:34px;text-align:center}
+.batch-line-table th:nth-child(5),.batch-line-table td:nth-child(5),.batch-line-table th:nth-child(6),.batch-line-table td:nth-child(6),.batch-line-table th:nth-child(7),.batch-line-table td:nth-child(7){width:72px}
 .empty-state{padding:38px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.6}
 .line-table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius)}
 .line-table{width:100%;border-collapse:collapse;min-width:1040px}
@@ -93,7 +122,7 @@ textarea{min-height:70px;resize:vertical}
 .line-table tr:last-child td{border-bottom:0}
 .num{text-align:right;white-space:nowrap}
 @media(max-width:1180px){.layout{grid-template-columns:1fr}.order-list{max-height:none}.metric-grid,.summary-grid{grid-template-columns:repeat(2,1fr)}.filter-summary{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:760px){.toolbar,.workflow-grid,.grid2,.grid3,.invoice-form,.invoice-totals{grid-template-columns:1fr}.metric-grid,.summary-grid,.filter-summary{grid-template-columns:1fr}.filter-context{grid-column:auto}.detail-head{grid-template-columns:1fr}.actions{justify-content:flex-start}.order-row{grid-template-columns:1fr}.order-side{text-align:left;display:flex;gap:6px;flex-wrap:wrap;min-width:0}.order-side span{display:inline-flex;width:auto}.badge{max-width:100%}}
+@media(max-width:760px){.toolbar,.workflow-grid,.grid2,.grid3,.invoice-form,.invoice-totals,.batch-form,.batch-totals{grid-template-columns:1fr}.metric-grid,.summary-grid,.filter-summary{grid-template-columns:1fr}.filter-context{grid-column:auto}.detail-head{grid-template-columns:1fr}.actions{justify-content:flex-start}.order-row{grid-template-columns:1fr}.order-side{text-align:left;display:flex;gap:6px;flex-wrap:wrap;min-width:0}.order-side span{display:inline-flex;width:auto}.badge{max-width:100%}}
 </style>
 </head>
 <body>
@@ -143,12 +172,14 @@ const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:
 const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
 const approvalStatuses=["Not requested","Pending director approval","Approved","Changes requested","Rejected"];
 const paymentStatuses=["Not due","Awaiting invoice","Ready to pay","Part paid","Paid","Overdue"];
-const intakeStatuses=["Not confirmed","Confirmed","In production","Shipped","Delayed","Part received","Received"];
+const intakeStatuses=["Not confirmed","Confirmed","In production","Part shipped","Shipped","Delayed","Part received","Received"];
+const batchPaymentStatuses=["Awaiting invoice","Ready to pay","Part paid","Paid","Query"];
+const batchIntakeStatuses=["Not confirmed","Confirmed","In production","Shipped","Delayed","Received"];
 const invoiceTypes=["Deposit invoice","Balance invoice","Full invoice","Credit note","Other"];
 const invoiceStatuses=["Awaiting FD","Sent to FD","Paid","Query"];
 const currencyOptions=["EUR","GBP","USD","Other"];
 const owners=["Buyer","Buying Director","FD / Finance","Merchandising","Supplier"];
-let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,authMode:"none",currentUser:null};
+let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,lineBatchFilter:"all",authMode:"none",currentUser:null};
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
@@ -255,6 +286,10 @@ function options(items,value,blank){
   return `${blank?`<option value="">${escapeHtml(blank)}</option>`:""}${items.map(item=>`<option${item===value?" selected":""}>${escapeHtml(item)}</option>`).join("")}`;
 }
 
+function valueOptions(items,value,blank){
+  return `${blank?`<option value="">${escapeHtml(blank)}</option>`:""}${items.map(item=>`<option value="${attr(item.value)}"${item.value===value?" selected":""}>${escapeHtml(item.label)}</option>`).join("")}`;
+}
+
 function userOptions(value,blank="Unassigned"){
   return `${blank?`<option value="">${escapeHtml(blank)}</option>`:""}${(state.users||[]).map(user=>`<option value="${attr(user.id)}"${user.id===value?" selected":""}>${escapeHtml(user.displayName||user.email)}</option>`).join("")}`;
 }
@@ -277,7 +312,7 @@ function userHasAppRole(role){
 
 function badgeClass(value){
   if(["Approved","Paid","Received","Payment complete"].includes(value))return"good";
-  if(["Pending director approval","Ready to pay","Part paid","Shipped","Confirmed","In production","Awaiting approval","Sent to FD"].includes(value))return"info";
+  if(["Pending director approval","Ready to pay","Part paid","Part shipped","Part received","Shipped","Confirmed","In production","Awaiting approval","Sent to FD"].includes(value))return"info";
   if(["Changes requested","Awaiting invoice","Delayed","Overdue","Rejected","Query"].includes(value))return value==="Overdue"||value==="Rejected"?"bad":"warn";
   return "";
 }
@@ -302,7 +337,7 @@ function recalcMetrics(){
   state.metrics={
     totalOrders:activeOrders.length,
     awaitingApproval:activeOrders.filter(order=>order.workflow.approvalStatus==="Pending director approval").length,
-    readyToPay:activeOrders.filter(order=>["Ready to pay","Overdue","Part paid"].includes(order.workflow.paymentStatus)).length,
+    readyToPay:activeOrders.filter(order=>["Ready to pay","Overdue"].includes(order.workflow.paymentStatus)||(order.workflow.paymentStatus==="Part paid"&&order.workflow.nextActionOwner==="FD / Finance")).length,
     intakeRisk:activeOrders.filter(order=>order.workflow.intakeStatus==="Delayed"||(order.workflow.intakeEtaDate&&order.workflow.intakeEtaDate<todayIso&&order.workflow.intakeStatus!=="Received")).length
   };
 }
@@ -431,6 +466,7 @@ function renderOrders(){
       </span>
       <span class="order-side">
         <span class="badge ${badgeClass(order.compositeStatus)}">${escapeHtml(order.compositeStatus)}</span>
+        ${Number(order.batchSummary?.count||0)?`<span class="badge info">${Number(order.batchSummary.count).toLocaleString("en-GB")} batch${Number(order.batchSummary.count)===1?"":"es"}</span>`:""}
         <span>${moneyPairFromGbp(orderTotalGbp(order),order)}</span>
         <span>${formatDate(order.requiredDate)||"No intake date"}</span>
       </span>
@@ -453,14 +489,65 @@ function textarea(id,label,value,attrs=""){
   return `<div class="field"><label>${escapeHtml(label)}</label><textarea id="${id}" ${attrs}>${escapeHtml(value||"")}</textarea></div>`;
 }
 
+function batchById(id){
+  return (state.batches||[]).find(batch=>batch.id===id)||null;
+}
+
+function allocationsForLine(lineIndex){
+  return (state.batchLines||[]).filter(item=>Number(item.lineIndex)===Number(lineIndex));
+}
+
+function allocatedQuantityForLine(lineIndex,excludingBatchId=""){
+  return allocationsForLine(lineIndex)
+    .filter(item=>!excludingBatchId||item.batchId!==excludingBatchId)
+    .reduce((total,item)=>total+Number(item.quantity||0),0);
+}
+
+function lineBatchBadges(lineIndex){
+  const allocations=allocationsForLine(lineIndex);
+  if(!allocations.length)return `<span class="badge">Unbatched</span>`;
+  return `<span class="line-batches">${allocations.map(allocation=>{
+    const batch=batchById(allocation.batchId);
+    return `<span class="badge ${badgeClass(batch?.intakeStatus||"")}">${escapeHtml(batch?batchDisplayName(batch):"Batch")} ${Number(allocation.quantity||0).toLocaleString("en-GB")}</span>`;
+  }).join("")}</span>`;
+}
+
+function lineFilterTabs(){
+  const items=[
+    {id:"all",label:"All"},
+    {id:"unbatched",label:"Unbatched"},
+    ...(state.batches||[]).map(batch=>({id:batch.id,label:batchDisplayName(batch)}))
+  ];
+  const active=state.lineBatchFilter||"all";
+  return `<div class="line-tabs">${items.map(item=>`<button type="button" class="${item.id===active?"active":""}" onclick="setLineBatchFilter('${attr(item.id)}')">${escapeHtml(item.label)}</button>`).join("")}</div>`;
+}
+
+function filteredOrderLines(lines){
+  const filter=state.lineBatchFilter||"all";
+  if(filter==="all")return lines.map((line,index)=>({line,index}));
+  return lines.map((line,index)=>({line,index})).filter(item=>{
+    const allocations=allocationsForLine(item.index);
+    if(filter==="unbatched")return !allocations.length;
+    return allocations.some(allocation=>allocation.batchId===filter);
+  });
+}
+
+function setLineBatchFilter(filter){
+  state.lineBatchFilter=filter||"all";
+  renderDetail();
+}
+
 function renderLineTable(order){
   const lines=order.order?.lines||[];
   if(!lines.length)return "";
+  const visible=filteredOrderLines(lines);
   return `<section class="work-panel" style="margin-top:14px">
-    <div class="work-head"><h3>Order lines</h3><div class="actions"><span class="pill">${lines.length} lines</span><button type="button" class="btn" onclick="exportOrderLinesExcel()">Export Excel</button></div></div>
+    <div class="work-head"><h3>Order lines</h3><div class="actions"><span class="pill">${visible.length} of ${lines.length} lines</span><button type="button" class="btn" onclick="exportOrderLinesExcel()">Export Excel</button></div></div>
+    ${lineFilterTabs()}
     <div class="line-table-wrap"><table class="line-table">
-      <thead><tr><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
-      <tbody>${lines.map(line=>`<tr>
+      <thead><tr><th>Batch</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
+      <tbody>${visible.map(({line,index})=>`<tr>
+        <td>${lineBatchBadges(index)}</td>
         <td>${escapeHtml(line.sku||"")}</td>
         <td>${escapeHtml(line.buyingCode||line.supplierSku||"")}</td>
         <td>${escapeHtml(line.style||line.description||"")}</td>
@@ -480,10 +567,11 @@ function exportOrderLinesExcel(){
   const order=state.selected;
   const lines=order?.order?.lines||[];
   if(!order||!lines.length)return;
-  const headers=["Order number","Supplier","SKU","Buying code","Style","Category","Colour","Size","Quantity","Unit cost GBP","Unit cost EUR","Line cost GBP","Line cost EUR","Season"];
-  const rows=lines.map(line=>[
+  const headers=["Order number","Supplier","Batch","SKU","Buying code","Style","Category","Colour","Size","Quantity","Unit cost GBP","Unit cost EUR","Line cost GBP","Line cost EUR","Season"];
+  const rows=filteredOrderLines(lines).map(({line,index})=>[
     order.orderNumber,
     order.supplierName,
+    allocationsForLine(index).map(allocation=>`${batchDisplayName(batchById(allocation.batchId)||{})} ${Number(allocation.quantity||0)}`).join(", ")||"Unbatched",
     line.sku||"",
     line.buyingCode||line.supplierSku||"",
     line.style||line.description||"",
@@ -508,6 +596,145 @@ function exportOrderLinesExcel(){
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function batchDisplayName(batch){
+  return batch.title||batch.batchNumber||"Batch";
+}
+
+function batchSelectOptions(value){
+  const items=(state.batches||[]).map(batch=>({value:batch.id,label:batchDisplayName(batch)}));
+  return valueOptions(items,value,"No batch");
+}
+
+function batchTotals(order,batches){
+  const orderUnits=Number(order.units||0);
+  const expectedUnits=batches.reduce((total,batch)=>total+Number(batch.units||0),0);
+  const expectedStyles=batches.reduce((total,batch)=>total+Number(batch.styleCount||0),0);
+  const receivedUnits=batches.filter(batch=>batch.intakeStatus==="Received").reduce((total,batch)=>total+Number(batch.units||0),0);
+  return {
+    count:batches.length,
+    expectedUnits,
+    expectedStyles,
+    receivedUnits,
+    outstandingUnits:Math.max(0,(orderUnits||expectedUnits)-receivedUnits)
+  };
+}
+
+function batchAllocationForLine(batchId,lineIndex){
+  return (state.batchLines||[]).find(item=>item.batchId===batchId&&Number(item.lineIndex)===Number(lineIndex))||null;
+}
+
+function allocationInputId(lineIndex){
+  return `batch-line-qty-${lineIndex}`;
+}
+
+function allocationCheckId(lineIndex){
+  return `batch-line-check-${lineIndex}`;
+}
+
+function toggleBatchLine(lineIndex,checked){
+  const qtyNode=el(allocationInputId(lineIndex));
+  if(!qtyNode)return;
+  if(checked&&!Number(qtyNode.value||0))qtyNode.value=qtyNode.dataset.available||"0";
+  if(!checked)qtyNode.value="0";
+}
+
+function renderBatchLineAllocator(order,batchId){
+  const lines=order.order?.lines||[];
+  if(!lines.length)return "";
+  return `<div class="wide">
+    <div class="work-head" style="margin-bottom:8px"><h3>Build from order lines</h3><span class="pill">${lines.length} lines</span></div>
+    <div class="batch-line-table-wrap"><table class="batch-line-table">
+      <thead><tr><th>Use</th><th>SKU</th><th>Style</th><th>Colour</th><th class="num">Ordered</th><th class="num">Available</th><th class="num">This batch</th></tr></thead>
+      <tbody>${lines.map((line,index)=>{
+        const existing=batchId?batchAllocationForLine(batchId,index):null;
+        const currentQty=Number(existing?.quantity||0);
+        const available=Math.max(0,Number(line.quantity||0)-allocatedQuantityForLine(index,batchId));
+        const checked=currentQty>0;
+        const disabled=!available&&!checked;
+        return `<tr>
+          <td><input id="${allocationCheckId(index)}" type="checkbox" ${checked?"checked":""} ${disabled?"disabled":""} onchange="toggleBatchLine(${index},this.checked)" aria-label="Use line ${index+1}"></td>
+          <td>${escapeHtml(line.sku||"")}<span class="money-sub">${escapeHtml(line.buyingCode||line.supplierSku||"")}</span></td>
+          <td>${escapeHtml(line.style||line.description||"")}</td>
+          <td>${escapeHtml(line.colour||line.color||"")}</td>
+          <td class="num">${Number(line.quantity||0).toLocaleString("en-GB")}</td>
+          <td class="num">${available.toLocaleString("en-GB")}</td>
+          <td class="num"><input id="${allocationInputId(index)}" data-available="${attr(available)}" type="number" min="0" max="${attr(available)}" value="${currentQty||0}" ${disabled?"disabled":""}></td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function renderBatchGroup(order){
+  const batches=state.batches||[];
+  const totals=batchTotals(order,batches);
+  const editing=batches.find(batch=>batch.id===state.editingBatchId)||null;
+  const formBatch=editing||{};
+  const formOpen=state.batchEditorOpen||Boolean(editing);
+  const canManage=canManageBatches();
+  return `<section class="work-panel batch-group">
+    <div class="work-head"><h3>Supplier batches</h3><div class="actions"><span class="pill">${batches.length} batch${batches.length===1?"":"es"}</span><button type="button" class="btn" onclick="toggleCreateBatch()" ${canManage?"":"disabled"}>${editing?"Edit batch":"Create batch"}</button></div></div>
+    <div class="batch-totals">
+      <div class="invoice-total"><label>Planned</label><strong>${totals.count.toLocaleString("en-GB")}</strong><span class="money-sub">batches</span></div>
+      <div class="invoice-total"><label>Styles</label><strong>${totals.expectedStyles.toLocaleString("en-GB")}</strong><span class="money-sub">batch total</span></div>
+      <div class="invoice-total"><label>Received units</label><strong>${totals.receivedUnits.toLocaleString("en-GB")}</strong><span class="money-sub">of ${Number(order.units||0).toLocaleString("en-GB")}</span></div>
+      <div class="invoice-total"><label>Outstanding units</label><strong>${totals.outstandingUnits.toLocaleString("en-GB")}</strong><span class="money-sub">remaining</span></div>
+    </div>
+    <div class="batch-table-wrap">${renderBatchTable(order,batches)}</div>
+    <div class="batch-create ${formOpen?"open":""}" id="batch-create">
+      <div class="batch-form">
+        ${input("batch-number","Batch no.",formBatch.batchNumber||`Batch ${batches.length+1}`,"text",canManage?"":"disabled")}
+        ${input("batch-title","Batch name",formBatch.title||"","text",canManage?"":"disabled")}
+        ${input("batch-styles","Styles",formBatch.styleCount||0,"number",canManage?"":"disabled")}
+        ${input("batch-units","Units",formBatch.units||0,"number",canManage?"":"disabled")}
+        ${input("batch-value","Value",formBatch.value||0,"number",canManage?"":"disabled")}
+        ${select("batch-currency","Currency",currencyOptions,formBatch.currency||order.currency||"EUR",canManage?"":"disabled")}
+        ${select("batch-payment","Payment",batchPaymentStatuses,formBatch.paymentStatus||"Awaiting invoice",canManage?"":"disabled")}
+        ${select("batch-intake","Intake",batchIntakeStatuses,formBatch.intakeStatus||"Not confirmed",canManage?"":"disabled")}
+        ${input("batch-eta","ETA warehouse",formBatch.etaDate||"","date",canManage?"":"disabled")}
+        ${input("batch-shipped","Shipped date",formBatch.shippedDate||"","date",canManage?"":"disabled")}
+        ${input("batch-received","Received date",formBatch.receivedDate||"","date",canManage?"":"disabled")}
+        ${input("batch-tracking","Shipment reference",formBatch.trackingReference||"","text",canManage?"":"disabled")}
+        ${textarea("batch-styles-note","Styles included",formBatch.styleNotes||"",canManage?"":"disabled")}
+        ${textarea("batch-notes","Batch notes",formBatch.notes||"",canManage?"":"disabled")}
+        ${renderBatchLineAllocator(order,formBatch.id||"")}
+      </div>
+      <div class="actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn primary" onclick="saveBatch()" ${canManage?"":"disabled"}>${editing?"Save batch":"Add batch"}</button>${editing?`<button type="button" class="btn" onclick="cancelBatchEdit()">Cancel</button>`:""}</div>
+    </div>
+  </section>`;
+}
+
+function renderBatchTable(order,batches){
+  if(!batches.length)return `<p class="empty" style="padding:10px">No supplier batches yet.</p>`;
+  return `<table class="batch-table">
+    <thead><tr><th>Batch</th><th class="num">Styles</th><th class="num">Units</th><th>Payment</th><th>Intake</th><th>ETA / Received</th></tr></thead>
+    <tbody>${batches.map(batch=>renderBatchRow(order,batch)).join("")}</tbody>
+  </table>`;
+}
+
+function renderBatchRow(order,batch){
+  const canManage=canManageBatches();
+  const deleteButton=canDeleteBatches()?`<button type="button" class="mini-btn danger" onclick="deleteBatch('${attr(batch.id)}')">Delete</button>`:"";
+  const dateText=batch.intakeStatus==="Received"?(formatDate(batch.receivedDate)||"-"):(formatDate(batch.etaDate)||"-");
+  const value=Number(batch.value||0)?`<span class="money-sub">${formatCurrency(Number(batch.value||0),batch.currency||order.currency)}</span>`:"";
+  return `<tr>
+    <td><strong title="${attr(batch.styleNotes||"")}">${escapeHtml(batchDisplayName(batch))}</strong>${value}<div class="invoice-row-actions">${canManage?`<button type="button" class="mini-btn" onclick="editBatch('${attr(batch.id)}')">Edit</button>`:""}${deleteButton}</div></td>
+    <td class="num">${Number(batch.styleCount||0).toLocaleString("en-GB")}</td>
+    <td class="num">${Number(batch.units||0).toLocaleString("en-GB")}</td>
+    <td><span class="badge ${badgeClass(batch.paymentStatus)}">${escapeHtml(batch.paymentStatus||"Awaiting invoice")}</span></td>
+    <td><span class="badge ${badgeClass(batch.intakeStatus)}">${escapeHtml(batch.intakeStatus||"Not confirmed")}</span></td>
+    <td>${escapeHtml(dateText)}${batch.trackingReference?`<span class="money-sub">${escapeHtml(batch.trackingReference)}</span>`:""}</td>
+  </tr>`;
+}
+
+function canManageBatches(){
+  return userHasAppRole("Buyer")||userHasAppRole("Finance")||userHasAppRole("Merchandising");
+}
+
+function canDeleteBatches(){
+  return userHasAppRole("Buyer")||userHasAppRole("Merchandising");
 }
 
 function renderEvents(){
@@ -543,6 +770,7 @@ function renderInvoiceGroup(order){
         ${input("invoice-number","Invoice number",formInvoice.invoiceNumber||"","text")}
         ${input("invoice-amount","Amount",formAmount||0,"number")}
         ${select("invoice-currency","Currency",currencyOptions,formCurrency)}
+        <div class="field"><label>Batch</label><select class="select" id="invoice-batch">${batchSelectOptions(formInvoice.batchId||"")}</select></div>
         ${input("invoice-date","Invoice date",formInvoice.invoiceDate||"","date")}
         ${input("invoice-due","Due date",formInvoice.dueDate||"","date")}
         <div class="field"><label>Invoice file</label><input class="file-input" id="invoice-file" type="file" accept=".pdf,image/*"></div>
@@ -582,8 +810,10 @@ function renderInvoiceRow(order,invoice){
   const equivalent=code==="EUR"?money.format(invoiceAmountGbp(invoice,order)):eurMoney.format(invoiceAmountEur(invoice,order));
   const canManagePayment=canManageInvoicePayment();
   const deleteButton=canDeleteInvoice()?`<button type="button" class="mini-btn danger" onclick="deleteInvoice('${attr(invoice.id)}')">Delete</button>`:"";
+  const batch=(state.batches||[]).find(item=>item.id===invoice.batchId);
+  const batchLabel=batch?`<span class="money-sub">${escapeHtml(batchDisplayName(batch))}</span>`:"";
   return `<tr>
-    <td><strong title="${attr(invoice.invoiceType||"")}">${escapeHtml(invoice.invoiceNumber||invoice.invoiceType||"Invoice")}</strong><div class="invoice-row-actions"><button type="button" class="mini-btn" onclick="editInvoice('${attr(invoice.id)}')">Edit</button>${deleteButton}</div></td>
+    <td><strong title="${attr(invoice.invoiceType||"")}">${escapeHtml(invoice.invoiceNumber||invoice.invoiceType||"Invoice")}</strong>${batchLabel}<div class="invoice-row-actions"><button type="button" class="mini-btn" onclick="editInvoice('${attr(invoice.id)}')">Edit</button>${deleteButton}</div></td>
     <td>${fileLink}</td>
     <td class="num">${formatCurrency(Number(invoice.amount||0),code)}<span class="money-sub">${equivalent}</span></td>
     <td>${formatDate(invoice.dueDate)||"-"}</td>
@@ -629,12 +859,13 @@ function suggestedNextAction(workflow,order){
   if(approval!=="Approved")return {owner:"Buyer",action:"Prepare or submit order"};
   if(payment==="Awaiting invoice")return {owner:"Buyer",action:"Awaiting supplier invoice"};
   if(payment==="Ready to pay")return {owner:"FD / Finance",action:"Pay supplier invoice"};
-  if(payment==="Part paid")return {owner:"FD / Finance",action:"Pay remaining supplier invoice"};
+  if(payment==="Part paid")return {owner:"Buyer",action:"Awaiting next supplier invoice"};
   if(payment==="Overdue")return {owner:"FD / Finance",action:"Resolve overdue supplier payment"};
   if(payment!=="Paid")return {owner:"Buyer",action:"Confirm invoice and payment plan"};
   if(intake==="Received")return {owner:"Merchandising",action:"Archive completed order"};
   if(intake==="Part received")return {owner:"Merchandising",action:"Chase remaining intake"};
   if(intake==="Shipped")return {owner:"Merchandising",action:"Track shipment to warehouse"};
+  if(intake==="Part shipped")return {owner:"Merchandising",action:"Track remaining supplier shipments"};
   if(intake==="Delayed")return {owner:"Merchandising",action:"Resolve delayed intake"};
   if(intake==="In production")return {owner:"Merchandising",action:"Track supplier production and ETA"};
   if(intake==="Confirmed")return {owner:"Merchandising",action:"Track confirmed intake date"};
@@ -679,6 +910,7 @@ function renderDetail(){
         </div>
         <div class="actions">
           <span class="badge ${badgeClass(order.compositeStatus)}">${escapeHtml(order.compositeStatus)}</span>
+          ${Number(order.batchSummary?.count||0)?`<span class="badge info">${Number(order.batchSummary.count).toLocaleString("en-GB")} batch${Number(order.batchSummary.count)===1?"":"es"}</span>`:""}
           <a class="btn" href="order-form.html">Open form</a>
           ${orderActionButtons(order)}
         </div>
@@ -746,6 +978,7 @@ function renderDetail(){
         <div class="activity" id="activity">${renderEvents()}</div>
       </div>
     </section>
+    ${renderBatchGroup(order)}
     ${renderLineTable(order)}`;
   el("actor-name").addEventListener("input",()=>localStorage.setItem("ordersActorName",val("actor-name")));
   ["approval-status","payment-status","intake-status"].forEach(id=>el(id)?.addEventListener("change",syncNextActionFromStatuses));
@@ -764,6 +997,8 @@ async function saveWorkflow(section,patch){
   state.selected=result.order;
   state.events=result.events||[];
   state.invoices=result.invoices||state.invoices||[];
+  state.batches=result.batches||state.batches||[];
+  state.batchLines=result.batchLines||state.batchLines||[];
   const index=state.orders.findIndex(order=>order.id===result.order.id);
   if(index!==-1)state.orders[index]=result.order;
   recalcMetrics();
@@ -852,6 +1087,7 @@ async function saveInvoice(){
   const fileData=file?await readFileAsDataUrl(file):"";
   await saveInvoicePayload({
     id:state.editingInvoiceId||"",
+    batchId:val("invoice-batch"),
     invoiceType:val("invoice-type"),
     invoiceNumber:val("invoice-number"),
     invoiceDate:val("invoice-date"),
@@ -878,6 +1114,8 @@ async function deleteInvoice(id){
   if(!response.ok||!result.ok){showError(new Error(result.error||"Could not delete invoice"));return;}
   state.selected=result.order;
   state.invoices=result.invoices||[];
+  state.batches=result.batches||state.batches||[];
+  state.batchLines=result.batchLines||state.batchLines||[];
   state.events=result.events||[];
   if(state.editingInvoiceId===id)state.editingInvoiceId="";
   state.invoiceEditorOpen=false;
@@ -911,6 +1149,8 @@ async function saveInvoicePayload(invoice){
   if(!response.ok||!result.ok)throw new Error(result.error||"Could not save invoice");
   state.selected=result.order;
   state.invoices=result.invoices||[];
+  state.batches=result.batches||state.batches||[];
+  state.batchLines=result.batchLines||state.batchLines||[];
   state.events=result.events||[];
   state.editingInvoiceId="";
   state.invoiceEditorOpen=false;
@@ -934,6 +1174,8 @@ async function setArchiveSelected(archived){
   state.selected=result.order;
   state.events=result.events||[];
   state.invoices=result.invoices||[];
+  state.batches=result.batches||state.batches||[];
+  state.batchLines=result.batchLines||state.batchLines||[];
   state.users=result.users||state.users||[];
   const index=state.orders.findIndex(order=>order.id===result.order.id);
   if(index!==-1)state.orders[index]=result.order;
@@ -956,6 +1198,8 @@ async function deleteSelectedOrder(){
   state.selected=null;
   state.events=[];
   state.invoices=[];
+  state.batches=[];
+  state.batchLines=[];
   recalcMetrics();
   renderFilters();
   renderMetrics();
@@ -963,6 +1207,101 @@ async function deleteSelectedOrder(){
   const next=filterOrders()[0];
   if(next)await selectOrder(next.id);
   else renderDetail();
+}
+
+function toggleCreateBatch(){
+  if(state.editingBatchId){
+    cancelBatchEdit();
+    return;
+  }
+  state.batchEditorOpen=!state.batchEditorOpen;
+  renderDetail();
+}
+
+function editBatch(id){
+  state.editingBatchId=id;
+  state.batchEditorOpen=true;
+  renderDetail();
+}
+
+function cancelBatchEdit(){
+  state.editingBatchId="";
+  state.batchEditorOpen=false;
+  renderDetail();
+}
+
+async function saveBatch(){
+  if(!state.selectedId)return;
+  const status=val("batch-intake");
+  const lines=state.selected?.order?.lines||[];
+  const lineAllocations=lines.map((line,index)=>{
+    const checkbox=el(allocationCheckId(index));
+    const qtyNode=el(allocationInputId(index));
+    const quantity=Number(qtyNode?.value||0);
+    return checkbox?.checked||quantity>0?{lineIndex:index,quantity}:null;
+  }).filter(Boolean);
+  const hadLineAllocations=Boolean(state.editingBatchId&&(state.batchLines||[]).some(item=>item.batchId===state.editingBatchId));
+  const batch={
+    id:state.editingBatchId||"",
+    batchNumber:val("batch-number"),
+    title:val("batch-title"),
+    styleCount:val("batch-styles"),
+    units:val("batch-units"),
+    value:val("batch-value"),
+    currency:val("batch-currency")||state.selected?.currency||"GBP",
+    paymentStatus:val("batch-payment"),
+    intakeStatus:status,
+    etaDate:val("batch-eta"),
+    shippedDate:val("batch-shipped")||(status==="Shipped"?today():""),
+    receivedDate:val("batch-received")||(status==="Received"?today():""),
+    trackingReference:val("batch-tracking"),
+    styleNotes:val("batch-styles-note"),
+    notes:val("batch-notes")
+  };
+  if(lineAllocations.length||hadLineAllocations)batch.lineAllocations=lineAllocations;
+  localStorage.setItem("ordersActorName",val("actor-name"));
+  const response=await apiFetch("/api/orders/batches",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,actorName:val("actor-name"),batch})});
+  const result=await response.json();
+  if(!response.ok||!result.ok){showError(new Error(result.error||"Could not save batch"));return;}
+  state.selected=result.order;
+  state.batches=result.batches||[];
+  state.invoices=result.invoices||state.invoices||[];
+  state.batchLines=result.batchLines||[];
+  state.events=result.events||[];
+  state.editingBatchId="";
+  state.batchEditorOpen=false;
+  const index=state.orders.findIndex(order=>order.id===result.order.id);
+  if(index!==-1)state.orders[index]=result.order;
+  recalcMetrics();
+  renderFilters();
+  renderMetrics();
+  renderOrders();
+  renderDetail();
+}
+
+async function deleteBatch(id){
+  const batch=(state.batches||[]).find(item=>item.id===id);
+  if(!batch)return;
+  if(!window.confirm(`Delete ${batchDisplayName(batch)}? Linked invoices will stay on the order.`))return;
+  localStorage.setItem("ordersActorName",val("actor-name"));
+  const response=await apiFetch("/api/orders/batches/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,actorName:val("actor-name"),batchId:id})});
+  const result=await response.json();
+  if(!response.ok||!result.ok){showError(new Error(result.error||"Could not delete batch"));return;}
+  state.selected=result.order;
+  state.batches=result.batches||[];
+  state.invoices=result.invoices||state.invoices||[];
+  state.batchLines=result.batchLines||[];
+  state.events=result.events||[];
+  if(state.editingBatchId===id)state.editingBatchId="";
+  if(state.lineBatchFilter===id)state.lineBatchFilter="all";
+  state.batchEditorOpen=false;
+  const index=state.orders.findIndex(order=>order.id===result.order.id);
+  if(index!==-1)state.orders[index]=result.order;
+  recalcMetrics();
+  renderFilters();
+  renderMetrics();
+  renderOrders();
+  renderDetail();
 }
 
 async function saveIntake(){
@@ -1000,6 +1339,8 @@ async function selectOrder(id){
   state.selectedId=id;
   state.editingInvoiceId="";
   state.invoiceEditorOpen=false;
+  state.editingBatchId="";
+  state.batchEditorOpen=false;
   renderOrders();
   el("detail").innerHTML=`<section class="panel"><p class="empty-state">Loading order...</p></section>`;
   const response=await apiFetch(`/api/orders/detail?id=${encodeURIComponent(id)}`);
@@ -1008,6 +1349,8 @@ async function selectOrder(id){
   state.selected=result.order;
   state.events=result.events||[];
   state.invoices=result.invoices||[];
+  state.batches=result.batches||[];
+  state.batchLines=result.batchLines||[];
   const index=state.orders.findIndex(order=>order.id===id);
   if(index!==-1)state.orders[index]=result.order;
   renderOrders();
