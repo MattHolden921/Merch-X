@@ -148,7 +148,7 @@ const invoiceTypes=["Deposit invoice","Balance invoice","Full invoice","Credit n
 const invoiceStatuses=["Awaiting FD","Sent to FD","Paid","Query"];
 const currencyOptions=["EUR","GBP","USD","Other"];
 const owners=["Buyer","Buying Director","FD / Finance","Merchandising","Supplier"];
-let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false};
+let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,authMode:"none",currentUser:null};
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
@@ -257,6 +257,22 @@ function options(items,value,blank){
 
 function userOptions(value,blank="Unassigned"){
   return `${blank?`<option value="">${escapeHtml(blank)}</option>`:""}${(state.users||[]).map(user=>`<option value="${attr(user.id)}"${user.id===value?" selected":""}>${escapeHtml(user.displayName||user.email)}</option>`).join("")}`;
+}
+
+function authMode(){
+  return state.authMode||window.MERCH_AUTH?.state?.authMode||"none";
+}
+
+function currentUser(){
+  return state.currentUser||window.MERCH_AUTH?.state?.user||null;
+}
+
+function userHasAppRole(role){
+  if(authMode()!=="google")return true;
+  if(window.MERCH_AUTH?.hasRole(role))return true;
+  const user=currentUser()||{};
+  const roles=user.roles||[];
+  return Boolean(user.isAdmin||roles.includes("Admin")||roles.includes(role));
 }
 
 function badgeClass(value){
@@ -565,8 +581,9 @@ function renderInvoiceRow(order,invoice){
   const code=String(invoice.currency||"GBP").toUpperCase();
   const equivalent=code==="EUR"?money.format(invoiceAmountGbp(invoice,order)):eurMoney.format(invoiceAmountEur(invoice,order));
   const canManagePayment=canManageInvoicePayment();
+  const deleteButton=canDeleteInvoice()?`<button type="button" class="mini-btn danger" onclick="deleteInvoice('${attr(invoice.id)}')">Delete</button>`:"";
   return `<tr>
-    <td><strong title="${attr(invoice.invoiceType||"")}">${escapeHtml(invoice.invoiceNumber||invoice.invoiceType||"Invoice")}</strong><div class="invoice-row-actions"><button type="button" class="mini-btn" onclick="editInvoice('${attr(invoice.id)}')">Edit</button><button type="button" class="mini-btn danger" onclick="deleteInvoice('${attr(invoice.id)}')">Delete</button></div></td>
+    <td><strong title="${attr(invoice.invoiceType||"")}">${escapeHtml(invoice.invoiceNumber||invoice.invoiceType||"Invoice")}</strong><div class="invoice-row-actions"><button type="button" class="mini-btn" onclick="editInvoice('${attr(invoice.id)}')">Edit</button>${deleteButton}</div></td>
     <td>${fileLink}</td>
     <td class="num">${formatCurrency(Number(invoice.amount||0),code)}<span class="money-sub">${equivalent}</span></td>
     <td>${formatDate(invoice.dueDate)||"-"}</td>
@@ -578,17 +595,26 @@ function renderInvoiceRow(order,invoice){
 }
 
 function canManageInvoicePayment(){
-  return !window.MERCH_AUTH
-    || window.MERCH_AUTH.state.authMode !== "google"
-    || window.MERCH_AUTH.hasRole("Finance")
-    || window.MERCH_AUTH.hasRole("Admin");
+  return userHasAppRole("Finance");
+}
+
+function canDeleteInvoice(){
+  return userHasAppRole("Finance");
+}
+
+function canArchiveOrders(){
+  return userHasAppRole("Merchandising");
+}
+
+function canDeleteOrders(){
+  return userHasAppRole("Admin");
 }
 
 function orderActionButtons(order){
-  const archiveButton=order.archivedAt
+  const archiveButton=canArchiveOrders()&&order.archivedAt
     ? `<button type="button" class="btn" onclick="setArchiveSelected(false)">Restore</button>`
-    : order.canArchive?`<button type="button" class="btn" onclick="setArchiveSelected(true)">Archive</button>`:"";
-  const deleteButton=order.canDelete?`<button type="button" class="btn" onclick="deleteSelectedOrder()">Delete</button>`:"";
+    : canArchiveOrders()&&order.canArchive?`<button type="button" class="btn" onclick="setArchiveSelected(true)">Archive</button>`:"";
+  const deleteButton=canDeleteOrders()&&order.canDelete?`<button type="button" class="btn" onclick="deleteSelectedOrder()">Delete</button>`:"";
   return `${archiveButton}${deleteButton}`;
 }
 
@@ -984,6 +1010,8 @@ async function loadWorkspace(){
   state.orders=data.orders||[];
   state.metrics=data.metrics||{};
   state.users=data.users||[];
+  state.authMode=data.authMode||state.authMode;
+  state.currentUser=data.currentUser||state.currentUser;
   recalcMetrics();
   renderMetrics();
   renderFilters();

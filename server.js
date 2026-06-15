@@ -4146,6 +4146,12 @@ function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") 
     clean.nextActionOwner = actionPatch.nextActionOwner;
     clean.nextAction = actionPatch.nextAction;
   }
+  if (Object.prototype.hasOwnProperty.call(clean, "nextActionOwner")
+    && clean.nextActionOwner !== current.nextActionOwner
+    && !Object.prototype.hasOwnProperty.call(clean, "nextActionUserId")) {
+    clean.nextActionUserId = "";
+    next.nextActionUserId = "";
+  }
   db.prepare(`
     INSERT INTO order_workflows (
       order_id, approval_status, approval_by, approval_decided_at, approval_notes,
@@ -4446,11 +4452,11 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
   if (!invoices.length) {
     if (["Paid", "Part paid", "Ready to pay", "Overdue"].includes(current.paymentStatus)) {
       writeOrderWorkflow(order, {
-        paymentStatus: order.status === "Approved" ? "Awaiting invoice" : "Not due",
+        paymentStatus: "Awaiting invoice",
         paymentAmount: Number(order.totals?.grand || 0),
         paymentPaidDate: "",
-        nextActionOwner: order.status === "Approved" ? "Buyer" : current.nextActionOwner,
-        nextAction: order.status === "Approved" ? "Awaiting supplier invoice" : current.nextAction
+        nextActionOwner: "Buyer",
+        nextAction: "Awaiting supplier invoice"
       }, actorName, "invoice");
       if (order.status === "Paid" || order.status === "Payment pending") updateStoredOrderStatus(order.id, "Approved");
     }
@@ -5012,9 +5018,15 @@ async function recordWorkHandoff(req, handoff) {
   return id;
 }
 
-async function notifyOrderHandoffIfChanged(req, order, updatedOrder, previousWorkflow, workflow) {
+async function notifyOrderHandoffIfChanged(req, order, updatedOrder, previousWorkflow, workflow, options = {}) {
   if (!previousWorkflow || !workflow) return;
-  if (previousWorkflow.nextActionOwner === workflow.nextActionOwner && previousWorkflow.nextActionUserId === workflow.nextActionUserId) return;
+  const ownerChanged = previousWorkflow.nextActionOwner !== workflow.nextActionOwner;
+  const assigneeChanged = previousWorkflow.nextActionUserId !== workflow.nextActionUserId;
+  const roleActionChanged = options.notifyRoleActionChange
+    && !workflow.nextActionUserId
+    && previousWorkflow.nextAction !== workflow.nextAction
+    && Boolean(roleForOwner(workflow.nextActionOwner));
+  if (!ownerChanged && !assigneeChanged && !roleActionChanged) return;
   const assignedUser = userById(workflow.nextActionUserId);
   const message = assignedUser
     ? `Handoff to ${assignedUser.displayName} (${workflow.nextActionOwner || "No role"})`
@@ -6123,7 +6135,7 @@ async function handleApi(req, res) {
       const invoices = saveOrderInvoice(order, body, { canManagePayment: userHasRole(req.currentUser, ["Finance", "Admin"]) });
       const refreshedOrder = readOrderDb().orders.find(item => String(item.id) === orderId) || order;
       const workflow = readOrderWorkflowMap().get(orderId);
-      await notifyOrderHandoffIfChanged(req, order, refreshedOrder, previousWorkflow, workflowFromRow(workflow, refreshedOrder));
+      await notifyOrderHandoffIfChanged(req, order, refreshedOrder, previousWorkflow, workflowFromRow(workflow, refreshedOrder), { notifyRoleActionChange: true });
       sendJson(res, 200, {
         ok: true,
         order: publicManagedOrder(refreshedOrder, workflow),
@@ -6148,9 +6160,11 @@ async function handleApi(req, res) {
         sendJson(res, 404, { error: "Order not found" });
         return true;
       }
+      const previousWorkflow = workflowFromRow(readOrderWorkflowMap().get(orderId), order);
       const invoices = deleteOrderInvoice(order, body);
       const refreshedOrder = readOrderDb().orders.find(item => String(item.id) === orderId) || order;
       const workflow = readOrderWorkflowMap().get(orderId);
+      await notifyOrderHandoffIfChanged(req, order, refreshedOrder, previousWorkflow, workflowFromRow(workflow, refreshedOrder), { notifyRoleActionChange: true });
       sendJson(res, 200, {
         ok: true,
         order: publicManagedOrder(refreshedOrder, workflow),
