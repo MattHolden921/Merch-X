@@ -4085,6 +4085,15 @@ function normalizeWorkflowValue(key, value) {
   return value == null ? "" : String(value).trim();
 }
 
+function workflowBindParams(orderId, workflow) {
+  const params = { orderId: String(orderId) };
+  for (const key of Object.keys(workflowFields)) {
+    params[key] = normalizeWorkflowValue(key, workflow?.[key]);
+  }
+  params.data = JSON.stringify(workflow?.data || {});
+  return params;
+}
+
 function workflowPatchForOrderStatus(status, currentWorkflow = {}) {
   const normalized = String(status || "").trim().toLowerCase();
   if (normalized === "pending approval" || normalized === "submitted") {
@@ -4824,11 +4833,7 @@ function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") 
       next_action = excluded.next_action,
       data = excluded.data,
       updated_at = CURRENT_TIMESTAMP
-  `).run({
-    orderId: String(order.id),
-    ...next,
-    data: JSON.stringify(next.data || {})
-  });
+  `).run(workflowBindParams(order.id, next));
   recordOrderEvent(order.id, section, actorName, `${section.replace(/^\w/, char => char.toUpperCase())} updated`, clean);
   return workflowFromRow(db.prepare("SELECT * FROM order_workflows WHERE order_id = ?").get(String(order.id)), order);
 }
