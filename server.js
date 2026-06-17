@@ -7260,6 +7260,7 @@ function productShopifyPayload(product, fileInput = null) {
   const optionValue = cleanText(product.optionValue || product.size || "One Size Fits UK 8 to 18") || "One Size Fits UK 8 to 18";
   const colour = cleanText(product.colour || product.color);
   const department = cleanText(product.department || product.category || product.productType);
+  const supplier = cleanText(product.supplierName);
   const baseMetafields = [
     department ? { namespace: "custom", key: "department", type: "single_line_text_field", value: department } : null,
     product.detailsAndFit ? { namespace: "custom", key: "details_and_fit", type: "multi_line_text_field", value: product.detailsAndFit } : null,
@@ -7269,6 +7270,7 @@ function productShopifyPayload(product, fileInput = null) {
     colour ? { namespace: "custom", key: "variant_colour", type: "single_line_text_field", value: colour } : null,
     product.productStatusCode ? { namespace: "custom", key: "product_status", type: "single_line_text_field", value: product.productStatusCode } : null,
     product.season ? { namespace: "custom", key: "season", type: "single_line_text_field", value: product.season } : null,
+    supplier ? { namespace: "custom", key: "supplier", type: "single_line_text_field", value: supplier } : null,
     product.supplierSku ? { namespace: "custom", key: "supplier_sku", type: "single_line_text_field", value: product.supplierSku } : null
   ].filter(Boolean);
   const metafields = mergeMetafields(product.extraMetafields || [], baseMetafields);
@@ -7289,7 +7291,6 @@ function productShopifyPayload(product, fileInput = null) {
   const input = {
     title: product.title || product.style,
     status: "DRAFT",
-    vendor: product.supplierName || undefined,
     productType: product.productType || product.category || undefined,
     descriptionHtml: product.description ? escapeHtml(product.description).replace(/\r?\n/g, "<br>") : undefined,
     seo: product.seoTitle || product.seoDescription ? { title: product.seoTitle || undefined, description: product.seoDescription || undefined } : undefined,
