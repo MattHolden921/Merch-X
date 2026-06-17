@@ -3931,12 +3931,45 @@ function reserveIssuedSku(sku, data = {}) {
 
 function isNonShopifySavedProduct(product) {
   if (!product?.sku) return false;
+  if (String(product.status || "").trim().toLowerCase() === "archived") return false;
   return String(product.source || "").trim().toLowerCase() !== "shopify";
+}
+
+function orderLineSkuSet(order) {
+  return new Set((order?.lines || []).map(line => normalizeSku(line.sku)).filter(Boolean));
+}
+
+function orderContainsSku(order, sku) {
+  const normalized = normalizeSku(sku);
+  return Boolean(normalized && orderLineSkuSet(order).has(normalized));
+}
+
+function orderDbContainsSku(dbData, sku) {
+  const normalized = normalizeSku(sku);
+  return Boolean(normalized && (dbData.orders || []).some(order => orderContainsSku(order, normalized)));
+}
+
+function productHasShopifyIdentity(product) {
+  return Boolean(
+    product?.shopifyProductGid
+    || product?.shopifyVariantGid
+    || String(product?.syncStatus || "").trim().toLowerCase() === "synced draft"
+    || ["shopify draft", "live"].includes(String(product?.status || "").trim().toLowerCase())
+  );
+}
+
+function productHasStaleOrderReference(dbData, product) {
+  const sku = normalizeSku(product?.sku);
+  const lastOrderNumber = String(product?.lastOrderNumber || "").trim();
+  if (!sku || !lastOrderNumber || productHasShopifyIdentity(product)) return false;
+  if (orderDbContainsSku(dbData, sku)) return false;
+  return (dbData.orders || []).some(order => String(order.orderNumber || "").trim() === lastOrderNumber);
 }
 
 function savedLocalSkuRows(dbData) {
   const productRows = (dbData.products || [])
     .filter(isNonShopifySavedProduct)
+    .filter(product => !productHasStaleOrderReference(dbData, product))
     .map((product) => {
       const sku = normalizeSku(product.sku);
       return {
@@ -3987,7 +4020,7 @@ function savedLocalSkuRows(dbData) {
       lastOrderedAt: row.issuedAt || "",
       source: "issued",
       status: "Issued only",
-      canDelete: true,
+      canDelete: !skuHasAttachedData(dbData, row.sku),
       data: { sku: row.sku, issuedAt: row.issuedAt, ...(row.data || {}) },
       normalizedSku: normalizeSku(row.sku)
     }));
@@ -3998,7 +4031,7 @@ function savedLocalSkuRows(dbData) {
 function skuHasAttachedData(dbData, sku) {
   const normalized = normalizeSku(sku);
   if (!normalized) return false;
-  if ((dbData.products || []).some(product => normalizeSku(product.sku) === normalized)) return true;
+  if ((dbData.products || []).some(product => normalizeSku(product.sku) === normalized && isNonShopifySavedProduct(product) && !productHasStaleOrderReference(dbData, product))) return true;
   return (dbData.orders || []).some(order => (order.lines || []).some(line => normalizeSku(line.sku) === normalized));
 }
 
@@ -6410,6 +6443,44 @@ function mergeNonEmpty(existing = {}, patch = {}, always = {}) {
   return { ...merged, ...(always || {}) };
 }
 
+function archiveRemovedOrderLineProducts(sqlite, previousOrder, storedOrder) {
+  if (!previousOrder?.lines?.length || !storedOrder?.orderNumber) return [];
+  const currentSkus = orderLineSkuSet(storedOrder);
+  const removedSkus = [...orderLineSkuSet(previousOrder)].filter(sku => !currentSkus.has(sku));
+  if (!removedSkus.length) return [];
+
+  const orders = sqlite.prepare("SELECT data FROM orders").all()
+    .map(row => parseJson(row.data, null))
+    .filter(Boolean);
+  const archiveProduct = sqlite.prepare(`
+    UPDATE products
+    SET product_status = 'Archived',
+        data = @data,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE sku = @sku
+  `);
+  const archived = [];
+  for (const sku of removedSkus) {
+    if (orders.some(order => orderContainsSku(order, sku))) continue;
+    const row = sqlite.prepare("SELECT * FROM products WHERE sku = ?").get(sku);
+    const product = productFromRow(row);
+    if (!product || productHasShopifyIdentity(product)) continue;
+    const productOrderNumber = String(product.lastOrderNumber || "").trim();
+    if (productOrderNumber && productOrderNumber !== String(storedOrder.orderNumber || "").trim()) continue;
+    if (String(product.status || "").trim().toLowerCase() === "archived") continue;
+
+    const updated = {
+      ...product,
+      status: "Archived",
+      source: product.source || "order",
+      archivedReason: "Removed from latest saved order version"
+    };
+    archiveProduct.run({ sku, data: JSON.stringify(updated) });
+    archived.push(sku);
+  }
+  return archived;
+}
+
 function migrateOrderRelations(sqlite, fromId, toId) {
   const from = String(fromId || "");
   const to = String(toId || "");
@@ -6428,7 +6499,8 @@ function migrateOrderRelations(sqlite, fromId, toId) {
 function saveOrderFormOrder(dbData, savedOrder) {
   const sqlite = openOrderSqliteDb();
   const storedOrder = materializeOrderImages(savedOrder);
-  const existingOrder = sqlite.prepare("SELECT id FROM orders WHERE order_number = ?").get(String(storedOrder.orderNumber || ""));
+  const existingOrder = sqlite.prepare("SELECT id, data FROM orders WHERE order_number = ?").get(String(storedOrder.orderNumber || ""));
+  const previousOrder = parseJson(existingOrder?.data, null);
   const incomingOrderId = String(storedOrder.id);
   const canonicalOrderId = String(existingOrder?.id || incomingOrderId);
   storedOrder.id = canonicalOrderId;
@@ -6547,6 +6619,7 @@ function saveOrderFormOrder(dbData, savedOrder) {
         productStatus: normalized.status || "Draft"
       });
     }
+    archiveRemovedOrderLineProducts(sqlite, previousOrder, storedOrder);
   });
   write();
   return storedOrder;
@@ -7856,8 +7929,9 @@ async function handleApi(req, res) {
     }
 
     const db = readOrderDb();
-    const masterProduct = findCatalogProduct(sku);
-    const savedProduct = masterProduct || db.products.find(product => normalizeSku(product.sku) === sku) || null;
+    const masterProductCandidate = findCatalogProduct(sku);
+    const masterProduct = productHasStaleOrderReference(db, masterProductCandidate) ? null : masterProductCandidate;
+    const savedProduct = masterProduct || db.products.find(product => normalizeSku(product.sku) === sku && !productHasStaleOrderReference(db, product)) || null;
     if (masterProduct) {
       sendJson(res, 200, {
         found: true,
