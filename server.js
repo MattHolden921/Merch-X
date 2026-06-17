@@ -7297,7 +7297,6 @@ function productShopifyPayload(product, fileInput = null) {
   };
   if (numberOrZero(product.compareAtPrice)) variant.compareAtPrice = String(numberOrZero(product.compareAtPrice).toFixed(2));
   if (product.barcode) variant.barcode = product.barcode;
-  if (fileInput) variant.file = fileInput;
 
   const input = {
     title: product.title || product.style,
