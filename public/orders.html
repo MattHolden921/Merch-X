@@ -9,7 +9,7 @@
 .wrap{max-width:1560px}
 .head{align-items:center}
 .status-pill{white-space:nowrap}
-.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.metric-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
 .toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 160px 170px 160px 150px;gap:10px;align-items:end}
 .toolbar .field{margin-bottom:0}
 .filter-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:8px;margin-top:12px}
@@ -33,7 +33,7 @@
 .detail-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;margin-bottom:14px}
 .detail-title h2{font-size:20px;font-weight:650;margin-bottom:4px}
 .detail-title p{font-size:12px;color:var(--ds-text-muted);line-height:1.55}
-.summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px}
+.summary-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px}
 .summary-item{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:9px 10px;min-width:0}
 .summary-item label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);margin-bottom:4px}
 .summary-item strong{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -311,10 +311,29 @@ function userHasAppRole(role){
 }
 
 function badgeClass(value){
-  if(["Approved","Paid","Received","Payment complete"].includes(value))return"good";
-  if(["Pending director approval","Ready to pay","Part paid","Part shipped","Part received","Shipped","Confirmed","In production","Awaiting approval","Sent to FD"].includes(value))return"info";
-  if(["Changes requested","Awaiting invoice","Delayed","Overdue","Rejected","Query"].includes(value))return value==="Overdue"||value==="Rejected"?"bad":"warn";
+  if(["Approved","Paid","Received","Payment complete","Complete"].includes(value))return"good";
+  if(["Pending director approval","Ready to pay","Part paid","Part shipped","Part received","Shipped","Confirmed","In production","Awaiting approval","Sent to FD","Shopify linked","Synced draft","Shopify draft","Live"].includes(value))return"info";
+  if(["Changes requested","Awaiting invoice","Delayed","Overdue","Rejected","Query","Product sync","Needs Shopify","Missing SKU","Product hold"].includes(value))return value==="Overdue"||value==="Rejected"?"bad":"warn";
   return "";
+}
+
+function productCompletion(order){
+  return order?.productCompletion||{complete:false,totalLines:0,completedLines:0,blockedLines:0,summary:"No product tracking",lines:[]};
+}
+
+function productCompletionBadge(order){
+  const completion=productCompletion(order);
+  const label=completion.complete?"Products complete":completion.blockedLines?`${completion.blockedLines} product hold${completion.blockedLines===1?"":"s"}`:"Product hold";
+  return `<span class="badge ${completion.complete?"good":"warn"}">${escapeHtml(label)}</span>`;
+}
+
+function productLineStatus(order,lineIndex){
+  const completion=productCompletion(order);
+  return (completion.lines||[]).find(item=>Number(item.lineIndex)===Number(lineIndex))||{complete:false,status:"Needs Shopify",source:"Not synced"};
+}
+
+function canCheckProductStatus(){
+  return userHasAppRole("Buyer")||userHasAppRole("Merchandising")||userHasAppRole("Admin");
 }
 
 function metric(label,value,small){
@@ -322,11 +341,12 @@ function metric(label,value,small){
 }
 
 function renderMetrics(){
-  const m=state.metrics||{totalOrders:0,awaitingApproval:0,readyToPay:0,intakeRisk:0};
+  const m=state.metrics||{totalOrders:0,awaitingApproval:0,readyToPay:0,intakeRisk:0,productBlocked:0};
   el("metrics").innerHTML=[
     metric("Orders",m.totalOrders,"saved purchase orders"),
     metric("Approval",m.awaitingApproval,"awaiting director"),
     metric("Payment",m.readyToPay,"ready, part-paid, or overdue"),
+    metric("Product gate",m.productBlocked,"orders held before intake"),
     metric("Intake risk",m.intakeRisk,"delayed or past ETA")
   ].join("");
 }
@@ -338,7 +358,8 @@ function recalcMetrics(){
     totalOrders:activeOrders.length,
     awaitingApproval:activeOrders.filter(order=>order.workflow.approvalStatus==="Pending director approval").length,
     readyToPay:activeOrders.filter(order=>["Ready to pay","Overdue"].includes(order.workflow.paymentStatus)||(order.workflow.paymentStatus==="Part paid"&&order.workflow.nextActionOwner==="FD / Finance")).length,
-    intakeRisk:activeOrders.filter(order=>order.workflow.intakeStatus==="Delayed"||(order.workflow.intakeEtaDate&&order.workflow.intakeEtaDate<todayIso&&order.workflow.intakeStatus!=="Received")).length
+    intakeRisk:activeOrders.filter(order=>order.workflow.intakeStatus==="Delayed"||(order.workflow.intakeEtaDate&&order.workflow.intakeStatus!=="Received"&&order.workflow.intakeEtaDate<todayIso)).length,
+    productBlocked:activeOrders.filter(order=>!productCompletion(order).complete).length
   };
 }
 
@@ -353,6 +374,7 @@ function filterOrders(){
     if(archiveMode==="archived"&&!order.archivedAt)return false;
     const haystack=[
       order.orderNumber,order.supplierName,order.buyerName,order.buyerEmail,order.compositeStatus,
+      productCompletion(order).summary,...(productCompletion(order).lines||[]).flatMap(line=>[line.status,line.source]),
       ...(order.categories||[]),...(order.order?.lines||[]).flatMap(line=>[line.sku,line.style,line.buyingCode])
     ].join(" ").toLowerCase();
     return (!search||haystack.includes(search))
@@ -466,6 +488,7 @@ function renderOrders(){
       </span>
       <span class="order-side">
         <span class="badge ${badgeClass(order.compositeStatus)}">${escapeHtml(order.compositeStatus)}</span>
+        ${productCompletionBadge(order)}
         ${Number(order.batchSummary?.count||0)?`<span class="badge info">${Number(order.batchSummary.count).toLocaleString("en-GB")} batch${Number(order.batchSummary.count)===1?"":"es"}</span>`:""}
         <span>${moneyPairFromGbp(orderTotalGbp(order),order)}</span>
         <span>${formatDate(order.requiredDate)||"No intake date"}</span>
@@ -545,9 +568,12 @@ function renderLineTable(order){
     <div class="work-head"><h3>Order lines</h3><div class="actions"><span class="pill">${visible.length} of ${lines.length} lines</span><button type="button" class="btn" onclick="exportOrderLinesExcel()">Export Excel</button></div></div>
     ${lineFilterTabs()}
     <div class="line-table-wrap"><table class="line-table">
-      <thead><tr><th>Batch</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
-      <tbody>${visible.map(({line,index})=>`<tr>
+      <thead><tr><th>Batch</th><th>Product</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
+      <tbody>${visible.map(({line,index})=>{
+        const productStatus=productLineStatus(order,index);
+        return `<tr>
         <td>${lineBatchBadges(index)}</td>
+        <td><span class="badge ${productStatus.complete?"good":"warn"}">${escapeHtml(productStatus.status)}</span><span class="money-sub">${escapeHtml(productStatus.source||"")}</span></td>
         <td>${escapeHtml(line.sku||"")}</td>
         <td>${escapeHtml(line.buyingCode||line.supplierSku||"")}</td>
         <td>${escapeHtml(line.style||line.description||"")}</td>
@@ -558,7 +584,8 @@ function renderLineTable(order){
         <td class="num">${eurMoney.format(lineUnitEur(line,order))}</td>
         <td class="num">${money.format(lineCostGbp(line))}</td>
         <td class="num">${eurMoney.format(lineCostEur(line,order))}</td>
-      </tr>`).join("")}</tbody>
+      </tr>`;
+      }).join("")}</tbody>
     </table></div>
   </section>`;
 }
@@ -567,11 +594,15 @@ function exportOrderLinesExcel(){
   const order=state.selected;
   const lines=order?.order?.lines||[];
   if(!order||!lines.length)return;
-  const headers=["Order number","Supplier","Batch","SKU","Buying code","Style","Category","Colour","Size","Quantity","Unit cost GBP","Unit cost EUR","Line cost GBP","Line cost EUR","Season"];
-  const rows=filteredOrderLines(lines).map(({line,index})=>[
+  const headers=["Order number","Supplier","Batch","Product status","Product source","SKU","Buying code","Style","Category","Colour","Size","Quantity","Unit cost GBP","Unit cost EUR","Line cost GBP","Line cost EUR","Season"];
+  const rows=filteredOrderLines(lines).map(({line,index})=>{
+    const productStatus=productLineStatus(order,index);
+    return [
     order.orderNumber,
     order.supplierName,
     allocationsForLine(index).map(allocation=>`${batchDisplayName(batchById(allocation.batchId)||{})} ${Number(allocation.quantity||0)}`).join(", ")||"Unbatched",
+    productStatus.status||"",
+    productStatus.source||"",
     line.sku||"",
     line.buyingCode||line.supplierSku||"",
     line.style||line.description||"",
@@ -584,7 +615,8 @@ function exportOrderLinesExcel(){
     lineCostGbp(line).toFixed(2),
     lineCostEur(line,order).toFixed(2),
     line.season||""
-  ]);
+  ];
+  });
   const table=`<table><thead><tr>${headers.map(header=>`<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(cell=>`<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>${table}</body></html>`;
   const blob=new Blob([html],{type:"application/vnd.ms-excel"});
@@ -643,6 +675,7 @@ function toggleBatchLine(lineIndex,checked){
 function renderBatchLineAllocator(order,batchId){
   const lines=order.order?.lines||[];
   if(!lines.length)return "";
+  const productsReady=productCompletion(order).complete;
   return `<div class="wide">
     <div class="work-head" style="margin-bottom:8px"><h3>Build from order lines</h3><span class="pill">${lines.length} lines</span></div>
     <div class="batch-line-table-wrap"><table class="batch-line-table">
@@ -652,7 +685,7 @@ function renderBatchLineAllocator(order,batchId){
         const currentQty=Number(existing?.quantity||0);
         const available=Math.max(0,Number(line.quantity||0)-allocatedQuantityForLine(index,batchId));
         const checked=currentQty>0;
-        const disabled=!available&&!checked;
+        const disabled=!productsReady||(!available&&!checked);
         return `<tr>
           <td><input id="${allocationCheckId(index)}" type="checkbox" ${checked?"checked":""} ${disabled?"disabled":""} onchange="toggleBatchLine(${index},this.checked)" aria-label="Use line ${index+1}"></td>
           <td>${escapeHtml(line.sku||"")}<span class="money-sub">${escapeHtml(line.buyingCode||line.supplierSku||"")}</span></td>
@@ -674,8 +707,13 @@ function renderBatchGroup(order){
   const formBatch=editing||{};
   const formOpen=state.batchEditorOpen||Boolean(editing);
   const canManage=canManageBatches();
+  const productsReady=productCompletion(order).complete;
+  const canBook=canManage&&productsReady;
+  const formAttrs=canBook?"":"disabled";
+  const holdNotice=productsReady?"":`<div class="status warn" style="margin-bottom:10px">Check Shopify SKUs to link existing Shopify products without pushing or overwriting product data.</div>`;
   return `<section class="work-panel batch-group">
-    <div class="work-head"><h3>Supplier batches</h3><div class="actions"><span class="pill">${batches.length} batch${batches.length===1?"":"es"}</span><button type="button" class="btn" onclick="toggleCreateBatch()" ${canManage?"":"disabled"}>${editing?"Edit batch":"Create batch"}</button></div></div>
+    <div class="work-head"><h3>Supplier batches</h3><div class="actions"><span class="pill">${batches.length} batch${batches.length===1?"":"es"}</span><button type="button" class="btn" onclick="toggleCreateBatch()" ${canBook?"":"disabled"}>${editing?"Edit batch":"Create batch"}</button></div></div>
+    ${holdNotice}
     <div class="batch-totals">
       <div class="invoice-total"><label>Planned</label><strong>${totals.count.toLocaleString("en-GB")}</strong><span class="money-sub">batches</span></div>
       <div class="invoice-total"><label>Styles</label><strong>${totals.expectedStyles.toLocaleString("en-GB")}</strong><span class="money-sub">batch total</span></div>
@@ -685,23 +723,23 @@ function renderBatchGroup(order){
     <div class="batch-table-wrap">${renderBatchTable(order,batches)}</div>
     <div class="batch-create ${formOpen?"open":""}" id="batch-create">
       <div class="batch-form">
-        ${input("batch-number","Batch no.",formBatch.batchNumber||`Batch ${batches.length+1}`,"text",canManage?"":"disabled")}
-        ${input("batch-title","Batch name",formBatch.title||"","text",canManage?"":"disabled")}
-        ${input("batch-styles","Styles",formBatch.styleCount||0,"number",canManage?"":"disabled")}
-        ${input("batch-units","Units",formBatch.units||0,"number",canManage?"":"disabled")}
-        ${input("batch-value","Value",formBatch.value||0,"number",canManage?"":"disabled")}
-        ${select("batch-currency","Currency",currencyOptions,formBatch.currency||order.currency||"EUR",canManage?"":"disabled")}
-        ${select("batch-payment","Payment",batchPaymentStatuses,formBatch.paymentStatus||"Awaiting invoice",canManage?"":"disabled")}
-        ${select("batch-intake","Intake",batchIntakeStatuses,formBatch.intakeStatus||"Not confirmed",canManage?"":"disabled")}
-        ${input("batch-eta","ETA warehouse",formBatch.etaDate||"","date",canManage?"":"disabled")}
-        ${input("batch-shipped","Shipped date",formBatch.shippedDate||"","date",canManage?"":"disabled")}
-        ${input("batch-received","Received date",formBatch.receivedDate||"","date",canManage?"":"disabled")}
-        ${input("batch-tracking","Shipment reference",formBatch.trackingReference||"","text",canManage?"":"disabled")}
-        ${textarea("batch-styles-note","Styles included",formBatch.styleNotes||"",canManage?"":"disabled")}
-        ${textarea("batch-notes","Batch notes",formBatch.notes||"",canManage?"":"disabled")}
+        ${input("batch-number","Batch no.",formBatch.batchNumber||`Batch ${batches.length+1}`,"text",formAttrs)}
+        ${input("batch-title","Batch name",formBatch.title||"","text",formAttrs)}
+        ${input("batch-styles","Styles",formBatch.styleCount||0,"number",formAttrs)}
+        ${input("batch-units","Units",formBatch.units||0,"number",formAttrs)}
+        ${input("batch-value","Value",formBatch.value||0,"number",formAttrs)}
+        ${select("batch-currency","Currency",currencyOptions,formBatch.currency||order.currency||"EUR",formAttrs)}
+        ${select("batch-payment","Payment",batchPaymentStatuses,formBatch.paymentStatus||"Awaiting invoice",formAttrs)}
+        ${select("batch-intake","Intake",batchIntakeStatuses,formBatch.intakeStatus||"Not confirmed",formAttrs)}
+        ${input("batch-eta","ETA warehouse",formBatch.etaDate||"","date",formAttrs)}
+        ${input("batch-shipped","Shipped date",formBatch.shippedDate||"","date",formAttrs)}
+        ${input("batch-received","Received date",formBatch.receivedDate||"","date",formAttrs)}
+        ${input("batch-tracking","Shipment reference",formBatch.trackingReference||"","text",formAttrs)}
+        ${textarea("batch-styles-note","Styles included",formBatch.styleNotes||"",formAttrs)}
+        ${textarea("batch-notes","Batch notes",formBatch.notes||"",formAttrs)}
         ${renderBatchLineAllocator(order,formBatch.id||"")}
       </div>
-      <div class="actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn primary" onclick="saveBatch()" ${canManage?"":"disabled"}>${editing?"Save batch":"Add batch"}</button>${editing?`<button type="button" class="btn" onclick="cancelBatchEdit()">Cancel</button>`:""}</div>
+      <div class="actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn primary" onclick="saveBatch()" ${canBook?"":"disabled"}>${editing?"Save batch":"Add batch"}</button>${editing?`<button type="button" class="btn" onclick="cancelBatchEdit()">Cancel</button>`:""}</div>
     </div>
   </section>`;
 }
@@ -862,6 +900,7 @@ function suggestedNextAction(workflow,order){
   if(payment==="Part paid")return {owner:"Buyer",action:"Awaiting next supplier invoice"};
   if(payment==="Overdue")return {owner:"FD / Finance",action:"Resolve overdue supplier payment"};
   if(payment!=="Paid")return {owner:"Buyer",action:"Confirm invoice and payment plan"};
+  if(intake==="Not confirmed"&&!productCompletion(order).complete)return {owner:"Buyer",action:"Complete Shopify product sync before warehouse booking"};
   if(intake==="Received")return {owner:"Merchandising",action:"Archive completed order"};
   if(intake==="Part received")return {owner:"Merchandising",action:"Chase remaining intake"};
   if(intake==="Shipped")return {owner:"Merchandising",action:"Track shipment to warehouse"};
@@ -901,6 +940,10 @@ function renderDetail(){
   const w=order.workflow;
   const canSavePayment=userHasAppRole("Finance");
   const paymentAttrs=canSavePayment?"":"disabled";
+  const productsReady=productCompletion(order).complete;
+  const intakeAttrs=productsReady?"":"disabled";
+  const checkButton=!productsReady&&canCheckProductStatus()?`<button type="button" class="btn" onclick="checkOrderProductsInShopify()">Check Shopify SKUs</button>`:"";
+  const intakeHold=productsReady?"":`<div class="status warn" style="margin-bottom:10px">Warehouse intake is locked until every order product is linked to Shopify. Use Check Shopify SKUs to link existing products without pushing changes.</div>`;
   el("detail").innerHTML=`
     <section class="panel">
       <div class="detail-head">
@@ -910,7 +953,9 @@ function renderDetail(){
         </div>
         <div class="actions">
           <span class="badge ${badgeClass(order.compositeStatus)}">${escapeHtml(order.compositeStatus)}</span>
+          ${productCompletionBadge(order)}
           ${Number(order.batchSummary?.count||0)?`<span class="badge info">${Number(order.batchSummary.count).toLocaleString("en-GB")} batch${Number(order.batchSummary.count)===1?"":"es"}</span>`:""}
+          ${checkButton}
           <a class="btn" href="order-form.html">Open form</a>
           ${orderActionButtons(order)}
         </div>
@@ -919,6 +964,7 @@ function renderDetail(){
         ${summaryItem("Value",moneyPairFromGbp(orderTotalGbp(order),order))}
         ${summaryItem("Order date",formatDate(order.orderDate))}
         ${summaryItem("Required date",formatDate(order.requiredDate))}
+        ${summaryItem("Products",productCompletion(order).summary)}
         ${summaryItem("Payment terms",order.paymentTerms)}
         ${summaryItem("Incoterms",order.incoterms)}
       </div>
@@ -960,15 +1006,16 @@ function renderDetail(){
 
       <div class="work-panel">
         <div class="work-head"><h3>Merchandising</h3><span class="badge ${badgeClass(w.intakeStatus)}">${escapeHtml(w.intakeStatus)}</span></div>
+        ${intakeHold}
         <div class="grid2">
-          ${select("intake-status","Intake status",intakeStatuses,w.intakeStatus)}
-          ${input("intake-eta","ETA warehouse",w.intakeEtaDate,"date")}
-          ${input("intake-confirmed","Supplier confirmed",w.intakeConfirmedDate,"date")}
-          ${input("intake-actual","Actual intake",w.intakeActualDate,"date")}
-          ${input("intake-ref","Shipment reference",w.intakeReference)}
+          ${select("intake-status","Intake status",intakeStatuses,w.intakeStatus,intakeAttrs)}
+          ${input("intake-eta","ETA warehouse",w.intakeEtaDate,"date",intakeAttrs)}
+          ${input("intake-confirmed","Supplier confirmed",w.intakeConfirmedDate,"date",intakeAttrs)}
+          ${input("intake-actual","Actual intake",w.intakeActualDate,"date",intakeAttrs)}
+          ${input("intake-ref","Shipment reference",w.intakeReference,"text",intakeAttrs)}
         </div>
-        ${textarea("intake-notes","Intake notes",w.intakeNotes)}
-        <button type="button" class="btn primary" onclick="saveIntake()">Save intake</button>
+        ${textarea("intake-notes","Intake notes",w.intakeNotes,intakeAttrs)}
+        <button type="button" class="btn primary" onclick="saveIntake()" ${intakeAttrs}>Save intake</button>
       </div>
 
       <div class="work-panel">
@@ -1010,6 +1057,33 @@ async function saveWorkflow(section,patch){
 
 async function saveNextAction(){
   await saveWorkflow("next action",{nextActionOwner:val("next-owner"),nextActionUserId:val("next-assignee"),nextAction:val("next-action")}).catch(showError);
+}
+
+async function checkOrderProductsInShopify(){
+  if(!state.selectedId)return;
+  try{
+    showStatus("Checking Shopify SKUs...","ok");
+    const response=await apiFetch("/api/orders/products/shopify-status",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId})});
+    const result=await response.json();
+    if(!response.ok)throw new Error(result.error||"Could not check Shopify SKUs");
+    state.selected=result.order;
+    state.events=result.events||state.events||[];
+    state.invoices=result.invoices||state.invoices||[];
+    state.batches=result.batches||state.batches||[];
+    state.batchLines=result.batchLines||state.batchLines||[];
+    const index=state.orders.findIndex(order=>order.id===result.order.id);
+    if(index!==-1)state.orders[index]=result.order;
+    recalcMetrics();
+    renderFilters();
+    renderMetrics();
+    renderOrders();
+    renderDetail();
+    const linked=(result.results||[]).filter(item=>item.ok&&!item.skipped).length;
+    const outstanding=Number(result.after?.blockedLines||0);
+    showStatus(outstanding?`Checked Shopify. ${outstanding} SKU${outstanding===1?"":"s"} still need attention.`:`Checked Shopify. ${linked} SKU${linked===1?"":"s"} linked and the product gate is clear.`,outstanding?"warn":"ok");
+  }catch(error){
+    showError(error);
+  }
 }
 
 async function saveApproval(){
@@ -1232,6 +1306,10 @@ function cancelBatchEdit(){
 
 async function saveBatch(){
   if(!state.selectedId)return;
+  if(!productCompletion(state.selected).complete){
+    showError(new Error("Complete or sync every product to Shopify before creating supplier batches or booking warehouse intake."));
+    return;
+  }
   const status=val("batch-intake");
   const lines=state.selected?.order?.lines||[];
   const lineAllocations=lines.map((line,index)=>{
@@ -1305,6 +1383,10 @@ async function deleteBatch(id){
 }
 
 async function saveIntake(){
+  if(!productCompletion(state.selected).complete){
+    showError(new Error("Complete or sync every product to Shopify before booking warehouse intake."));
+    return;
+  }
   const status=val("intake-status");
   await saveWorkflow("intake",{
     intakeStatus:status,

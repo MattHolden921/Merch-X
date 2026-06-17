@@ -4139,6 +4139,9 @@ function nextActionForWorkflow(order, workflow) {
   if (paymentStatus === "Part paid") return { nextActionOwner: "Buyer", nextAction: "Awaiting next supplier invoice" };
   if (paymentStatus === "Overdue") return { nextActionOwner: "FD / Finance", nextAction: "Resolve overdue supplier payment" };
   if (paymentStatus !== "Paid") return { nextActionOwner: "Buyer", nextAction: "Confirm invoice and payment plan" };
+  if (intakeStatus === "Not confirmed" && !orderProductCompletion(order).complete) {
+    return { nextActionOwner: "Buyer", nextAction: productCompletionNextAction };
+  }
   if (intakeStatus === "Received") return { nextActionOwner: "Merchandising", nextAction: "Archive completed order" };
   if (intakeStatus === "Part received") return { nextActionOwner: "Merchandising", nextAction: "Chase remaining intake" };
   if (intakeStatus === "Shipped") return { nextActionOwner: "Merchandising", nextAction: "Track shipment to warehouse" };
@@ -4227,13 +4230,14 @@ function readOrderEvents(orderId, limit = 40) {
   `).all(String(orderId), limit).map(row => ({ ...row, data: parseJson(row.data, {}) }));
 }
 
-function orderCompositeStatus(order, workflow) {
+function orderCompositeStatus(order, workflow, productCompletion = null) {
   if (order?.archivedAt) return "Archived";
   if (String(order?.status || "").toLowerCase() === "cancelled") return "Cancelled";
   if (workflow.intakeStatus === "Received") return "Received";
   if (workflow.intakeStatus === "Part received") return "Part received";
   if (workflow.intakeStatus === "Shipped") return "Shipped";
   if (workflow.intakeStatus === "Part shipped") return "Part shipped";
+  if (workflow.paymentStatus === "Paid" && !(productCompletion || orderProductCompletion(order)).complete) return "Product sync";
   if (workflow.paymentStatus === "Paid") return "Payment complete";
   if (workflow.paymentStatus === "Ready to pay" || workflow.paymentStatus === "Part paid" || workflow.paymentStatus === "Overdue") return "Payment";
   if (workflow.approvalStatus === "Approved") return "Approved";
@@ -4242,13 +4246,117 @@ function orderCompositeStatus(order, workflow) {
   return order?.status || "Draft";
 }
 
-function publicManagedOrder(order, workflowRow) {
-  const workflow = workflowFromRow(workflowRow, order);
+function catalogProductMap() {
+  return new Map(readCatalogProducts({ includeArchived: true }).map(product => [normalizeSku(product.sku), product]));
+}
+
+function productIsShopifyComplete(product = {}) {
+  const status = String(product.status || product.productStatus || "").trim().toLowerCase();
+  const syncStatus = String(product.syncStatus || "").trim().toLowerCase();
+  const shopifyStatus = String(product.shopifyStatus || "").trim().toUpperCase();
+  return Boolean(
+    product.shopifyProductGid
+    || product.shopifyVariantGid
+    || syncStatus.includes("synced")
+    || status === "shopify draft"
+    || status === "live"
+    || status.includes("shopify")
+    || shopifyStatus === "DRAFT"
+    || shopifyStatus === "ACTIVE"
+  );
+}
+
+function productCompletionSource(product = {}) {
+  if (product.shopifyProductGid || product.shopifyVariantGid) return "Shopify linked";
+  if (product.syncStatus === "Synced draft") return "Synced draft";
+  if (product.status === "Live") return "Live";
+  if (product.status === "Shopify draft") return "Shopify draft";
+  if (product.shopifyStatus) return product.shopifyStatus;
+  if (product.syncStatus) return product.syncStatus;
+  return product.status || "Not synced";
+}
+
+function orderProductCompletion(order, productMap = null) {
+  const lookup = productMap || catalogProductMap();
+  const lines = order?.lines || [];
+  const lineStatuses = lines.map((line, index) => {
+    const sku = normalizeSku(line?.sku);
+    const masterProduct = sku ? lookup.get(sku) : null;
+    const product = { ...(line || {}), ...(masterProduct || {}) };
+    const complete = Boolean(sku) && productIsShopifyComplete(product);
+    return {
+      lineIndex: index,
+      sku,
+      buyingCode: line?.buyingCode || line?.supplierSku || "",
+      style: line?.style || line?.description || "",
+      complete,
+      status: complete ? "Complete" : sku ? "Needs Shopify" : "Missing SKU",
+      source: productCompletionSource(product),
+      shopifyProductGid: product.shopifyProductGid || "",
+      shopifyVariantGid: product.shopifyVariantGid || "",
+      syncStatus: product.syncStatus || "",
+      productStatus: product.status || product.productStatus || "",
+      lastSyncedAt: product.lastSyncedAt || ""
+    };
+  });
+  const completedLines = lineStatuses.filter(line => line.complete).length;
+  const blockedLines = lineStatuses.filter(line => !line.complete);
+  return {
+    complete: lines.length > 0 && blockedLines.length === 0,
+    totalLines: lines.length,
+    completedLines,
+    blockedLines: blockedLines.length,
+    summary: lines.length
+      ? `${completedLines}/${lines.length} products complete`
+      : "No products on order",
+    lines: lineStatuses
+  };
+}
+
+function productCompletionBlockMessage(order, completion = orderProductCompletion(order)) {
+  const blocked = (completion.lines || []).filter(line => !line.complete);
+  const sample = blocked.slice(0, 4).map(line => line.sku || line.buyingCode || line.style || `Line ${line.lineIndex + 1}`).join(", ");
+  const suffix = blocked.length > 4 ? ` and ${blocked.length - 4} more` : "";
+  return `Complete or sync every product to Shopify before booking warehouse intake. Blocked: ${sample || "order products"}${suffix}.`;
+}
+
+function assertOrderProductsCompleteForWarehouse(order) {
+  const completion = orderProductCompletion(order);
+  if (!completion.complete) throw new Error(productCompletionBlockMessage(order, completion));
+  return completion;
+}
+
+const productCompletionNextAction = "Complete Shopify product sync before warehouse booking";
+
+function workflowWithProductCompletionGate(order, workflow, completion) {
+  const productCompletion = completion || orderProductCompletion(order);
+  if (workflow.approvalStatus !== "Approved" || workflow.paymentStatus !== "Paid" || workflow.intakeStatus !== "Not confirmed") {
+    return workflow;
+  }
+  if (!productCompletion.complete) {
+    return {
+      ...workflow,
+      nextActionOwner: "Buyer",
+      nextActionUserId: workflow.nextAction === productCompletionNextAction ? workflow.nextActionUserId : "",
+      nextAction: productCompletionNextAction
+    };
+  }
+  if (workflow.nextAction === productCompletionNextAction) {
+    const next = nextActionForWorkflow(order, workflow);
+    return { ...workflow, ...next, nextActionUserId: "" };
+  }
+  return workflow;
+}
+
+function publicManagedOrder(order, workflowRow, productMap = null) {
+  const baseWorkflow = workflowFromRow(workflowRow, order);
   const lines = order.lines || [];
   const units = lines.reduce((total, line) => total + Number(line.quantity || 0), 0);
   const categories = [...new Set(lines.map(line => line.category).filter(Boolean))];
   const fxRate = Number(order.fxRate || order.totals?.fxRate || 0);
   const total = Number(order.totals?.grand || 0);
+  const productCompletion = orderProductCompletion(order, productMap);
+  const workflow = workflowWithProductCompletionGate(order, baseWorkflow, productCompletion);
   return {
     id: String(order.id || ""),
     orderNumber: order.orderNumber || "",
@@ -4260,7 +4368,7 @@ function publicManagedOrder(order, workflowRow) {
     buyerEmail: order.company?.buyerEmail || "",
     status: order.status || "Draft",
     archivedAt: order.archivedAt || "",
-    compositeStatus: orderCompositeStatus(order, workflow),
+    compositeStatus: orderCompositeStatus(order, workflow, productCompletion),
     season: order.season || "",
     total,
     totalGbp: total,
@@ -4275,6 +4383,7 @@ function publicManagedOrder(order, workflowRow) {
     lineCount: lines.length,
     units,
     categories,
+    productCompletion,
     invoices: invoiceSummary(order),
     batchSummary: batchSummary(order),
     canDelete: canDeleteOrder(order),
@@ -4301,7 +4410,8 @@ function orderWorkflowMetrics(orders) {
     totalOrders: orders.length,
     awaitingApproval: orders.filter(order => order.workflow.approvalStatus === "Pending director approval").length,
     readyToPay: orders.filter(order => ["Ready to pay", "Overdue"].includes(order.workflow.paymentStatus) || (order.workflow.paymentStatus === "Part paid" && order.workflow.nextActionOwner === "FD / Finance")).length,
-    intakeRisk: orders.filter(order => order.workflow.intakeStatus === "Delayed" || (order.workflow.intakeEtaDate && order.workflow.intakeEtaDate < today && order.workflow.intakeStatus !== "Received")).length
+    intakeRisk: orders.filter(order => order.workflow.intakeStatus === "Delayed" || (order.workflow.intakeEtaDate && order.workflow.intakeEtaDate < today && order.workflow.intakeStatus !== "Received")).length,
+    productBlocked: orders.filter(order => !order.productCompletion?.complete).length
   };
 }
 
@@ -4312,6 +4422,16 @@ function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") 
   const clean = {};
   for (const key of Object.keys(workflowFields)) {
     if (Object.prototype.hasOwnProperty.call(patch || {}, key)) clean[key] = normalizeWorkflowValue(key, patch[key]);
+  }
+  if (section === "intake" && !orderProductCompletion(order).complete) {
+    const bookingKeys = ["intakeEtaDate", "intakeConfirmedDate", "intakeActualDate", "intakeReference"];
+    const hasBookingDateOrReference = bookingKeys.some(key => Object.prototype.hasOwnProperty.call(clean, key) && clean[key]);
+    const hasBookedStatus = Object.prototype.hasOwnProperty.call(clean, "intakeStatus")
+      && clean.intakeStatus
+      && clean.intakeStatus !== "Not confirmed";
+    if (hasBookingDateOrReference || hasBookedStatus) {
+      throw new Error(productCompletionBlockMessage(order));
+    }
   }
   if (section === "approval"
     && clean.approvalStatus === "Approved"
@@ -4974,6 +5094,7 @@ function syncBatchWorkflow(order, actorName = "") {
 }
 
 function saveOrderBatch(order, body) {
+  assertOrderProductsCompleteForWarehouse(order);
   const db = openOrderSqliteDb();
   const batch = body.batch || {};
   const id = String(batch.id || crypto.randomUUID());
@@ -7280,20 +7401,23 @@ async function refreshProductShopifyStatus(product, req) {
     node = variantNode?.product || null;
     variant = variantNode || {};
     if (node?.id && normalizeSku(variant.sku) === normalizeSku(product.sku)) {
+      const shopifyStatus = String(node.status || "").toUpperCase();
       const updated = upsertCatalogProduct({
         ...product,
-        shopifyProductGid: "",
-        shopifyVariantGid: "",
-        shopifyStatus: node.status || "",
-        syncStatus: "Conflict"
+        shopifyProductGid: node.id,
+        shopifyVariantGid: variant.id || product.shopifyVariantGid || "",
+        shopifyStatus,
+        syncStatus: ["DRAFT", "ACTIVE"].includes(shopifyStatus) ? "Synced draft" : "Conflict",
+        status: shopifyStatus === "ACTIVE" ? "Live" : shopifyStatus === "DRAFT" ? "Shopify draft" : product.status,
+        lastSyncedAt: new Date().toISOString()
       });
       recordProductSyncEvent(updated, "shopify_sync_status", req, {
-        result: "conflict",
+        result: "ok",
         shopifyProductGid: node.id,
-        error: `SKU ${product.sku} already exists in Shopify on ${node.title || node.id}.`,
+        payload: { sku: product.sku, matchedExisting: true },
         data
       });
-      return { configured: true, product: updated, found: true, conflict: true };
+      return { configured: true, product: updated, found: true, linkedExisting: true };
     }
   }
   if (!node) {
@@ -7312,6 +7436,56 @@ async function refreshProductShopifyStatus(product, req) {
   });
   recordProductSyncEvent(updated, "shopify_sync_status", req, { result: "ok", shopifyProductGid: node.id, data });
   return { configured: true, product: updated, found: true };
+}
+
+async function reconcileOrderProductsFromShopify(order, req) {
+  const before = orderProductCompletion(order);
+  const results = [];
+  const seen = new Set();
+  for (const line of before.lines || []) {
+    const sku = normalizeSku(line.sku);
+    if (!sku || seen.has(sku)) continue;
+    seen.add(sku);
+    if (line.complete) {
+      results.push({ sku, ok: true, skipped: true, message: "Already linked locally." });
+      continue;
+    }
+    const product = findCatalogProduct(sku) || {
+      sku,
+      title: line.style || line.buyingCode || sku,
+      style: line.style || "",
+      buyingCode: line.buyingCode || "",
+      supplierName: order.supplier?.name || "",
+      lastOrderNumber: order.orderNumber || "",
+      lastOrderedAt: order.savedAt || order.orderDate || ""
+    };
+    try {
+      const result = await refreshProductShopifyStatus(product, req);
+      if (result.configured === false) {
+        results.push({ sku, ok: false, configured: false, message: result.message || "Shopify credentials are not configured." });
+        continue;
+      }
+      results.push({
+        sku,
+        ok: Boolean(result.product && productIsShopifyComplete(result.product)),
+        found: Boolean(result.found),
+        linkedExisting: Boolean(result.linkedExisting),
+        status: result.product?.status || "",
+        syncStatus: result.product?.syncStatus || "",
+        shopifyStatus: result.product?.shopifyStatus || ""
+      });
+    } catch (error) {
+      results.push({ sku, ok: false, error: error.message || "Could not check Shopify." });
+    }
+  }
+  const afterOrder = readOrderDb().orders.find(item => String(item.id) === String(order.id)) || order;
+  const after = orderProductCompletion(afterOrder);
+  recordOrderEvent(order.id, "product_sync", actorName(req), after.complete ? "Shopify product check completed" : "Shopify product check found outstanding SKUs", {
+    before,
+    after,
+    results
+  });
+  return { order: afterOrder, before, after, results };
 }
 
 async function handleApi(req, res) {
@@ -7767,10 +7941,11 @@ async function handleApi(req, res) {
   if (req.method === "GET" && url.pathname === "/api/orders/workspace") {
     const db = readOrderDb();
     const workflows = readOrderWorkflowMap();
+    const products = catalogProductMap();
     const orders = db.orders
       .map(order => {
         const workflow = workflows.get(String(order.id));
-        return publicManagedOrder(syncOrderStatusFromWorkflowRow(order, workflow), workflow);
+        return publicManagedOrder(syncOrderStatusFromWorkflowRow(order, workflow), workflow, products);
       })
       .sort((a, b) => String(b.orderDate || b.savedAt).localeCompare(String(a.orderDate || a.savedAt)));
     sendJson(res, 200, {
@@ -7806,6 +7981,36 @@ async function handleApi(req, res) {
     return true;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/orders/products/shopify-status") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"], "Only Buyer, Merchandising, or Admin users can check order products against Shopify.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const orderId = String(body.orderId || "");
+      const db = readOrderDb();
+      const order = db.orders.find(item => String(item.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      const result = await reconcileOrderProductsFromShopify(order, req);
+      const workflow = readOrderWorkflowMap().get(orderId);
+      sendJson(res, 200, {
+        ok: result.after.complete,
+        order: publicManagedOrder(result.order, workflow),
+        results: result.results,
+        before: result.before,
+        after: result.after,
+        events: readOrderEvents(orderId),
+        invoices: readOrderInvoices(orderId),
+        batches: readOrderBatches(orderId),
+        batchLines: readOrderBatchLines(orderId)
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not check order products against Shopify" });
+    }
+    return true;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/orders/workflow") {
     try {
       const body = await readJsonBody(req);
@@ -7824,12 +8029,12 @@ async function handleApi(req, res) {
       const updatedOrder = status ? updateStoredOrderStatus(order.id, status) || order : order;
       await notifyOrderHandoffIfChanged(req, order, updatedOrder, previousWorkflow, workflow);
       const publicOrder = publicManagedOrder(updatedOrder, null);
-      publicOrder.workflow = workflow;
-      publicOrder.compositeStatus = orderCompositeStatus(updatedOrder, workflow);
+      publicOrder.workflow = workflowWithProductCompletionGate(updatedOrder, workflow, publicOrder.productCompletion);
+      publicOrder.compositeStatus = orderCompositeStatus(updatedOrder, publicOrder.workflow, publicOrder.productCompletion);
       sendJson(res, 200, {
         ok: true,
         order: publicOrder,
-        workflow,
+        workflow: publicOrder.workflow,
         events: readOrderEvents(orderId),
         invoices: readOrderInvoices(orderId),
         batches: readOrderBatches(orderId),
