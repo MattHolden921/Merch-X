@@ -4538,7 +4538,7 @@ function arrivalSignalForOrder(order, workflow) {
   const workflowDate = isoDateOrBlank(workflow?.intakeEtaDate);
   if (workflowDate) return { date: workflowDate, source: "Workflow ETA" };
   const requiredDate = isoDateOrBlank(order?.requiredDate);
-  if (requiredDate) return { date: requiredDate, source: "Required date" };
+  if (requiredDate) return { date: requiredDate, source: "Order requested date" };
   return { date: "", source: "Missing date" };
 }
 
@@ -4658,8 +4658,6 @@ function buildOrderReports(params = {}) {
     if (row.arrivalDate && row.arrivalDate < today && workflow.intakeStatus !== "Received") exceptionReasons.push("Overdue ETA");
     if (["Shipped", "Part shipped"].includes(workflow.intakeStatus) && !row.arrivalDate) exceptionReasons.push("Shipped with no ETA");
     if (workflow.intakeStatus === "In production" && !row.arrivalDate) exceptionReasons.push("In production with no ETA");
-    if (!row.requiredDate) exceptionReasons.push("Missing required date");
-    if (!row.batches.count && workflow.intakeStatus !== "Received") exceptionReasons.push("Missing batch plan");
     if (row.batches.outstandingUnits > 0 && workflow.intakeStatus === "Received") exceptionReasons.push("Received status with outstanding units");
     if (exceptionReasons.length) exceptions.push({ ...row, reason: exceptionReasons.join(", ") });
 
@@ -4681,8 +4679,8 @@ function buildOrderReports(params = {}) {
     if (!row.supplierReference) qualityReasons.push("Missing supplier reference");
     if (String(row.currency || "").toUpperCase() === "EUR" && !Number(savedOrder.fxRate || savedOrder.totals?.fxRate || 0)) qualityReasons.push("Missing FX rate");
     if (!row.productCompletion?.complete) qualityReasons.push("Missing product links");
-    if (row.batches.unbatchedUnits > 0) qualityReasons.push("Unbatched units");
-    if (row.invoices.invoiceWithoutBatch > 0) qualityReasons.push("Invoice without batch");
+    if (row.batches.count > 0 && row.batches.unbatchedUnits > 0) qualityReasons.push("Unbatched units");
+    if (row.batches.count > 0 && row.invoices.invoiceWithoutBatch > 0) qualityReasons.push("Invoice without batch");
     if (row.batches.batchesWithoutLines > 0) qualityReasons.push("Batch without line allocations");
     if (qualityReasons.length) dataQuality.push({ ...row, reason: qualityReasons.join(", ") });
   }
