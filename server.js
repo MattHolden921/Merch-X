@@ -3253,6 +3253,7 @@ function openOrderSqliteDb() {
       intake_actual_date TEXT,
       intake_reference TEXT,
       intake_notes TEXT,
+      pah_uploaded INTEGER NOT NULL DEFAULT 0,
       next_action_owner TEXT,
       next_action_user_id TEXT,
       next_action TEXT,
@@ -3552,6 +3553,9 @@ function openOrderSqliteDb() {
   const workflowColumns = orderSqliteDb.prepare("PRAGMA table_info(order_workflows)").all().map(column => column.name);
   if (!workflowColumns.includes("next_action_user_id")) {
     orderSqliteDb.prepare("ALTER TABLE order_workflows ADD COLUMN next_action_user_id TEXT").run();
+  }
+  if (!workflowColumns.includes("pah_uploaded")) {
+    orderSqliteDb.prepare("ALTER TABLE order_workflows ADD COLUMN pah_uploaded INTEGER NOT NULL DEFAULT 0").run();
   }
   const weeklyColumns = orderSqliteDb.prepare("PRAGMA table_info(weekly_actions)").all().map(column => column.name);
   if (weeklyColumns.length && !weeklyColumns.includes("assignee_user_id")) {
@@ -4064,6 +4068,7 @@ const workflowFields = {
   intakeActualDate: "intake_actual_date",
   intakeReference: "intake_reference",
   intakeNotes: "intake_notes",
+  pahUploaded: "pah_uploaded",
   nextActionOwner: "next_action_owner",
   nextActionUserId: "next_action_user_id",
   nextAction: "next_action"
@@ -4075,6 +4080,7 @@ function todayIsoDate() {
 
 function normalizeWorkflowValue(key, value) {
   if (key === "paymentAmount") return Number(value || 0);
+  if (key === "pahUploaded") return value === true || value === 1 || value === "1" || value === "true" ? 1 : 0;
   if (key === "nextActionUserId") return normalizeAssignableUserId(value);
   return value == null ? "" : String(value).trim();
 }
@@ -4210,6 +4216,7 @@ function defaultWorkflowForOrder(order) {
     intakeActualDate: "",
     intakeReference: "",
     intakeNotes: "",
+    pahUploaded: false,
     nextActionOwner: isPending ? "Buying Director" : isApproved ? "Buyer" : "Buyer",
     nextActionUserId: "",
     nextAction: isPending ? "Review order for approval" : isApproved ? "Awaiting supplier invoice" : "Prepare or submit order",
@@ -4240,6 +4247,7 @@ function workflowFromRow(row, order) {
     intakeActualDate: row.intake_actual_date || "",
     intakeReference: row.intake_reference || "",
     intakeNotes: row.intake_notes || "",
+    pahUploaded: Boolean(row.pah_uploaded),
     nextActionOwner: row.next_action_owner || defaults.nextActionOwner,
     nextActionUserId: row.next_action_user_id || "",
     nextAction: row.next_action || defaults.nextAction,
@@ -4493,11 +4501,13 @@ function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") 
       order_id, approval_status, approval_by, approval_decided_at, approval_notes,
       payment_status, payment_type, payment_amount, payment_due_date, payment_paid_date, payment_reference, payment_notes,
       intake_status, intake_eta_date, intake_confirmed_date, intake_actual_date, intake_reference, intake_notes,
+      pah_uploaded,
       next_action_owner, next_action_user_id, next_action, data, updated_at
     ) VALUES (
       @orderId, @approvalStatus, @approvalBy, @approvalDecidedAt, @approvalNotes,
       @paymentStatus, @paymentType, @paymentAmount, @paymentDueDate, @paymentPaidDate, @paymentReference, @paymentNotes,
       @intakeStatus, @intakeEtaDate, @intakeConfirmedDate, @intakeActualDate, @intakeReference, @intakeNotes,
+      @pahUploaded,
       @nextActionOwner, @nextActionUserId, @nextAction, @data, CURRENT_TIMESTAMP
     )
     ON CONFLICT(order_id) DO UPDATE SET
@@ -4518,6 +4528,7 @@ function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") 
       intake_actual_date = excluded.intake_actual_date,
       intake_reference = excluded.intake_reference,
       intake_notes = excluded.intake_notes,
+      pah_uploaded = excluded.pah_uploaded,
       next_action_owner = excluded.next_action_owner,
       next_action_user_id = excluded.next_action_user_id,
       next_action = excluded.next_action,

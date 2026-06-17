@@ -84,6 +84,9 @@ textarea{min-height:70px;resize:vertical}
 .invoice-checks{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--ds-text-muted)}
 .invoice-checks label{display:inline-flex;align-items:center;gap:6px}
 .invoice-checks input{width:auto;min-height:0}
+.workflow-checks{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;font-size:12px;color:var(--ds-text-muted)}
+.workflow-checks label{display:inline-flex;align-items:center;gap:6px}
+.workflow-checks input{width:auto;min-height:0}
 .file-input{padding:6px 8px;min-height:34px}
 .line-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 .line-tabs button{border:1px solid var(--ds-line-strong);border-radius:var(--ds-radius);background:var(--ds-bg-surface);color:var(--ds-text-muted);font-size:11px;line-height:1;padding:6px 8px;cursor:pointer}
@@ -939,6 +942,7 @@ function renderDetail(){
   }
   const w=order.workflow;
   const canSavePayment=userHasAppRole("Finance");
+  const canSaveMerchandising=userHasAppRole("Merchandising")||userHasAppRole("Admin");
   const paymentAttrs=canSavePayment?"":"disabled";
   const productsReady=productCompletion(order).complete;
   const intakeAttrs=productsReady?"":"disabled";
@@ -1007,6 +1011,7 @@ function renderDetail(){
       <div class="work-panel">
         <div class="work-head"><h3>Merchandising</h3><span class="badge ${badgeClass(w.intakeStatus)}">${escapeHtml(w.intakeStatus)}</span></div>
         ${intakeHold}
+        <div class="workflow-checks"><label><input id="pah-uploaded" type="checkbox" ${w.pahUploaded?"checked":""} ${canSaveMerchandising?"":"disabled"} onchange="savePahUploaded(this.checked)"> PAH uploaded</label></div>
         <div class="grid2">
           ${select("intake-status","Intake status",intakeStatuses,w.intakeStatus,intakeAttrs)}
           ${input("intake-eta","ETA warehouse",w.intakeEtaDate,"date",intakeAttrs)}
@@ -1110,6 +1115,17 @@ async function savePayment(){
     });
     showStatus("Payment saved.");
   }catch(error){
+    showError(error);
+  }
+}
+
+async function savePahUploaded(checked){
+  try{
+    await saveWorkflow("intake",{pahUploaded:checked});
+    showStatus(checked?"PAH marked as uploaded.":"PAH upload tick removed.");
+  }catch(error){
+    const box=el("pah-uploaded");
+    if(box)box.checked=!checked;
     showError(error);
   }
 }
