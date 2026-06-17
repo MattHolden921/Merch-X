@@ -6721,6 +6721,15 @@ function localProductStatusFromShopifyStatus(status) {
   return "Shopify draft";
 }
 
+function syncedProductStateFromShopifyStatus(status) {
+  const normalized = cleanText(status).toUpperCase();
+  return {
+    shopifyStatus: normalized || cleanText(status),
+    status: localProductStatusFromShopifyStatus(normalized),
+    syncStatus: ["ACTIVE", "DRAFT", "ARCHIVED"].includes(normalized) ? "Synced draft" : "Conflict"
+  };
+}
+
 function cleanText(value) {
   return String(value == null ? "" : value).trim();
 }
@@ -7473,14 +7482,14 @@ async function refreshProductShopifyStatus(product, req) {
     node = variantNode?.product || null;
     variant = variantNode || {};
     if (node?.id && normalizeSku(variant.sku) === normalizeSku(product.sku)) {
-      const shopifyStatus = String(node.status || "").toUpperCase();
+      const shopifyState = syncedProductStateFromShopifyStatus(node.status);
       const updated = upsertCatalogProduct({
         ...product,
         shopifyProductGid: node.id,
         shopifyVariantGid: variant.id || product.shopifyVariantGid || "",
-        shopifyStatus,
-        syncStatus: ["DRAFT", "ACTIVE"].includes(shopifyStatus) ? "Synced draft" : "Conflict",
-        status: shopifyStatus === "ACTIVE" ? "Live" : shopifyStatus === "DRAFT" ? "Shopify draft" : product.status,
+        shopifyStatus: shopifyState.shopifyStatus,
+        syncStatus: shopifyState.syncStatus,
+        status: shopifyState.status,
         lastSyncedAt: new Date().toISOString()
       });
       recordProductSyncEvent(updated, "shopify_sync_status", req, {
@@ -7497,13 +7506,14 @@ async function refreshProductShopifyStatus(product, req) {
     recordProductSyncEvent(updated, "shopify_sync_status", req, { result: "conflict", error: "No matching Shopify product found." });
     return { configured: true, product: updated, found: false };
   }
+  const shopifyState = syncedProductStateFromShopifyStatus(node.status);
   const updated = upsertCatalogProduct({
     ...product,
     shopifyProductGid: node.id,
     shopifyVariantGid: variant.id || product.shopifyVariantGid || "",
-    shopifyStatus: node.status || "",
-    syncStatus: node.status === "DRAFT" ? "Synced draft" : node.status === "ACTIVE" ? "Synced draft" : "Conflict",
-    status: node.status === "ACTIVE" ? "Live" : product.status === "Ready for Shopify" ? "Shopify draft" : product.status,
+    shopifyStatus: shopifyState.shopifyStatus,
+    syncStatus: shopifyState.syncStatus,
+    status: shopifyState.status,
     lastSyncedAt: new Date().toISOString()
   });
   recordProductSyncEvent(updated, "shopify_sync_status", req, { result: "ok", shopifyProductGid: node.id, data });
