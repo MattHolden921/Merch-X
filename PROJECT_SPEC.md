@@ -40,6 +40,7 @@ The app favours simple operational tools over a large framework:
 - `public/order-form.html`: purchase order creation, SKU issuing/lookup, line image upload, printable PO output.
 - `public/orders.html`: order workspace, approval/payment/intake workflow, invoices, notes, archive/delete.
 - `public/sku-register.html`: local SKU register and safe deletion of unused issued SKUs.
+- `public/products.html`: product and supplier master-data workspace, local SKU enrichment, readiness review, and Shopify draft push workflow.
 - `public/merchandising.html`: Shopify product merchandising view using product, order, and optional GA4 metrics.
 - `public/collection-planner.html`: Shopify collection reorder planning and apply-to-Shopify workflow.
 - `public/weekly-actions.html`: action board generated from saved bestsellers periods.
@@ -71,6 +72,7 @@ Primary table groups:
 - App/config/auth: `app_settings`, `users`, `auth_sessions`.
 - Work management: `work_handoffs`, `notifications`.
 - Buying/order form: `suppliers`, `products`, `issued_skus`, `orders`.
+- Product/supplier master data: extended `suppliers` and `products` rows plus `product_sync_events`.
 - Order management: `order_workflows`, `order_events`, `order_invoices`.
 - Collection reorder: `collection_reorder_audit`.
 - Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
@@ -103,6 +105,7 @@ Configuration:
 Used for:
 
 - Product and variant lookups by SKU.
+- Draft product creation from local product master records.
 - Product merchandising sync.
 - Collection planner product and collection sync.
 - Collection reorder apply jobs.
@@ -157,6 +160,19 @@ Order form and local SKUs:
 - `POST /api/order-form/image`
 - `POST /api/order-form/orders`
 
+Product and supplier master data:
+
+- `GET /api/products`
+- `POST /api/products`
+- `GET /api/products/detail`
+- `POST /api/products/update`
+- `POST /api/products/archive`
+- `GET /api/suppliers`
+- `POST /api/suppliers/update`
+- `POST /api/products/shopify/preview`
+- `POST /api/products/shopify/push-draft`
+- `POST /api/products/shopify/sync-status`
+
 Order workspace:
 
 - `GET /api/orders/workspace`
@@ -193,6 +209,26 @@ Shopify and Google:
 - New orders receive the next local order number when one is not supplied.
 - Orders are saved to SQLite as JSON payloads plus indexed top-level fields.
 - Saving an order also updates supplier/product helper records and syncs workflow status defaults.
+
+### Product And Supplier Master Data
+
+- Merch X is the source of truth for pre-launch product records.
+- Products are still keyed by SKU, with indexed columns for supplier, product type, season, price, cost, Shopify IDs, product status, and sync status while retaining JSON `data` for flexible fields.
+- Supported product statuses are `Draft`, `Ready for Shopify`, `Shopify draft`, `Live`, and `Archived`.
+- Supported product sync statuses are `Not synced`, `Ready`, `Synced draft`, `Conflict`, and `Error`.
+- Readiness checks block Shopify draft push when SKU, supplier, title/style, RRP, product type, image, cost, or local SKU uniqueness is missing.
+- SKU lookup from the order form prefers the local product master first, then falls back to live Shopify lookup.
+- Saving an order enriches supplier/product master records with last-order metadata and non-empty line details without wiping curated master-data fields.
+- `product_sync_events` records local save/archive and Shopify preview/push/status actions with actor, result, payload summary, Shopify product ID, and errors.
+
+### Shopify Product Draft Push
+
+- Only products marked `Ready for Shopify` and passing readiness checks can be pushed.
+- Product pushes use Shopify Admin GraphQL `productSet` with `status: DRAFT`.
+- Local uploaded product images are sent through Shopify staged uploads before being referenced by the product payload.
+- Successful pushes store Shopify product and variant GIDs, set local status to `Shopify draft`, and set sync status to `Synced draft`.
+- Failed pushes keep the product local, set sync status to `Error`, and write a sync event.
+- Inventory quantity writes are intentionally out of scope for v1.
 
 ### Order Workflow
 

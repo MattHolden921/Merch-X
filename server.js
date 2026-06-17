@@ -289,6 +289,56 @@ function requestJson(url, options = {}) {
   });
 }
 
+function requestBuffer(url) {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const client = parsedUrl.protocol === "https:" ? https : http;
+    const req = client.request(parsedUrl, { method: "GET" }, (response) => {
+      const chunks = [];
+      response.on("data", chunk => chunks.push(chunk));
+      response.on("end", () => {
+        const buffer = Buffer.concat(chunks);
+        resolve({ ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, statusText: response.statusMessage, buffer });
+      });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+function requestMultipart(url, fields, file) {
+  return new Promise((resolve, reject) => {
+    const boundary = `----merchx-${crypto.randomUUID()}`;
+    const chunks = [];
+    for (const field of fields || []) {
+      chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${field.name}"\r\n\r\n${field.value}\r\n`));
+    }
+    chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${file.fileName || "upload"}"\r\nContent-Type: ${file.mimeType || "application/octet-stream"}\r\n\r\n`));
+    chunks.push(file.buffer);
+    chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+    const body = Buffer.concat(chunks);
+    const parsedUrl = new URL(url);
+    const client = parsedUrl.protocol === "https:" ? https : http;
+    const req = client.request(parsedUrl, {
+      method: "POST",
+      headers: {
+        "content-type": `multipart/form-data; boundary=${boundary}`,
+        "content-length": body.length
+      }
+    }, (response) => {
+      let raw = "";
+      response.setEncoding("utf8");
+      response.on("data", chunk => { raw += chunk; });
+      response.on("end", () => {
+        resolve({ ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, statusText: response.statusMessage, body: raw });
+      });
+    });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 function shopifyConfig() {
   const rawShop = process.env.SHOPIFY_SHOP || process.env.SHOPIFY_STORE_DOMAIN || process.env.SHOPIFY_SHOP_DOMAIN || "";
   const clientId = process.env.SHOPIFY_CLIENT_ID || "";
@@ -3113,6 +3163,12 @@ function openOrderSqliteDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
       reference TEXT,
+      status TEXT DEFAULT 'Active',
+      country TEXT,
+      lead_time_days REAL DEFAULT 0,
+      moq REAL DEFAULT 0,
+      currency TEXT,
+      incoterms TEXT,
       last_order_number TEXT,
       last_ordered_at TEXT,
       data TEXT NOT NULL,
@@ -3124,10 +3180,39 @@ function openOrderSqliteDb() {
       sku TEXT NOT NULL UNIQUE,
       style TEXT,
       supplier_name TEXT,
+      supplier_sku TEXT,
+      product_type TEXT,
+      season TEXT,
+      colour TEXT,
+      size TEXT,
+      unit_cost_gbp REAL DEFAULT 0,
+      rrp REAL DEFAULT 0,
+      compare_at_price REAL DEFAULT 0,
+      barcode TEXT,
+      product_status TEXT DEFAULT 'Draft',
+      shopify_product_gid TEXT,
+      shopify_variant_gid TEXT,
+      shopify_status TEXT,
+      sync_status TEXT DEFAULT 'Not synced',
+      last_synced_at TEXT,
       last_order_number TEXT,
       last_ordered_at TEXT,
       data TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS product_sync_events (
+      id TEXT PRIMARY KEY,
+      product_id INTEGER,
+      sku TEXT,
+      action TEXT NOT NULL,
+      actor_name TEXT,
+      shopify_product_gid TEXT,
+      payload_summary TEXT,
+      result TEXT NOT NULL,
+      error TEXT,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS issued_skus (
@@ -3479,6 +3564,56 @@ function openOrderSqliteDb() {
   if (!metricColumns.includes("compare_at_price")) {
     orderSqliteDb.prepare("ALTER TABLE report_product_metrics ADD COLUMN compare_at_price REAL").run();
   }
+  const supplierColumns = orderSqliteDb.prepare("PRAGMA table_info(suppliers)").all().map(column => column.name);
+  for (const [name, definition] of [
+    ["status", "TEXT DEFAULT 'Active'"],
+    ["country", "TEXT"],
+    ["lead_time_days", "REAL DEFAULT 0"],
+    ["moq", "REAL DEFAULT 0"],
+    ["currency", "TEXT"],
+    ["incoterms", "TEXT"]
+  ]) {
+    if (!supplierColumns.includes(name)) orderSqliteDb.prepare(`ALTER TABLE suppliers ADD COLUMN ${name} ${definition}`).run();
+  }
+  const productColumns = orderSqliteDb.prepare("PRAGMA table_info(products)").all().map(column => column.name);
+  for (const [name, definition] of [
+    ["supplier_sku", "TEXT"],
+    ["product_type", "TEXT"],
+    ["season", "TEXT"],
+    ["colour", "TEXT"],
+    ["size", "TEXT"],
+    ["unit_cost_gbp", "REAL DEFAULT 0"],
+    ["rrp", "REAL DEFAULT 0"],
+    ["compare_at_price", "REAL DEFAULT 0"],
+    ["barcode", "TEXT"],
+    ["product_status", "TEXT DEFAULT 'Draft'"],
+    ["shopify_product_gid", "TEXT"],
+    ["shopify_variant_gid", "TEXT"],
+    ["shopify_status", "TEXT"],
+    ["sync_status", "TEXT DEFAULT 'Not synced'"],
+    ["last_synced_at", "TEXT"]
+  ]) {
+    if (!productColumns.includes(name)) orderSqliteDb.prepare(`ALTER TABLE products ADD COLUMN ${name} ${definition}`).run();
+  }
+  orderSqliteDb.prepare(`
+    CREATE TABLE IF NOT EXISTS product_sync_events (
+      id TEXT PRIMARY KEY,
+      product_id INTEGER,
+      sku TEXT,
+      action TEXT NOT NULL,
+      actor_name TEXT,
+      shopify_product_gid TEXT,
+      payload_summary TEXT,
+      result TEXT NOT NULL,
+      error TEXT,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+  orderSqliteDb.prepare("CREATE INDEX IF NOT EXISTS idx_products_supplier ON products(supplier_name, product_status, sync_status)").run();
+  orderSqliteDb.prepare("CREATE INDEX IF NOT EXISTS idx_products_shopify ON products(shopify_product_gid, shopify_variant_gid)").run();
+  orderSqliteDb.prepare("CREATE INDEX IF NOT EXISTS idx_product_sync_events_product ON product_sync_events(product_id, created_at)").run();
+  orderSqliteDb.prepare("CREATE INDEX IF NOT EXISTS idx_suppliers_status ON suppliers(status, name)").run();
   migrateInvoiceFilesToDisk(orderSqliteDb);
   importOrderJsonIfNeeded(orderSqliteDb);
   migrateOrderImagesToDisk(orderSqliteDb);
@@ -3774,7 +3909,7 @@ function setLastIssuedSku(sku) {
 }
 
 function normalizeSku(sku) {
-  return String(sku || "").trim().toUpperCase();
+  return String(sku || "").trim().replace(/^'+/, "").toUpperCase();
 }
 
 function readIssuedSkuRows() {
@@ -6144,6 +6279,17 @@ function existingByNormalized(items, key, value) {
   return items.find(item => String(item[key] || "").trim().toLowerCase() === normalized) || null;
 }
 
+function mergeNonEmpty(existing = {}, patch = {}, always = {}) {
+  const merged = { ...(existing || {}) };
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (value == null) continue;
+    if (typeof value === "string" && !value.trim()) continue;
+    if (Array.isArray(value) && !value.length) continue;
+    merged[key] = value;
+  }
+  return { ...merged, ...(always || {}) };
+}
+
 function migrateOrderRelations(sqlite, fromId, toId) {
   const from = String(fromId || "");
   const to = String(toId || "");
@@ -6166,21 +6312,29 @@ function saveOrderFormOrder(dbData, savedOrder) {
   const incomingOrderId = String(storedOrder.id);
   const canonicalOrderId = String(existingOrder?.id || incomingOrderId);
   storedOrder.id = canonicalOrderId;
-  const supplierPatch = storedOrder.supplier?.name ? {
-    ...(existingByNormalized(dbData.suppliers || [], "name", storedOrder.supplier.name) || {}),
-    ...storedOrder.supplier,
-    lastOrderNumber: storedOrder.orderNumber,
-    lastOrderedAt: storedOrder.savedAt
-  } : null;
-  const productPatches = (storedOrder.lines || [])
-    .filter(line => line.sku)
-    .map(line => ({
-      ...(existingByNormalized(dbData.products || [], "sku", line.sku) || {}),
-      ...line,
-      supplierName: storedOrder.supplier?.name || line.supplierName || "",
+  const supplierPatch = storedOrder.supplier?.name ? mergeNonEmpty(
+    existingByNormalized(dbData.suppliers || [], "name", storedOrder.supplier.name) || {},
+    storedOrder.supplier,
+    {
+      name: storedOrder.supplier.name,
       lastOrderNumber: storedOrder.orderNumber,
       lastOrderedAt: storedOrder.savedAt
-    }));
+    }
+  ) : null;
+  const productPatches = (storedOrder.lines || [])
+    .filter(line => line.sku)
+    .map(line => mergeNonEmpty(
+      existingByNormalized(dbData.products || [], "sku", line.sku) || {},
+      {
+        ...line,
+        supplierName: storedOrder.supplier?.name || line.supplierName || ""
+      },
+      {
+        sku: normalizeSku(line.sku),
+        lastOrderNumber: storedOrder.orderNumber,
+        lastOrderedAt: storedOrder.savedAt
+      }
+    ));
 
   const write = sqlite.transaction(() => {
     migrateOrderRelations(sqlite, incomingOrderId, canonicalOrderId);
@@ -6201,10 +6355,16 @@ function saveOrderFormOrder(dbData, savedOrder) {
 
     if (supplierPatch?.name) {
       sqlite.prepare(`
-        INSERT INTO suppliers (name, reference, last_order_number, last_ordered_at, data, updated_at)
-        VALUES (@name, @reference, @lastOrderNumber, @lastOrderedAt, @data, CURRENT_TIMESTAMP)
+        INSERT INTO suppliers (name, reference, status, country, lead_time_days, moq, currency, incoterms, last_order_number, last_ordered_at, data, updated_at)
+        VALUES (@name, @reference, @status, @country, @leadTimeDays, @moq, @currency, @incoterms, @lastOrderNumber, @lastOrderedAt, @data, CURRENT_TIMESTAMP)
         ON CONFLICT(name) DO UPDATE SET
           reference = excluded.reference,
+          status = COALESCE(NULLIF(suppliers.status, ''), excluded.status),
+          country = COALESCE(NULLIF(suppliers.country, ''), excluded.country),
+          lead_time_days = COALESCE(NULLIF(suppliers.lead_time_days, 0), excluded.lead_time_days),
+          moq = COALESCE(NULLIF(suppliers.moq, 0), excluded.moq),
+          currency = COALESCE(NULLIF(suppliers.currency, ''), excluded.currency),
+          incoterms = COALESCE(NULLIF(suppliers.incoterms, ''), excluded.incoterms),
           last_order_number = excluded.last_order_number,
           last_ordered_at = excluded.last_ordered_at,
           data = excluded.data,
@@ -6212,6 +6372,12 @@ function saveOrderFormOrder(dbData, savedOrder) {
       `).run({
         name: supplierPatch.name,
         reference: supplierPatch.reference || "",
+        status: supplierPatch.status || "Active",
+        country: supplierPatch.country || supplierPatch.bankCountry || "",
+        leadTimeDays: Number(supplierPatch.leadTimeDays || 0),
+        moq: Number(supplierPatch.moq || 0),
+        currency: supplierPatch.currency || storedOrder.terms?.currency || "",
+        incoterms: supplierPatch.incoterms || storedOrder.terms?.incoterms || "",
         lastOrderNumber: supplierPatch.lastOrderNumber || "",
         lastOrderedAt: supplierPatch.lastOrderedAt || "",
         data: JSON.stringify(supplierPatch)
@@ -6219,24 +6385,46 @@ function saveOrderFormOrder(dbData, savedOrder) {
     }
 
     const upsertProduct = sqlite.prepare(`
-      INSERT INTO products (sku, style, supplier_name, last_order_number, last_ordered_at, data, updated_at)
-      VALUES (@sku, @style, @supplierName, @lastOrderNumber, @lastOrderedAt, @data, CURRENT_TIMESTAMP)
+      INSERT INTO products (
+        sku, style, supplier_name, supplier_sku, product_type, season, colour, size,
+        unit_cost_gbp, rrp, compare_at_price, barcode, product_status, shopify_product_gid,
+        shopify_variant_gid, shopify_status, sync_status, last_synced_at, last_order_number,
+        last_ordered_at, data, updated_at
+      )
+      VALUES (
+        @sku, @style, @supplierName, @supplierSku, @productType, @season, @colour, @size,
+        @unitCostGbp, @rrp, @compareAtPrice, @barcode, @productStatus, @shopifyProductGid,
+        @shopifyVariantGid, @shopifyStatus, @syncStatus, @lastSyncedAt, @lastOrderNumber,
+        @lastOrderedAt, @data, CURRENT_TIMESTAMP
+      )
       ON CONFLICT(sku) DO UPDATE SET
         style = excluded.style,
         supplier_name = excluded.supplier_name,
+        supplier_sku = COALESCE(NULLIF(products.supplier_sku, ''), excluded.supplier_sku),
+        product_type = COALESCE(NULLIF(products.product_type, ''), excluded.product_type),
+        season = COALESCE(NULLIF(products.season, ''), excluded.season),
+        colour = COALESCE(NULLIF(products.colour, ''), excluded.colour),
+        size = COALESCE(NULLIF(products.size, ''), excluded.size),
+        unit_cost_gbp = COALESCE(NULLIF(products.unit_cost_gbp, 0), excluded.unit_cost_gbp),
+        rrp = COALESCE(NULLIF(products.rrp, 0), excluded.rrp),
+        compare_at_price = COALESCE(NULLIF(products.compare_at_price, 0), excluded.compare_at_price),
+        barcode = COALESCE(NULLIF(products.barcode, ''), excluded.barcode),
+        product_status = COALESCE(NULLIF(products.product_status, ''), excluded.product_status),
+        shopify_product_gid = COALESCE(NULLIF(products.shopify_product_gid, ''), excluded.shopify_product_gid),
+        shopify_variant_gid = COALESCE(NULLIF(products.shopify_variant_gid, ''), excluded.shopify_variant_gid),
+        shopify_status = COALESCE(NULLIF(products.shopify_status, ''), excluded.shopify_status),
+        sync_status = COALESCE(NULLIF(products.sync_status, ''), excluded.sync_status),
+        last_synced_at = COALESCE(NULLIF(products.last_synced_at, ''), excluded.last_synced_at),
         last_order_number = excluded.last_order_number,
         last_ordered_at = excluded.last_ordered_at,
         data = excluded.data,
         updated_at = CURRENT_TIMESTAMP
     `);
     for (const product of productPatches) {
+      const normalized = normalizeProductInput(product, existingByNormalized(dbData.products || [], "sku", product.sku) || {});
       upsertProduct.run({
-        sku: product.sku,
-        style: product.style || product.description || "",
-        supplierName: product.supplierName || "",
-        lastOrderNumber: product.lastOrderNumber || "",
-        lastOrderedAt: product.lastOrderedAt || "",
-        data: JSON.stringify(product)
+        ...indexedProductParams(normalized),
+        productStatus: normalized.status || "Draft"
       });
     }
   });
@@ -6289,8 +6477,1024 @@ async function shopifyLookupBySku(sku) {
   };
 }
 
+async function shopifyVariantBySku(sku) {
+  const normalized = normalizeSku(sku);
+  if (!normalized) return null;
+  const data = await shopifyGraphql(`query ProductVariantBySku($query: String!) {
+    productVariants(first: 1, query: $query) {
+      edges {
+        node {
+          id
+          sku
+          product {
+            id
+            title
+            status
+            handle
+          }
+        }
+      }
+    }
+  }`, { query: `sku:${normalized}` });
+  return data?.productVariants?.edges?.[0]?.node || null;
+}
+
+function shopifyPushError(message, code = "shopify_push_error", details = {}) {
+  const error = new Error(message);
+  error.code = code;
+  Object.assign(error, details);
+  return error;
+}
+
+const productStatuses = new Set(["Draft", "Ready for Shopify", "Shopify draft", "Live", "Archived"]);
+const productSyncStatuses = new Set(["Not synced", "Ready", "Synced draft", "Conflict", "Error"]);
+
+function cleanText(value) {
+  return String(value == null ? "" : value).trim();
+}
+
+function numberOrZero(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function csvList(value) {
+  if (Array.isArray(value)) return value.map(cleanText).filter(Boolean);
+  return String(value || "").split(",").map(cleanText).filter(Boolean);
+}
+
+function cleanShopifyExportValue(value) {
+  return cleanText(value).replace(/^'/, "");
+}
+
+function firstNonEmpty(source, keys) {
+  for (const key of keys) {
+    const value = cleanShopifyExportValue(source?.[key]);
+    if (value !== "") return value;
+  }
+  return "";
+}
+
+function buyingCodeFromTags(tags) {
+  const match = String(tags || "").match(/Buying Code\s*:\s*([^,]+)/i);
+  return match ? cleanText(match[1]) : "";
+}
+
+function normalizedMetafieldInput(field) {
+  if (!field) return null;
+  const namespace = cleanText(field.namespace).replace(/[^a-zA-Z0-9_-]/g, "_");
+  const key = cleanText(field.key).replace(/[^a-zA-Z0-9_-]/g, "_");
+  const value = cleanText(field.value);
+  if (!namespace || !key) return null;
+  const metafield = { namespace, key, value };
+  if (field.type) metafield.type = cleanText(field.type);
+  return metafield;
+}
+
+function metafieldsFromShopifyExportRow(row = {}) {
+  const metafields = [];
+  for (const [header, value] of Object.entries(row || {})) {
+    const cleanValue = cleanShopifyExportValue(value);
+    const match = String(header || "").match(/\(product\.metafields\.([^.()]+)\.([^)]+)\)$/);
+    if (!match) continue;
+    const namespace = match[1];
+    const key = match[2];
+    metafields.push({ namespace, key, value: cleanValue });
+  }
+  return metafields;
+}
+
+function mergeMetafields(...groups) {
+  const byKey = new Map();
+  for (const group of groups) {
+    for (const field of group || []) {
+      const normalized = normalizedMetafieldInput(field);
+      if (!normalized) continue;
+      byKey.set(`${normalized.namespace}.${normalized.key}`, normalized);
+    }
+  }
+  return [...byKey.values()];
+}
+
+function publicShopifyAdminUrl(productOrVariantGid = "") {
+  const { domain } = shopifyConfig();
+  const id = String(productOrVariantGid || "").match(/\/(\d+)$/)?.[1] || "";
+  return domain && id ? `https://${domain}/admin/products/${id}` : "";
+}
+
+function productImageUploadPath(imageUrl = "") {
+  const raw = String(imageUrl || "");
+  const match = raw.match(/^\/uploads\/(.+)$/);
+  if (!match) return "";
+  return decodeURIComponent(match[1]);
+}
+
+function materializeProductImage(product) {
+  if (!isDataUrl(product.imageUrl)) return product;
+  const stored = writeProductImageUpload(product);
+  return stored ? { ...product, imageUrl: stored.imageUrl } : product;
+}
+
+function supplierFromRow(row) {
+  if (!row) return null;
+  const data = parseJson(row.data, {});
+  return {
+    id: row.id,
+    name: data.name || row.name || "",
+    reference: data.reference || row.reference || "",
+    status: data.status || row.status || "Active",
+    contact: data.contact || "",
+    email: data.email || "",
+    phone: data.phone || "",
+    city: data.city || "",
+    country: data.country || row.country || "",
+    website: data.website || "",
+    paymentType: data.paymentType || "",
+    bankAccountName: data.bankAccountName || "",
+    bankName: data.bankName || "",
+    bankCountry: data.bankCountry || "",
+    iban: data.iban || "",
+    swift: data.swift || "",
+    sortCode: data.sortCode || "",
+    accountNumber: data.accountNumber || "",
+    paymentNotes: data.paymentNotes || "",
+    leadTimeDays: numberOrZero(data.leadTimeDays ?? row.lead_time_days),
+    moq: numberOrZero(data.moq ?? row.moq),
+    currency: data.currency || row.currency || "",
+    incoterms: data.incoterms || row.incoterms || "",
+    complianceNotes: data.complianceNotes || "",
+    notes: data.notes || "",
+    lastOrderNumber: data.lastOrderNumber || row.last_order_number || "",
+    lastOrderedAt: data.lastOrderedAt || row.last_ordered_at || "",
+    updatedAt: row.updated_at || "",
+    data
+  };
+}
+
+function productFromRow(row) {
+  if (!row) return null;
+  const data = parseJson(row.data, {});
+  const product = {
+    id: row.id,
+    sku: data.sku || row.sku || "",
+    style: data.style || data.title || data.description || row.style || "",
+    title: data.title || data.style || data.description || row.style || "",
+    supplierName: data.supplierName || row.supplier_name || "",
+    buyingCode: data.buyingCode || data.supplierSku || row.supplier_sku || "",
+    supplierSku: data.supplierSku || data.buyingCode || row.supplier_sku || "",
+    category: data.category || "",
+    department: data.department || data.category || "",
+    productCategory: data.productCategory || "",
+    productType: data.productType || data.category || row.product_type || "",
+    season: data.season || row.season || "",
+    colour: data.colour || data.color || row.colour || "",
+    color: data.color || data.colour || row.colour || "",
+    size: data.size || row.size || "",
+    optionName: data.optionName || "Size",
+    optionValue: data.optionValue || data.size || "One Size Fits UK 8 to 18",
+    unitCostGbp: numberOrZero(data.unitCostGbp ?? data.unitCost ?? row.unit_cost_gbp),
+    unitCostEur: numberOrZero(data.unitCostEur),
+    rrp: numberOrZero(data.rrp ?? row.rrp),
+    compareAtPrice: numberOrZero(data.compareAtPrice ?? row.compare_at_price),
+    barcode: data.barcode || row.barcode || "",
+    tags: csvList(data.tags),
+    collections: csvList(data.collections),
+    description: data.description || "",
+    imageUrl: data.imageUrl || "",
+    imageFileName: data.imageFileName || "",
+    imageMimeType: data.imageMimeType || "",
+    status: data.status || row.product_status || "Draft",
+    shopifyProductGid: data.shopifyProductGid || row.shopify_product_gid || "",
+    shopifyVariantGid: data.shopifyVariantGid || row.shopify_variant_gid || "",
+    shopifyStatus: data.shopifyStatus || row.shopify_status || "",
+    syncStatus: data.syncStatus || row.sync_status || "Not synced",
+    lastSyncedAt: data.lastSyncedAt || row.last_synced_at || "",
+    productStatusCode: data.productStatusCode || "N",
+    detailsAndFit: data.detailsAndFit || "",
+    fabricCare: data.fabricCare || "",
+    googleProductCategory: data.googleProductCategory || "",
+    seoTitle: data.seoTitle || "",
+    seoDescription: data.seoDescription || "",
+    extraMetafields: Array.isArray(data.extraMetafields) ? data.extraMetafields : [],
+    notes: data.notes || "",
+    source: data.source || "saved",
+    lastOrderNumber: data.lastOrderNumber || row.last_order_number || "",
+    lastOrderedAt: data.lastOrderedAt || row.last_ordered_at || "",
+    updatedAt: row.updated_at || "",
+    data
+  };
+  if (!productStatuses.has(product.status)) product.status = "Draft";
+  if (!productSyncStatuses.has(product.syncStatus)) product.syncStatus = product.status === "Ready for Shopify" ? "Ready" : "Not synced";
+  return product;
+}
+
+function indexedProductParams(product) {
+  return {
+    sku: normalizeSku(product.sku),
+    style: product.style || product.title || "",
+    supplierName: product.supplierName || "",
+    supplierSku: product.supplierSku || product.buyingCode || "",
+    productType: product.productType || product.category || "",
+    season: product.season || "",
+    colour: product.colour || product.color || "",
+    size: product.size || "",
+    unitCostGbp: numberOrZero(product.unitCostGbp),
+    rrp: numberOrZero(product.rrp),
+    compareAtPrice: numberOrZero(product.compareAtPrice),
+    barcode: product.barcode || "",
+    productStatus: product.status || "Draft",
+    shopifyProductGid: product.shopifyProductGid || "",
+    shopifyVariantGid: product.shopifyVariantGid || "",
+    shopifyStatus: product.shopifyStatus || "",
+    syncStatus: product.syncStatus || "Not synced",
+    lastSyncedAt: product.lastSyncedAt || "",
+    lastOrderNumber: product.lastOrderNumber || "",
+    lastOrderedAt: product.lastOrderedAt || "",
+    data: JSON.stringify(product)
+  };
+}
+
+function productReadiness(product, options = {}) {
+  const dbData = options.dbData || readOrderDb();
+  const sku = normalizeSku(product.sku);
+  const blocking = [];
+  const warnings = [];
+  if (!sku) blocking.push("Missing SKU");
+  if (!cleanText(product.supplierName)) blocking.push("Missing supplier");
+  if (!cleanText(product.title || product.style)) blocking.push("Missing title/style");
+  if (!numberOrZero(product.rrp)) blocking.push("Missing RRP");
+  if (!cleanText(product.productType || product.category)) blocking.push("Missing product type");
+  if (!cleanText(product.imageUrl)) blocking.push("Missing image");
+  if (!numberOrZero(product.unitCostGbp)) blocking.push("Missing GBP cost");
+
+  if (sku) {
+    const sameSkuProducts = openOrderSqliteDb().prepare("SELECT id FROM products WHERE sku = ? AND id != ?").all(sku, Number(product.id || 0));
+    if (sameSkuProducts.length) blocking.push("Duplicate local product SKU");
+    const orderRefs = (dbData.orders || []).filter(order => (order.lines || []).some(line => normalizeSku(line.sku) === sku && String(order.orderNumber || "") !== String(product.lastOrderNumber || "")));
+    if (orderRefs.length && !sameSkuProducts.length) warnings.push(`SKU appears on ${orderRefs.length} saved order${orderRefs.length === 1 ? "" : "s"}`);
+  }
+
+  return {
+    ready: blocking.length === 0,
+    blocking,
+    warnings
+  };
+}
+
+function readCatalogProducts({ includeArchived = false } = {}) {
+  const sqlite = openOrderSqliteDb();
+  const rows = sqlite.prepare("SELECT * FROM products ORDER BY updated_at DESC").all();
+  const dbData = readOrderDb();
+  return rows
+    .map(row => {
+      const product = productFromRow(row);
+      const readiness = productReadiness(product, { dbData });
+      return {
+        ...product,
+        readiness,
+        shopifyAdminUrl: publicShopifyAdminUrl(product.shopifyProductGid)
+      };
+    })
+    .filter(product => includeArchived || product.status !== "Archived");
+}
+
+function findCatalogProduct(identifier) {
+  const id = cleanText(identifier);
+  if (!id) return null;
+  const sqlite = openOrderSqliteDb();
+  const row = /^\d+$/.test(id)
+    ? sqlite.prepare("SELECT * FROM products WHERE id = ?").get(Number(id)) || sqlite.prepare("SELECT * FROM products WHERE sku = ?").get(normalizeSku(id))
+    : sqlite.prepare("SELECT * FROM products WHERE sku = ?").get(normalizeSku(id));
+  return productFromRow(row);
+}
+
+function syncStatusForProduct(product) {
+  if (product.syncStatus === "Error" || product.syncStatus === "Conflict") return product.syncStatus;
+  if (product.shopifyProductGid) return "Synced draft";
+  if (product.status === "Ready for Shopify") return "Ready";
+  return product.syncStatus || "Not synced";
+}
+
+function normalizeProductInput(input = {}, existing = {}) {
+  const merged = { ...(existing || {}), ...(input || {}) };
+  const sku = normalizeSku(merged.sku || firstNonEmpty(merged, ["Variant SKU"]) || existing.sku);
+  if (!sku) throw new Error("Product SKU is required.");
+  let status = productStatuses.has(merged.status) ? merged.status : existing.status || "Draft";
+  const linkedShopifyProductGid = cleanText(merged.shopifyProductGid || existing.shopifyProductGid);
+  if (linkedShopifyProductGid && status === "Ready for Shopify") {
+    status = existing.status === "Live" ? "Live" : "Shopify draft";
+  }
+  const rawTags = merged.tags || firstNonEmpty(merged, ["Tags"]);
+  const rawColour = merged.colour || merged.color || firstNonEmpty(merged, [
+    "Variant Colour (product.metafields.custom.variant_colour)",
+    "Product Group Swatch (product.metafields.custom.product_group_swatch)"
+  ]);
+  const rawDepartment = merged.department || merged.category || firstNonEmpty(merged, ["Department (product.metafields.custom.department)"]);
+  const product = materializeProductImage({
+    ...merged,
+    id: existing.id || merged.id || "",
+    sku,
+    title: cleanText(merged.title || merged.style || firstNonEmpty(merged, ["Title"]) || merged.description),
+    style: cleanText(merged.style || merged.title || firstNonEmpty(merged, ["Title"]) || merged.description),
+    supplierName: cleanText(merged.supplierName || firstNonEmpty(merged, ["Vendor"])),
+    supplierSku: cleanText(merged.supplierSku || merged.buyingCode || buyingCodeFromTags(rawTags)),
+    buyingCode: cleanText(merged.buyingCode || merged.supplierSku || buyingCodeFromTags(rawTags)),
+    productType: cleanText(merged.productType || firstNonEmpty(merged, ["Type"]) || merged.category),
+    category: cleanText(merged.category),
+    department: cleanText(rawDepartment),
+    productCategory: firstNonEmpty(merged, ["Product Category"]) || merged.productCategory || "",
+    season: cleanText(merged.season || firstNonEmpty(merged, ["Season (product.metafields.custom.season)"])),
+    colour: cleanText(rawColour),
+    color: cleanText(rawColour),
+    size: cleanText(merged.size || firstNonEmpty(merged, ["Option1 Value"])),
+    optionName: "Size",
+    optionValue: cleanText(merged.optionValue || merged.size || firstNonEmpty(merged, ["Option1 Value"]) || "One Size Fits UK 8 to 18"),
+    unitCostGbp: numberOrZero(merged.unitCostGbp ?? merged.unitCost ?? firstNonEmpty(merged, ["Cost per item"])),
+    unitCostEur: numberOrZero(merged.unitCostEur),
+    rrp: numberOrZero(merged.rrp ?? firstNonEmpty(merged, ["Variant Price"])),
+    compareAtPrice: numberOrZero(merged.compareAtPrice ?? firstNonEmpty(merged, ["Variant Compare At Price"])),
+    barcode: cleanShopifyExportValue(merged.barcode || firstNonEmpty(merged, ["Variant Barcode"])),
+    tags: csvList(rawTags),
+    collections: csvList(merged.collections),
+    description: cleanText(merged.description || firstNonEmpty(merged, ["Body (HTML)"])),
+    imageUrl: cleanText(merged.imageUrl || firstNonEmpty(merged, ["Image Src"])),
+    imageFileName: cleanText(merged.imageFileName),
+    imageMimeType: cleanText(merged.imageMimeType),
+    status,
+    shopifyProductGid: linkedShopifyProductGid,
+    shopifyVariantGid: cleanText(merged.shopifyVariantGid || existing.shopifyVariantGid),
+    shopifyStatus: cleanText(merged.shopifyStatus || existing.shopifyStatus),
+    syncStatus: productSyncStatuses.has(merged.syncStatus) ? merged.syncStatus : status === "Ready for Shopify" ? "Ready" : existing.syncStatus || "Not synced",
+    lastSyncedAt: cleanText(merged.lastSyncedAt),
+    productStatusCode: cleanText(merged.productStatusCode || firstNonEmpty(merged, ["Product Status (product.metafields.custom.product_status)"]) || "N"),
+    detailsAndFit: cleanText(merged.detailsAndFit || firstNonEmpty(merged, ["Details and Fit (product.metafields.custom.details_and_fit)"])),
+    fabricCare: cleanText(merged.fabricCare || firstNonEmpty(merged, ["Fabric & Care (product.metafields.custom.fabric_care)"])),
+    googleProductCategory: cleanShopifyExportValue(merged.googleProductCategory || merged["Google Shopping / Google Product Category"]),
+    seoTitle: cleanText(merged.seoTitle || merged["SEO Title"]),
+    seoDescription: cleanText(merged.seoDescription || merged["SEO Description"]),
+    extraMetafields: mergeMetafields(merged.extraMetafields || [], metafieldsFromShopifyExportRow(merged)),
+    notes: cleanText(merged.notes),
+    source: cleanText(merged.source || existing.source || "saved"),
+    lastOrderNumber: cleanText(merged.lastOrderNumber),
+    lastOrderedAt: cleanText(merged.lastOrderedAt)
+  });
+  product.syncStatus = syncStatusForProduct(product);
+  return product;
+}
+
+function upsertCatalogProduct(input, req = null) {
+  const sqlite = openOrderSqliteDb();
+  const existing = input.id ? findCatalogProduct(input.id) : findCatalogProduct(input.sku);
+  const product = normalizeProductInput(input, existing || {});
+  const duplicate = sqlite.prepare("SELECT id FROM products WHERE sku = ? AND id != ?").get(product.sku, Number(existing?.id || product.id || 0));
+  if (duplicate) throw new Error(`SKU ${product.sku} already exists on another product.`);
+  const params = indexedProductParams(product);
+  if (existing?.id) {
+    sqlite.prepare(`
+      UPDATE products
+      SET sku = @sku,
+          style = @style,
+          supplier_name = @supplierName,
+          supplier_sku = @supplierSku,
+          product_type = @productType,
+          season = @season,
+          colour = @colour,
+          size = @size,
+          unit_cost_gbp = @unitCostGbp,
+          rrp = @rrp,
+          compare_at_price = @compareAtPrice,
+          barcode = @barcode,
+          product_status = @productStatus,
+          shopify_product_gid = @shopifyProductGid,
+          shopify_variant_gid = @shopifyVariantGid,
+          shopify_status = @shopifyStatus,
+          sync_status = @syncStatus,
+          last_synced_at = @lastSyncedAt,
+          last_order_number = @lastOrderNumber,
+          last_ordered_at = @lastOrderedAt,
+          data = @data,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = @id
+    `).run({ ...params, id: existing.id });
+    return findCatalogProduct(existing.id);
+  }
+  sqlite.prepare(`
+    INSERT INTO products (
+      sku, style, supplier_name, supplier_sku, product_type, season, colour, size,
+      unit_cost_gbp, rrp, compare_at_price, barcode, product_status,
+      shopify_product_gid, shopify_variant_gid, shopify_status, sync_status, last_synced_at,
+      last_order_number, last_ordered_at, data, updated_at
+    )
+    VALUES (
+      @sku, @style, @supplierName, @supplierSku, @productType, @season, @colour, @size,
+      @unitCostGbp, @rrp, @compareAtPrice, @barcode, @productStatus,
+      @shopifyProductGid, @shopifyVariantGid, @shopifyStatus, @syncStatus, @lastSyncedAt,
+      @lastOrderNumber, @lastOrderedAt, @data, CURRENT_TIMESTAMP
+    )
+  `).run(params);
+  const created = findCatalogProduct(product.sku);
+  if (req) recordProductSyncEvent(created, "local_save", req, { result: "ok", payload: { sku: created.sku, status: created.status } });
+  return created;
+}
+
+function normalizeSupplierInput(input = {}, existing = {}) {
+  const supplier = { ...(existing || {}), ...(input || {}) };
+  supplier.name = cleanText(supplier.name);
+  if (!supplier.name) throw new Error("Supplier name is required.");
+  supplier.reference = cleanText(supplier.reference);
+  supplier.status = supplier.status === "Inactive" ? "Inactive" : supplier.status === "Watch" ? "Watch" : "Active";
+  supplier.country = cleanText(supplier.country);
+  supplier.leadTimeDays = numberOrZero(supplier.leadTimeDays);
+  supplier.moq = numberOrZero(supplier.moq);
+  supplier.currency = cleanText(supplier.currency);
+  supplier.incoterms = cleanText(supplier.incoterms);
+  return supplier;
+}
+
+function upsertCatalogSupplier(input) {
+  const sqlite = openOrderSqliteDb();
+  const current = input.id
+    ? supplierFromRow(sqlite.prepare("SELECT * FROM suppliers WHERE id = ?").get(Number(input.id)))
+    : supplierFromRow(sqlite.prepare("SELECT * FROM suppliers WHERE name = ?").get(cleanText(input.name)));
+  const supplier = normalizeSupplierInput(input, current || {});
+  const duplicate = sqlite.prepare("SELECT id FROM suppliers WHERE name = ? AND id != ?").get(supplier.name, Number(current?.id || supplier.id || 0));
+  if (duplicate) throw new Error(`Supplier ${supplier.name} already exists.`);
+  const params = {
+    name: supplier.name,
+    reference: supplier.reference || "",
+    status: supplier.status || "Active",
+    country: supplier.country || "",
+    leadTimeDays: supplier.leadTimeDays || 0,
+    moq: supplier.moq || 0,
+    currency: supplier.currency || "",
+    incoterms: supplier.incoterms || "",
+    lastOrderNumber: supplier.lastOrderNumber || "",
+    lastOrderedAt: supplier.lastOrderedAt || "",
+    data: JSON.stringify(supplier)
+  };
+  if (current?.id) {
+    sqlite.prepare(`
+      UPDATE suppliers
+      SET name = @name,
+          reference = @reference,
+          status = @status,
+          country = @country,
+          lead_time_days = @leadTimeDays,
+          moq = @moq,
+          currency = @currency,
+          incoterms = @incoterms,
+          last_order_number = @lastOrderNumber,
+          last_ordered_at = @lastOrderedAt,
+          data = @data,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = @id
+    `).run({ ...params, id: current.id });
+  } else {
+    sqlite.prepare(`
+      INSERT INTO suppliers (name, reference, status, country, lead_time_days, moq, currency, incoterms, last_order_number, last_ordered_at, data, updated_at)
+      VALUES (@name, @reference, @status, @country, @leadTimeDays, @moq, @currency, @incoterms, @lastOrderNumber, @lastOrderedAt, @data, CURRENT_TIMESTAMP)
+    `).run(params);
+  }
+  return supplierFromRow(sqlite.prepare("SELECT * FROM suppliers WHERE name = ?").get(supplier.name));
+}
+
+function supplierHistory(name) {
+  const normalized = cleanText(name).toLowerCase();
+  const dbData = readOrderDb();
+  const products = readCatalogProducts({ includeArchived: true }).filter(product => cleanText(product.supplierName).toLowerCase() === normalized);
+  const orders = (dbData.orders || [])
+    .filter(order => cleanText(order.supplier?.name || order.supplierName).toLowerCase() === normalized)
+    .slice(-12)
+    .reverse()
+    .map(order => ({
+      id: order.id,
+      orderNumber: order.orderNumber,
+      orderDate: order.orderDate,
+      status: order.status,
+      units: (order.lines || []).reduce((sum, line) => sum + Number(line.quantity || 0), 0)
+    }));
+  return { productCount: products.length, products: products.slice(0, 12), orders };
+}
+
+function readCatalogSuppliers() {
+  const sqlite = openOrderSqliteDb();
+  return sqlite.prepare("SELECT * FROM suppliers ORDER BY name COLLATE NOCASE").all()
+    .map(row => {
+      const supplier = supplierFromRow(row);
+      return { ...supplier, history: supplierHistory(supplier.name) };
+    });
+}
+
+function recordProductSyncEvent(product, action, req, details = {}) {
+  const sqlite = openOrderSqliteDb();
+  sqlite.prepare(`
+    INSERT INTO product_sync_events (id, product_id, sku, action, actor_name, shopify_product_gid, payload_summary, result, error, data, created_at)
+    VALUES (@id, @productId, @sku, @action, @actorName, @shopifyProductGid, @payloadSummary, @result, @error, @data, CURRENT_TIMESTAMP)
+  `).run({
+    id: crypto.randomUUID(),
+    productId: Number(product?.id || 0) || null,
+    sku: product?.sku || "",
+    action,
+    actorName: req ? actorName(req) : "Team",
+    shopifyProductGid: details.shopifyProductGid || product?.shopifyProductGid || "",
+    payloadSummary: details.payload ? JSON.stringify(details.payload).slice(0, 4000) : "",
+    result: details.result || "ok",
+    error: details.error || "",
+    data: JSON.stringify(details.data || {})
+  });
+}
+
+function readProductSyncEvents(productId) {
+  return openOrderSqliteDb().prepare(`
+    SELECT id, product_id AS productId, sku, action, actor_name AS actorName, shopify_product_gid AS shopifyProductGid,
+           payload_summary AS payloadSummary, result, error, data, created_at AS createdAt
+    FROM product_sync_events
+    WHERE product_id = ?
+    ORDER BY created_at DESC
+    LIMIT 80
+  `).all(Number(productId)).map(row => ({ ...row, data: parseJson(row.data, {}) }));
+}
+
+function successfulShopifySyncEvent(product) {
+  const sku = normalizeSku(product?.sku);
+  const productId = Number(product?.id || 0);
+  if (!sku && !productId) return null;
+  return openOrderSqliteDb().prepare(`
+    SELECT id, product_id AS productId, sku, action, shopify_product_gid AS shopifyProductGid, data, created_at AS createdAt
+    FROM product_sync_events
+    WHERE result = 'ok'
+      AND shopify_product_gid IS NOT NULL
+      AND shopify_product_gid != ''
+      AND (product_id = @productId OR sku = @sku)
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get({ productId: productId || -1, sku }) || null;
+}
+
+function productShopifyPayload(product, fileInput = null) {
+  const optionName = "Size";
+  const optionValue = cleanText(product.optionValue || product.size || "One Size Fits UK 8 to 18") || "One Size Fits UK 8 to 18";
+  const colour = cleanText(product.colour || product.color);
+  const department = cleanText(product.department || product.category || product.productType);
+  const baseMetafields = [
+    department ? { namespace: "custom", key: "department", type: "single_line_text_field", value: department } : null,
+    product.detailsAndFit ? { namespace: "custom", key: "details_and_fit", type: "multi_line_text_field", value: product.detailsAndFit } : null,
+    product.fabricCare ? { namespace: "custom", key: "fabric_care", type: "multi_line_text_field", value: product.fabricCare } : null,
+    colour ? { namespace: "custom", key: "product_group_swatch", type: "single_line_text_field", value: colour } : null,
+    colour ? { namespace: "custom", key: "product_group_type", type: "single_line_text_field", value: "Colour" } : null,
+    colour ? { namespace: "custom", key: "variant_colour", type: "single_line_text_field", value: colour } : null,
+    product.productStatusCode ? { namespace: "custom", key: "product_status", type: "single_line_text_field", value: product.productStatusCode } : null,
+    product.season ? { namespace: "custom", key: "season", type: "single_line_text_field", value: product.season } : null,
+    product.supplierSku ? { namespace: "custom", key: "supplier_sku", type: "single_line_text_field", value: product.supplierSku } : null
+  ].filter(Boolean);
+  const metafields = mergeMetafields(product.extraMetafields || [], baseMetafields);
+  const variant = {
+    optionValues: [{ optionName, name: optionValue }],
+    price: String(numberOrZero(product.rrp).toFixed(2)),
+    sku: product.sku,
+    inventoryItem: {
+      sku: product.sku,
+      tracked: true,
+      cost: String(numberOrZero(product.unitCostGbp).toFixed(2))
+    }
+  };
+  if (numberOrZero(product.compareAtPrice)) variant.compareAtPrice = String(numberOrZero(product.compareAtPrice).toFixed(2));
+  if (product.barcode) variant.barcode = product.barcode;
+  if (fileInput) variant.file = fileInput;
+
+  const input = {
+    title: product.title || product.style,
+    status: "DRAFT",
+    vendor: product.supplierName || undefined,
+    productType: product.productType || product.category || undefined,
+    descriptionHtml: product.description ? escapeHtml(product.description).replace(/\r?\n/g, "<br>") : undefined,
+    seo: product.seoTitle || product.seoDescription ? { title: product.seoTitle || undefined, description: product.seoDescription || undefined } : undefined,
+    tags: [...new Set([...(product.tags || []), product.season].filter(Boolean))],
+    productOptions: [{ name: optionName, position: 1, values: [{ name: optionValue }] }],
+    variants: [variant],
+    metafields
+  };
+  if (fileInput) input.files = [fileInput];
+  Object.keys(input).forEach(key => input[key] === undefined && delete input[key]);
+  return input;
+}
+
+function localImageFile(imageUrl) {
+  const relativePath = productImageUploadPath(imageUrl);
+  if (!relativePath) return null;
+  const absolutePath = absoluteUploadPath(relativePath);
+  if (!fs.existsSync(absolutePath)) return null;
+  const buffer = fs.readFileSync(absolutePath);
+  const ext = path.extname(absolutePath).toLowerCase();
+  return {
+    buffer,
+    fileName: path.basename(absolutePath),
+    mimeType: mimeTypes[ext] || "image/jpeg"
+  };
+}
+
+function shopifyRemoteImageFileInput(product) {
+  const imageUrl = String(product.imageUrl || "");
+  if (!/^https?:\/\//i.test(imageUrl)) return null;
+  let ext = "";
+  try {
+    ext = path.extname(new URL(imageUrl).pathname || "").toLowerCase();
+  } catch {
+    ext = "";
+  }
+  const input = {
+    originalSource: imageUrl,
+    alt: product.title || product.style || product.sku,
+    contentType: "IMAGE"
+  };
+  if ([".jpg", ".jpeg", ".png", ".gif", ".webp"].includes(ext)) {
+    input.filename = `${safeSegment(product.sku || "product-image", "product-image")}${ext}`;
+  }
+  return input;
+}
+
+async function stagedShopifyImageFile(product) {
+  const local = localImageFile(product.imageUrl);
+  if (!local) {
+    return shopifyRemoteImageFileInput(product);
+  }
+  const staged = await shopifyGraphql(`mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+    stagedUploadsCreate(input: $input) {
+      stagedTargets {
+        url
+        resourceUrl
+        parameters { name value }
+      }
+      userErrors { field message }
+    }
+  }`, {
+    input: [{
+      filename: local.fileName,
+      mimeType: local.mimeType,
+      httpMethod: "POST",
+      resource: "PRODUCT_IMAGE"
+    }]
+  });
+  const errors = staged?.stagedUploadsCreate?.userErrors || [];
+  if (errors.length) throw new Error(errors.map(error => error.message).join("; "));
+  const target = staged?.stagedUploadsCreate?.stagedTargets?.[0];
+  if (!target?.url || !target?.resourceUrl) throw new Error("Shopify did not return an upload target.");
+  const upload = await requestMultipart(target.url, target.parameters || [], local);
+  if (!upload.ok) throw new Error(`Shopify image upload failed: ${upload.status} ${upload.statusText}`);
+  return {
+    originalSource: target.resourceUrl,
+    alt: product.title || product.style || product.sku,
+    filename: local.fileName,
+    contentType: "IMAGE"
+  };
+}
+
+async function pushProductDraftToShopify(product, req) {
+  const readiness = productReadiness(product);
+  if (product.shopifyProductGid || product.status === "Shopify draft" || product.status === "Live" || product.syncStatus === "Synced draft") {
+    throw shopifyPushError("This product is already linked to Shopify. Refresh status instead of pushing again, so Shopify edits are not overwritten.", "already_synced");
+  }
+  const successfulSync = successfulShopifySyncEvent(product);
+  if (successfulSync?.shopifyProductGid) {
+    const restored = upsertCatalogProduct({
+      ...product,
+      shopifyProductGid: successfulSync.shopifyProductGid,
+      status: "Shopify draft",
+      syncStatus: "Synced draft",
+      lastSyncedAt: product.lastSyncedAt || successfulSync.createdAt || new Date().toISOString()
+    });
+    throw shopifyPushError("This product was already pushed to Shopify. I restored the local Shopify link; refresh status instead of pushing again.", "already_synced", { product: restored });
+  }
+  if (product.status !== "Ready for Shopify" && product.syncStatus !== "Error") throw new Error("Only products marked Ready for Shopify can be pushed.");
+  if (!readiness.ready) throw new Error(`Product is not ready: ${readiness.blocking.join(", ")}`);
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  if (!shop || !clientId || !clientSecret) return { configured: false, message: "Set SHOPIFY_SHOP, SHOPIFY_CLIENT_ID, and SHOPIFY_CLIENT_SECRET to push Shopify drafts." };
+
+  const existingVariant = await shopifyVariantBySku(product.sku);
+  if (existingVariant?.product?.id && normalizeSku(existingVariant.sku) === normalizeSku(product.sku)) {
+    const duplicate = upsertCatalogProduct({
+      ...product,
+      shopifyProductGid: "",
+      shopifyVariantGid: "",
+      syncStatus: "Conflict",
+      shopifyStatus: existingVariant.product.status || ""
+    });
+    recordProductSyncEvent(duplicate, "shopify_duplicate_sku", req, {
+      result: "conflict",
+      shopifyProductGid: existingVariant.product.id,
+      error: `SKU ${product.sku} already exists in Shopify on ${existingVariant.product.title || existingVariant.product.id}.`,
+      data: { existingVariant }
+    });
+    throw shopifyPushError(`SKU ${product.sku} already exists in Shopify on ${existingVariant.product.title || "another product"}. Refresh status or choose a different SKU before pushing.`, "duplicate_sku", { existingVariant });
+  }
+
+  const fileInput = await stagedShopifyImageFile(product);
+  const input = productShopifyPayload(product, fileInput);
+  const response = await shopifyGraphql(`mutation createProductDraft($productSet: ProductSetInput!, $synchronous: Boolean!) {
+    productSet(input: $productSet, synchronous: $synchronous) {
+      product {
+        id
+        title
+        status
+        variants(first: 5) {
+          nodes { id sku }
+        }
+      }
+      userErrors { field message code }
+    }
+  }`, { productSet: input, synchronous: true });
+  const payload = response?.productSet || {};
+  if ((payload.userErrors || []).length) throw new Error(payload.userErrors.map(error => error.message).join("; "));
+  const shopifyProduct = payload.product;
+  if (!shopifyProduct?.id) throw new Error("Shopify did not return a product ID.");
+  const variant = (shopifyProduct.variants?.nodes || []).find(item => normalizeSku(item.sku) === normalizeSku(product.sku)) || shopifyProduct.variants?.nodes?.[0] || {};
+  const updated = upsertCatalogProduct({
+    ...product,
+    status: "Shopify draft",
+    shopifyProductGid: shopifyProduct.id,
+    shopifyVariantGid: variant.id || "",
+    shopifyStatus: shopifyProduct.status || "DRAFT",
+    syncStatus: "Synced draft",
+    lastSyncedAt: new Date().toISOString()
+  });
+  recordProductSyncEvent(updated, "shopify_push_draft", req, {
+    result: "ok",
+    shopifyProductGid: shopifyProduct.id,
+    payload: { sku: product.sku, title: input.title, status: "DRAFT" },
+    data: { shopifyProduct, input }
+  });
+  return { configured: true, product: updated, shopifyProduct };
+}
+
+async function refreshProductShopifyStatus(product, req) {
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  if (!shop || !clientId || !clientSecret) return { configured: false, message: "Set Shopify credentials to refresh product sync status." };
+  const successfulSync = successfulShopifySyncEvent(product);
+  if (!product.shopifyProductGid && successfulSync?.shopifyProductGid) {
+    product = {
+      ...product,
+      shopifyProductGid: successfulSync.shopifyProductGid
+    };
+  }
+  let node = null;
+  let variant = {};
+  let data = null;
+  if (product.shopifyProductGid) {
+    data = await shopifyGraphql(`query ProductSyncStatusById($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        status
+        variants(first: 20) {
+          nodes { id sku }
+        }
+      }
+    }`, { id: product.shopifyProductGid });
+    node = data?.product || null;
+    variant = (node?.variants?.nodes || []).find(item => normalizeSku(item.sku) === normalizeSku(product.sku)) || node?.variants?.nodes?.[0] || {};
+  } else {
+    const variantNode = await shopifyVariantBySku(product.sku);
+    data = { productVariant: variantNode };
+    node = variantNode?.product || null;
+    variant = variantNode || {};
+    if (node?.id && normalizeSku(variant.sku) === normalizeSku(product.sku)) {
+      const updated = upsertCatalogProduct({
+        ...product,
+        shopifyProductGid: "",
+        shopifyVariantGid: "",
+        shopifyStatus: node.status || "",
+        syncStatus: "Conflict"
+      });
+      recordProductSyncEvent(updated, "shopify_sync_status", req, {
+        result: "conflict",
+        shopifyProductGid: node.id,
+        error: `SKU ${product.sku} already exists in Shopify on ${node.title || node.id}.`,
+        data
+      });
+      return { configured: true, product: updated, found: true, conflict: true };
+    }
+  }
+  if (!node) {
+    const updated = upsertCatalogProduct({ ...product, syncStatus: "Conflict", shopifyStatus: "" });
+    recordProductSyncEvent(updated, "shopify_sync_status", req, { result: "conflict", error: "No matching Shopify product found." });
+    return { configured: true, product: updated, found: false };
+  }
+  const updated = upsertCatalogProduct({
+    ...product,
+    shopifyProductGid: node.id,
+    shopifyVariantGid: variant.id || product.shopifyVariantGid || "",
+    shopifyStatus: node.status || "",
+    syncStatus: node.status === "DRAFT" ? "Synced draft" : node.status === "ACTIVE" ? "Synced draft" : "Conflict",
+    status: node.status === "ACTIVE" ? "Live" : product.status === "Ready for Shopify" ? "Shopify draft" : product.status,
+    lastSyncedAt: new Date().toISOString()
+  });
+  recordProductSyncEvent(updated, "shopify_sync_status", req, { result: "ok", shopifyProductGid: node.id, data });
+  return { configured: true, product: updated, found: true };
+}
+
 async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (req.method === "GET" && url.pathname === "/api/products") {
+    const products = readCatalogProducts({ includeArchived: url.searchParams.get("includeArchived") === "1" });
+    sendJson(res, 200, {
+      products,
+      count: products.length,
+      suppliers: readCatalogSuppliers().map(supplier => ({ id: supplier.id, name: supplier.name, status: supplier.status })),
+      lastIssuedSku: getLastIssuedSku(readOrderDb()),
+      shopifyConfigured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret),
+      generatedAt: new Date().toISOString()
+    });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/products") {
+    if (!requireRoles(req, res, ["Buyer", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      const product = upsertCatalogProduct(body.product || body, req);
+      reserveIssuedSku(product.sku, { source: "product-master" });
+      const publicProduct = readCatalogProducts({ includeArchived: true }).find(item => String(item.id) === String(product.id)) || product;
+      sendJson(res, 200, { ok: true, product: publicProduct });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save product." });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/products/detail") {
+    const product = findCatalogProduct(url.searchParams.get("id") || url.searchParams.get("sku"));
+    if (!product) {
+      sendJson(res, 404, { error: "Product not found." });
+      return true;
+    }
+    const full = readCatalogProducts({ includeArchived: true }).find(item => String(item.id) === String(product.id)) || product;
+    sendJson(res, 200, {
+      product: full,
+      events: readProductSyncEvents(product.id),
+      suppliers: readCatalogSuppliers().map(supplier => ({ id: supplier.id, name: supplier.name, status: supplier.status })),
+      generatedAt: new Date().toISOString()
+    });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/products/update") {
+    if (!requireRoles(req, res, ["Buyer", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      const product = upsertCatalogProduct(body.product || body, req);
+      reserveIssuedSku(product.sku, { source: "product-master" });
+      const publicProduct = readCatalogProducts({ includeArchived: true }).find(item => String(item.id) === String(product.id)) || product;
+      sendJson(res, 200, { ok: true, product: publicProduct, events: readProductSyncEvents(product.id) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not update product." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/products/archive") {
+    if (!requireRoles(req, res, ["Buyer", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      const product = findCatalogProduct(body.id || body.sku);
+      if (!product) throw new Error("Product not found.");
+      const archived = upsertCatalogProduct({ ...product, status: "Archived" }, req);
+      recordProductSyncEvent(archived, "archive", req, { result: "ok", payload: { sku: archived.sku } });
+      sendJson(res, 200, { ok: true, product: archived });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not archive product." });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/suppliers") {
+    sendJson(res, 200, {
+      suppliers: readCatalogSuppliers(),
+      count: readCatalogSuppliers().length,
+      generatedAt: new Date().toISOString()
+    });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/suppliers/update") {
+    if (!requireRoles(req, res, ["Buyer", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      const supplier = upsertCatalogSupplier(body.supplier || body);
+      sendJson(res, 200, { ok: true, supplier });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save supplier." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/products/shopify/preview") {
+    if (!requireRoles(req, res, ["Buyer", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      const ids = new Set((body.ids || []).map(String));
+      if (!ids.size) throw new Error("Choose at least one product to preview.");
+      const products = readCatalogProducts({ includeArchived: true }).filter(product => !ids.size || ids.has(String(product.id)) || ids.has(product.sku));
+      const previews = products.map(product => ({
+        product,
+        readiness: product.readiness,
+        exportMetadata: {
+          productCategory: product.productCategory || "",
+          googleProductCategory: product.googleProductCategory || ""
+        },
+        payload: productShopifyPayload(product, shopifyRemoteImageFileInput(product))
+      }));
+      sendJson(res, 200, {
+        ok: true,
+        configured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret),
+        previews
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not preview Shopify payload." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/products/shopify/push-draft") {
+    if (!requireRoles(req, res, ["Admin", "Buyer"], "Only Admin or Buyer users can push Shopify drafts.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const ids = new Set((body.ids || []).map(String));
+      if (!ids.size) throw new Error("Choose at least one product to push.");
+      const products = readCatalogProducts({ includeArchived: true }).filter(product => ids.has(String(product.id)) || ids.has(product.sku));
+      const results = [];
+      for (const product of products) {
+        try {
+          const result = await pushProductDraftToShopify(product, req);
+          results.push({ id: product.id, sku: product.sku, ok: Boolean(result.product), ...result });
+        } catch (error) {
+          if (error.code === "already_synced") {
+            const blockedProduct = error.product || product;
+            recordProductSyncEvent(blockedProduct, "shopify_push_blocked", req, { result: "blocked", error: error.message || "", payload: { sku: product.sku } });
+            results.push({ id: product.id, sku: product.sku, ok: false, blocked: true, product: blockedProduct, error: error.message || "Product is already synced." });
+            continue;
+          }
+          if (error.code === "duplicate_sku") {
+            results.push({ id: product.id, sku: product.sku, ok: false, conflict: true, error: error.message || "Duplicate Shopify SKU." });
+            continue;
+          }
+          if (product.syncStatus === "Error") {
+            try {
+              const reconciled = await refreshProductShopifyStatus(product, req);
+              if (reconciled.found && reconciled.product?.shopifyProductGid) {
+                recordProductSyncEvent(reconciled.product, "shopify_push_reconciled", req, {
+                  result: "ok",
+                  error: error.message || "",
+                  payload: { sku: product.sku }
+                });
+                results.push({ id: product.id, sku: product.sku, ok: true, reconciled: true, product: reconciled.product, previousError: error.message || "" });
+                continue;
+              }
+            } catch {
+              // Keep the original push error; reconciliation is best-effort.
+            }
+          }
+          const failed = upsertCatalogProduct({ ...product, syncStatus: "Error" });
+          recordProductSyncEvent(failed, "shopify_push_draft", req, { result: "error", error: error.message || "Shopify push failed.", payload: { sku: product.sku } });
+          results.push({ id: product.id, sku: product.sku, ok: false, error: error.message || "Shopify push failed." });
+        }
+      }
+      sendJson(res, 200, {
+        ok: results.some(result => result.ok),
+        configured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret),
+        results,
+        products: readCatalogProducts({ includeArchived: true })
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not push Shopify drafts." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/products/shopify/sync-status") {
+    if (!requireRoles(req, res, ["Buyer", "Admin", "Merchandising"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      const ids = new Set((body.ids || []).map(String));
+      if (!ids.size) throw new Error("Choose at least one product to refresh.");
+      const products = readCatalogProducts({ includeArchived: true }).filter(product => ids.has(String(product.id)) || ids.has(product.sku));
+      const results = [];
+      for (const product of products) {
+        try {
+          const result = await refreshProductShopifyStatus(product, req);
+          results.push({ id: product.id, sku: product.sku, ok: true, ...result });
+        } catch (error) {
+          const failed = upsertCatalogProduct({ ...product, syncStatus: "Error" });
+          recordProductSyncEvent(failed, "shopify_sync_status", req, { result: "error", error: error.message || "Could not refresh Shopify status." });
+          results.push({ id: product.id, sku: product.sku, ok: false, error: error.message || "Could not refresh Shopify status." });
+        }
+      }
+      sendJson(res, 200, { ok: true, results, products: readCatalogProducts({ includeArchived: true }) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not refresh Shopify status." });
+    }
+    return true;
+  }
 
   if (req.method === "GET" && url.pathname === "/api/reports/bestsellers/periods") {
     sendJson(res, 200, {
@@ -6457,7 +7661,18 @@ async function handleApi(req, res) {
     }
 
     const db = readOrderDb();
-    const savedProduct = db.products.find(product => normalizeSku(product.sku) === sku) || null;
+    const masterProduct = findCatalogProduct(sku);
+    const savedProduct = masterProduct || db.products.find(product => normalizeSku(product.sku) === sku) || null;
+    if (masterProduct) {
+      sendJson(res, 200, {
+        found: true,
+        product: masterProduct,
+        source: "master",
+        shopifyConfigured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret),
+        message: ""
+      });
+      return true;
+    }
     try {
       const shopify = await shopifyLookupBySku(sku);
       const product = shopify.product || savedProduct;

@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Products & Suppliers</title>
+<link rel="stylesheet" href="design-system.css">
+<script src="auth.js"></script>
+<style>
+.sub{max-width:780px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.tab{border:1px solid var(--ds-line-strong);background:var(--ds-bg-surface);border-radius:var(--ds-radius);min-height:34px;padding:0 12px;font-size:12px;font-weight:650;cursor:pointer}
+.tab.active{background:var(--ds-action);border-color:var(--ds-action);color:#fff}
+.view{display:none}.view.active{display:block}
+.toolbar{display:grid;grid-template-columns:1.5fr repeat(5,minmax(120px,1fr));gap:10px;align-items:end}
+.metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:14px;align-items:start}
+.table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
+table{width:100%;border-collapse:collapse;font-size:12px;min-width:1120px}
+th{position:sticky;top:0;background:var(--ds-bg-muted);z-index:1;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);text-align:left;padding:8px;border-bottom:1px solid var(--ds-line)}
+td{padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:top;color:var(--ds-text-muted)}
+tr:hover td{background:var(--ds-bg-muted)}tr.selected td{background:var(--ds-action-soft)}
+.sku{font-family:var(--ds-font-mono);font-weight:700;color:var(--ds-text)}
+.thumb{width:46px;aspect-ratio:3/4;border:1px dashed var(--ds-line-strong);border-radius:var(--ds-radius);background:var(--ds-bg-muted);display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:10px;color:var(--ds-text-soft)}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.badge{display:inline-flex;align-items:center;min-height:20px;border-radius:var(--ds-radius);padding:3px 7px;font-size:10px;font-weight:700;background:var(--ds-bg-muted);color:var(--ds-text-muted);white-space:nowrap}
+.badge.good{background:rgba(21,128,61,.12);color:var(--ds-good)}.badge.warn{background:rgba(180,83,9,.12);color:var(--ds-warn)}.badge.bad{background:rgba(185,28,28,.12);color:var(--ds-bad)}.badge.info{background:var(--ds-action-soft);color:var(--ds-action)}
+.editor{position:sticky;top:14px}
+.editor-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px}
+.editor-head h2{font-size:17px;font-weight:650}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.field{min-width:0}.field textarea{min-height:70px;resize:vertical}
+.editor-section{border-top:1px solid var(--ds-line);padding-top:12px;margin-top:12px}
+.section-title{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ds-text-soft);font-weight:700;margin-bottom:10px}
+.image-row{display:grid;grid-template-columns:88px minmax(0,1fr);gap:10px;align-items:start}
+.image-preview{width:88px;aspect-ratio:3/4;border:1px dashed var(--ds-line-strong);border-radius:var(--ds-radius);display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--ds-bg-muted);font-size:11px;color:var(--ds-text-soft)}
+.image-preview img{width:100%;height:100%;object-fit:cover;display:block}
+.checks{display:flex;flex-direction:column;gap:6px}
+.check-row{display:flex;align-items:flex-start;gap:7px;font-size:12px;color:var(--ds-text-muted);line-height:1.4}
+.check-row input{width:auto;margin-top:2px}
+.events{display:flex;flex-direction:column;gap:7px;max-height:260px;overflow:auto}
+.event{border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:8px;background:var(--ds-bg-muted);font-size:11px;color:var(--ds-text-muted);line-height:1.45}
+.event strong{display:block;color:var(--ds-text);font-size:12px}
+.supplier-grid{display:grid;grid-template-columns:360px minmax(0,1fr);gap:14px;align-items:start}
+.supplier-list{display:flex;flex-direction:column;gap:8px;max-height:720px;overflow:auto}
+.supplier-card{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);padding:10px;text-align:left;cursor:pointer;color:inherit}
+.supplier-card.selected{border-color:var(--ds-action);background:var(--ds-action-soft)}
+.supplier-card strong{display:block;font-size:13px;margin-bottom:3px}.supplier-card span{display:block;font-size:11px;color:var(--ds-text-muted);line-height:1.4}
+.queue{display:grid;grid-template-columns:minmax(0,1fr) 430px;gap:14px;align-items:start}
+.payload{font-family:var(--ds-font-mono);font-size:11px;line-height:1.45;white-space:pre-wrap;max-height:520px;overflow:auto;background:var(--ds-bg-muted);border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:10px;color:var(--ds-text)}
+.notice{display:none;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:10px 12px;margin-bottom:14px;font-size:12px;line-height:1.5;color:var(--ds-text-muted);background:var(--ds-bg-surface)}
+.notice.show{display:block}.notice.ok{border-color:rgba(21,128,61,.4);color:var(--ds-good)}.notice.err{border-color:rgba(185,28,28,.4);color:var(--ds-bad)}.notice.warn{border-color:rgba(180,83,9,.4);color:var(--ds-warn)}
+.empty{font-size:12px;color:var(--ds-text-soft);line-height:1.5;padding:12px}
+.hidden-file{display:none}
+@media(max-width:1180px){.split,.queue,.supplier-grid{grid-template-columns:1fr}.editor{position:static}.toolbar{grid-template-columns:1fr 1fr}.metrics{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:680px){.toolbar,.grid2,.grid3,.image-row{grid-template-columns:1fr}.metrics{grid-template-columns:1fr}.actions{justify-content:flex-start}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>Products & suppliers</h1>
+      <p class="sub">Master records for pre-launch products, supplier details, local SKUs, and Shopify draft creation.</p>
+    </div>
+    <div class="actions">
+      <button class="btn" type="button" onclick="issueSkuToEditor()">Issue SKU</button>
+      <button class="btn primary" type="button" onclick="saveProduct()">Save product</button>
+    </div>
+  </section>
+  <div class="notice" id="notice"></div>
+
+  <nav class="tabs" aria-label="Workspace tabs">
+    <button class="tab active" type="button" data-view="products" onclick="showView('products')">Products</button>
+    <button class="tab" type="button" data-view="suppliers" onclick="showView('suppliers')">Suppliers</button>
+    <button class="tab" type="button" data-view="sync" onclick="showView('sync')">Shopify sync</button>
+    <button class="tab" type="button" data-view="import" onclick="showView('import')">Import / review</button>
+  </nav>
+
+  <section class="metrics" aria-label="Product summary">
+    <div class="metric"><label>Products</label><span id="m-products">0</span><small>active master records</small></div>
+    <div class="metric"><label>Ready</label><span id="m-ready">0</span><small>eligible for Shopify draft</small></div>
+    <div class="metric"><label>Draft synced</label><span id="m-synced">0</span><small>Shopify draft records</small></div>
+    <div class="metric"><label>Suppliers</label><span id="m-suppliers">0</span><small>active supplier records</small></div>
+    <div class="metric"><label>Last SKU</label><span id="m-last-sku">-</span><small>local sequence cursor</small></div>
+  </section>
+
+  <section class="view active" id="view-products">
+    <section class="panel">
+      <div class="toolbar">
+        <div class="field"><label>Search</label><input id="search" placeholder="SKU, style, supplier, code" oninput="renderProducts()"></div>
+        <div class="field"><label>Supplier</label><select class="select" id="supplier-filter" onchange="renderProducts()"></select></div>
+        <div class="field"><label>Season</label><select class="select" id="season-filter" onchange="renderProducts()"></select></div>
+        <div class="field"><label>Status</label><select class="select" id="status-filter" onchange="renderProducts()"></select></div>
+        <div class="field"><label>Sync</label><select class="select" id="sync-filter" onchange="renderProducts()"></select></div>
+        <div class="field"><label>Data</label><select class="select" id="missing-filter" onchange="renderProducts()"><option value="">All</option><option value="missing">Missing required</option><option value="ready">Ready only</option></select></div>
+      </div>
+    </section>
+    <div class="split">
+      <section class="table-wrap">
+        <table>
+          <thead><tr><th>Image</th><th>SKU</th><th>Product</th><th>Supplier</th><th>Season</th><th>Price</th><th>Status</th><th>Sync</th><th>Readiness</th></tr></thead>
+          <tbody id="product-body"><tr><td colspan="9" class="empty">Loading products.</td></tr></tbody>
+        </table>
+      </section>
+      <aside class="panel editor">
+        <div class="editor-head">
+          <div><h2 id="editor-title">New product</h2><p class="status" id="editor-status">Not saved</p></div>
+          <button class="btn" type="button" onclick="newProduct()">New</button>
+        </div>
+        <form id="product-form" onsubmit="event.preventDefault();saveProduct();">
+          <input type="hidden" id="product-id">
+          <div class="image-row">
+            <div class="image-preview" id="image-preview">No image</div>
+            <div class="field">
+              <label>Image</label>
+              <input id="image-url" placeholder="/uploads/... or https://" oninput="updateImagePreview()">
+              <div class="actions" style="justify-content:flex-start;margin-top:8px">
+                <label class="btn">Upload<input class="hidden-file" id="image-file" type="file" accept="image/*" onchange="loadImageFile(this.files)"></label>
+                <button class="btn" type="button" onclick="clearImage()">Clear</button>
+              </div>
+            </div>
+          </div>
+          <div class="editor-section">
+            <p class="section-title">Core</p>
+            <div class="grid2">
+              <div class="field"><label>SKU</label><input id="sku" oninput="syncSkuState()"></div>
+              <div class="field"><label>Status</label><select class="select" id="status"><option>Draft</option><option>Ready for Shopify</option><option>Shopify draft</option><option>Live</option><option>Archived</option></select></div>
+              <div class="field"><label>Style / title</label><input id="title"></div>
+              <div class="field"><label>Supplier</label><select class="select" id="supplier-name"></select></div>
+              <div class="field"><label>Supplier SKU</label><input id="supplier-sku"></div>
+              <div class="field"><label>Product type</label><input id="product-type"></div>
+              <div class="field"><label>Department</label><input id="department"></div>
+              <div class="field"><label>Season</label><input id="season"></div>
+              <div class="field"><label>Colour</label><input id="colour"></div>
+              <div class="field"><label>Size / option</label><input id="size"></div>
+              <div class="field"><label>Barcode</label><input id="barcode"></div>
+              <div class="field"><label>Product status code</label><input id="product-status-code" placeholder="N"></div>
+            </div>
+          </div>
+          <div class="editor-section">
+            <p class="section-title">Pricing</p>
+            <div class="grid3">
+              <div class="field"><label>Cost GBP</label><input id="unit-cost-gbp" type="number" step="0.01" min="0"></div>
+              <div class="field"><label>RRP</label><input id="rrp" type="number" step="0.01" min="0"></div>
+              <div class="field"><label>Compare at</label><input id="compare-at-price" type="number" step="0.01" min="0"></div>
+            </div>
+          </div>
+          <div class="editor-section">
+            <p class="section-title">Shopify</p>
+            <div class="grid2">
+              <div class="field"><label>Tags</label><input id="tags" placeholder="comma separated"></div>
+              <div class="field"><label>Collections</label><input id="collections" placeholder="manual note"></div>
+              <div class="field"><label>Shopify product ID</label><input id="shopify-product-gid" readonly></div>
+              <div class="field"><label>Shopify status</label><input id="shopify-status" readonly></div>
+            </div>
+            <div class="field" style="margin-top:10px"><label>Description</label><textarea id="description"></textarea></div>
+            <div class="grid2" style="margin-top:10px">
+              <div class="field"><label>Details and fit</label><textarea id="details-and-fit"></textarea></div>
+              <div class="field"><label>Fabric and care</label><textarea id="fabric-care"></textarea></div>
+            </div>
+            <div class="field" style="margin-top:10px"><label>Notes</label><textarea id="notes"></textarea></div>
+          </div>
+          <div class="editor-section">
+            <p class="section-title">Readiness</p>
+            <div class="checks" id="readiness-list"></div>
+          </div>
+          <div class="editor-section">
+            <p class="section-title">Audit</p>
+            <div class="events" id="event-list"><p class="empty">Select a saved product.</p></div>
+          </div>
+        </form>
+      </aside>
+    </div>
+  </section>
+
+  <section class="view" id="view-suppliers">
+    <div class="supplier-grid">
+      <section class="panel">
+        <div class="actions" style="justify-content:space-between;margin-bottom:10px">
+          <button class="btn" type="button" onclick="newSupplier()">New supplier</button>
+          <button class="btn primary" type="button" onclick="saveSupplier()">Save supplier</button>
+        </div>
+        <div class="supplier-list" id="supplier-list"><p class="empty">Loading suppliers.</p></div>
+      </section>
+      <section class="panel">
+        <input type="hidden" id="supplier-id">
+        <div class="grid3">
+          <div class="field"><label>Name</label><input id="sup-name"></div>
+          <div class="field"><label>Reference</label><input id="sup-reference"></div>
+          <div class="field"><label>Status</label><select class="select" id="sup-status"><option>Active</option><option>Watch</option><option>Inactive</option></select></div>
+          <div class="field"><label>Contact</label><input id="sup-contact"></div>
+          <div class="field"><label>Email</label><input id="sup-email" type="email"></div>
+          <div class="field"><label>Phone</label><input id="sup-phone"></div>
+          <div class="field"><label>City</label><input id="sup-city"></div>
+          <div class="field"><label>Country</label><input id="sup-country"></div>
+          <div class="field"><label>Website</label><input id="sup-website"></div>
+          <div class="field"><label>Lead time days</label><input id="sup-lead-time" type="number" min="0" step="1"></div>
+          <div class="field"><label>MOQ</label><input id="sup-moq" type="number" min="0" step="1"></div>
+          <div class="field"><label>Currency</label><input id="sup-currency"></div>
+          <div class="field"><label>Incoterms</label><input id="sup-incoterms"></div>
+          <div class="field"><label>Payment type</label><input id="sup-payment-type"></div>
+          <div class="field"><label>Bank name</label><input id="sup-bank-name"></div>
+          <div class="field"><label>Account name</label><input id="sup-bank-account-name"></div>
+          <div class="field"><label>IBAN</label><input id="sup-iban"></div>
+          <div class="field"><label>SWIFT / BIC</label><input id="sup-swift"></div>
+        </div>
+        <div class="grid2" style="margin-top:10px">
+          <div class="field"><label>Compliance notes</label><textarea id="sup-compliance-notes"></textarea></div>
+          <div class="field"><label>Notes</label><textarea id="sup-notes"></textarea></div>
+        </div>
+        <div class="editor-section">
+          <p class="section-title">History</p>
+          <div id="supplier-history" class="notes">No supplier selected.</div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <section class="view" id="view-sync">
+    <div class="queue">
+      <section class="panel">
+        <div class="actions" style="justify-content:space-between;margin-bottom:10px">
+          <div class="status" id="shopify-config">Checking Shopify.</div>
+          <div class="actions">
+            <button class="btn" type="button" onclick="previewSelected()">Preview</button>
+            <button class="btn" type="button" onclick="refreshSelectedStatus()">Refresh status</button>
+            <button class="btn primary" type="button" onclick="pushSelectedDrafts()">Push drafts</button>
+          </div>
+        </div>
+        <section class="table-wrap">
+          <table>
+            <thead><tr><th>Use</th><th>SKU</th><th>Product</th><th>Supplier</th><th>Status</th><th>Blocking</th><th>Shopify</th></tr></thead>
+            <tbody id="sync-body"><tr><td colspan="7" class="empty">Loading queue.</td></tr></tbody>
+          </table>
+        </section>
+      </section>
+      <aside class="panel">
+        <p class="section-title">Payload preview</p>
+        <pre class="payload" id="payload-preview">Select products and preview.</pre>
+      </aside>
+    </div>
+  </section>
+
+  <section class="view" id="view-import">
+    <section class="panel">
+      <div class="grid2">
+        <div class="field"><label>CSV rows</label><textarea id="import-text" style="min-height:320px" placeholder="sku,title,supplierName,productType,season,rrp,unitCostGbp"></textarea></div>
+        <div>
+          <p class="section-title">Review</p>
+          <div id="import-review" class="notes">No rows loaded.</div>
+          <div class="actions" style="justify-content:flex-start;margin-top:12px">
+            <button class="btn" type="button" onclick="reviewImport()">Review rows</button>
+            <button class="btn primary" type="button" onclick="saveImportRows()">Save reviewed rows</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script>
+const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
+let products=[],suppliers=[],selectedProductId="",selectedSupplierId="",selectedSyncIds=new Set(),importRows=[];
+const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"});
+const productStatuses=["","Draft","Ready for Shopify","Shopify draft","Live","Archived"];
+const syncStatuses=["","Not synced","Ready","Synced draft","Conflict","Error"];
+const el=id=>document.getElementById(id);
+const val=id=>el(id)?.value?.trim()||"";
+const set=(id,value)=>{if(el(id))el(id).value=value==null?"":value};
+function esc(value){return String(value||"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
+function attr(value){return esc(value).replace(/`/g,"&#96;")}
+function csv(value){return Array.isArray(value)?value.join(", "):String(value||"")}
+function notice(text,type="ok"){const box=el("notice");box.textContent=text;box.className=`notice show ${type}`;setTimeout(()=>box.classList.remove("show"),5200)}
+async function apiFetch(path,options){let last;for(const origin of API_ORIGINS){try{const response=await fetch(`${origin}${path}`,options);if(response.ok||response.status>=400)return response;last=new Error(`API returned ${response.status}`)}catch(error){last=error}}throw last||new Error("API unavailable")}
+async function apiJson(path,options){const response=await apiFetch(path,options);const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||data.message||`Request failed ${response.status}`);return data}
+function showView(name){document.querySelectorAll(".tab").forEach(tab=>tab.classList.toggle("active",tab.dataset.view===name));document.querySelectorAll(".view").forEach(view=>view.classList.toggle("active",view.id===`view-${name}`));if(name==="sync")renderSyncQueue();if(name==="suppliers")renderSuppliers()}
+function normalizeSku(value){return String(value||"").trim().toUpperCase()}
+function badge(text,type=""){return `<span class="badge ${type}">${esc(text||"-")}</span>`}
+function readinessBadge(product){if(product.readiness?.ready)return badge("Ready","good");const n=(product.readiness?.blocking||[]).length;return badge(`${n} missing`,n?"bad":"warn")}
+function syncBadge(value){const type=value==="Synced draft"?"good":value==="Ready"?"info":value==="Error"||value==="Conflict"?"bad":"warn";return badge(value||"Not synced",type)}
+function statusBadge(value){const type=value==="Ready for Shopify"?"info":value==="Shopify draft"||value==="Live"?"good":value==="Archived"?"bad":"";return badge(value||"Draft",type)}
+function filteredProducts(){const q=val("search").toLowerCase(),sup=val("supplier-filter"),season=val("season-filter"),status=val("status-filter"),sync=val("sync-filter"),missing=val("missing-filter");return products.filter(p=>{const text=[p.sku,p.title,p.style,p.supplierName,p.supplierSku,p.buyingCode,p.productType,p.season].join(" ").toLowerCase();if(q&&!text.includes(q))return false;if(sup&&p.supplierName!==sup)return false;if(season&&p.season!==season)return false;if(status&&p.status!==status)return false;if(sync&&p.syncStatus!==sync)return false;if(missing==="missing"&&p.readiness?.ready)return false;if(missing==="ready"&&!p.readiness?.ready)return false;return true})}
+function setFilterOptions(){const supplierOptions=[...new Set(products.map(p=>p.supplierName).filter(Boolean))].sort();const seasons=[...new Set(products.map(p=>p.season).filter(Boolean))].sort().reverse();el("supplier-filter").innerHTML=`<option value="">All suppliers</option>${supplierOptions.map(v=>`<option>${esc(v)}</option>`).join("")}`;el("season-filter").innerHTML=`<option value="">All seasons</option>${seasons.map(v=>`<option>${esc(v)}</option>`).join("")}`;el("status-filter").innerHTML=productStatuses.map(v=>`<option value="${attr(v)}">${esc(v||"All statuses")}</option>`).join("");el("sync-filter").innerHTML=syncStatuses.map(v=>`<option value="${attr(v)}">${esc(v||"All sync states")}</option>`).join("");el("supplier-name").innerHTML=`<option value="">Select supplier</option>${suppliers.map(s=>`<option>${esc(s.name)}</option>`).join("")}`}
+function renderMetrics(data={}){el("m-products").textContent=products.filter(p=>p.status!=="Archived").length.toLocaleString("en-GB");el("m-ready").textContent=products.filter(p=>p.status==="Ready for Shopify"&&p.readiness?.ready).length.toLocaleString("en-GB");el("m-synced").textContent=products.filter(p=>p.syncStatus==="Synced draft").length.toLocaleString("en-GB");el("m-suppliers").textContent=suppliers.filter(s=>s.status!=="Inactive").length.toLocaleString("en-GB");el("m-last-sku").textContent=data.lastIssuedSku||el("m-last-sku").textContent||"-";el("shopify-config").textContent=data.shopifyConfigured?"Shopify configured.":"Shopify credentials not configured."}
+function renderProducts(){const rows=filteredProducts();el("product-body").innerHTML=rows.length?rows.map(product=>`<tr class="${String(product.id)===String(selectedProductId)?"selected":""}" onclick="selectProduct('${attr(product.id)}')"><td><div class="thumb">${product.imageUrl?`<img src="${attr(product.imageUrl)}" alt="">`:"No image"}</div></td><td><span class="sku">${esc(product.sku)}</span><br>${product.shopifyAdminUrl?`<a href="${attr(product.shopifyAdminUrl)}" target="_blank" onclick="event.stopPropagation()">Shopify</a>`:""}</td><td><strong>${esc(product.title||product.style)}</strong><br><span>${esc(product.productType||product.category)} ${product.colour?`/ ${esc(product.colour)}`:""}</span></td><td>${esc(product.supplierName||"")}<br><span>${esc(product.supplierSku||product.buyingCode||"")}</span></td><td>${esc(product.season||"")}</td><td>${product.rrp?money.format(product.rrp):""}<br><span>${product.unitCostGbp?`${money.format(product.unitCostGbp)} cost`:""}</span></td><td>${statusBadge(product.status)}</td><td>${syncBadge(product.syncStatus)}</td><td>${readinessBadge(product)}<br><span>${esc((product.readiness?.blocking||[]).slice(0,2).join(", "))}</span></td></tr>`).join(""):`<tr><td colspan="9" class="empty">No products match the current filters.</td></tr>`}
+function productPayloadFromForm(){return{id:val("product-id"),sku:normalizeSku(val("sku")),title:val("title"),style:val("title"),supplierName:val("supplier-name"),supplierSku:val("supplier-sku"),buyingCode:val("supplier-sku"),productType:val("product-type"),department:val("department"),category:val("department"),season:val("season"),colour:val("colour"),color:val("colour"),size:val("size"),unitCostGbp:Number(val("unit-cost-gbp")||0),rrp:Number(val("rrp")||0),compareAtPrice:Number(val("compare-at-price")||0),barcode:val("barcode"),tags:val("tags"),collections:val("collections"),description:val("description"),detailsAndFit:val("details-and-fit"),fabricCare:val("fabric-care"),productStatusCode:val("product-status-code")||"N",imageUrl:val("image-url"),status:val("status")||"Draft",shopifyProductGid:val("shopify-product-gid"),shopifyStatus:val("shopify-status"),notes:val("notes")}}
+function fillProductForm(product={}){selectedProductId=product.id||"";set("product-id",product.id||"");set("sku",product.sku||"");set("title",product.title||product.style||"");set("supplier-name",product.supplierName||"");set("supplier-sku",product.supplierSku||product.buyingCode||"");set("product-type",product.productType||"");set("department",product.department||product.category||"");set("season",product.season||"");set("colour",product.colour||product.color||"");set("size",product.size||product.optionValue||"One Size Fits UK 8 to 18");set("unit-cost-gbp",product.unitCostGbp||"");set("rrp",product.rrp||"");set("compare-at-price",product.compareAtPrice||"");set("barcode",product.barcode||"");set("tags",csv(product.tags));set("collections",csv(product.collections));set("description",product.description||"");set("details-and-fit",product.detailsAndFit||"");set("fabric-care",product.fabricCare||"");set("product-status-code",product.productStatusCode||"N");set("image-url",product.imageUrl||"");set("status",product.status||"Draft");set("shopify-product-gid",product.shopifyProductGid||"");set("shopify-status",product.shopifyStatus||"");set("notes",product.notes||"");el("editor-title").textContent=product.id?product.title||product.style||product.sku:"New product";el("editor-status").textContent=product.id?`Saved ${product.updatedAt||""}`:"Not saved";updateImagePreview();renderReadiness(product);renderProducts()}
+function renderReadiness(product=productPayloadFromForm()){const checks=product.readiness||localReadiness(product);const items=[...(checks.blocking||[]).map(text=>({text,ok:false})),...(checks.warnings||[]).map(text=>({text,ok:null}))];el("readiness-list").innerHTML=items.length?items.map(item=>`<label class="check-row">${item.ok===false?"x":"!"} <span>${esc(item.text)}</span></label>`):'<label class="check-row">OK <span>Ready for Shopify draft</span></label>'}
+function localReadiness(product){const blocking=[];if(!product.sku)blocking.push("Missing SKU");if(!product.supplierName)blocking.push("Missing supplier");if(!product.title&&!product.style)blocking.push("Missing title/style");if(!Number(product.rrp||0))blocking.push("Missing RRP");if(!product.productType&&!product.category)blocking.push("Missing product type");if(!product.imageUrl)blocking.push("Missing image");if(!Number(product.unitCostGbp||0))blocking.push("Missing GBP cost");const duplicate=products.find(p=>normalizeSku(p.sku)===normalizeSku(product.sku)&&String(p.id)!==String(product.id));if(duplicate)blocking.push("Duplicate local product SKU");return{ready:blocking.length===0,blocking,warnings:[]}}
+async function selectProduct(id){selectedProductId=id;const data=await apiJson(`/api/products/detail?id=${encodeURIComponent(id)}`);fillProductForm(data.product);renderEvents(data.events||[])}
+function renderEvents(events){el("event-list").innerHTML=events.length?events.map(event=>`<div class="event"><strong>${esc(event.action)} / ${esc(event.result)}</strong><span>${esc(event.actorName||"Team")} - ${esc(new Date(event.createdAt).toLocaleString("en-GB"))}</span>${event.error?`<br><span>${esc(event.error)}</span>`:""}</div>`).join(""):'<p class="empty">No audit events yet.</p>'}
+function newProduct(){selectedProductId="";fillProductForm({status:"Draft"});renderEvents([])}
+function syncSkuState(){set("sku",normalizeSku(val("sku")));renderReadiness(productPayloadFromForm())}
+function updateImagePreview(){const src=val("image-url");el("image-preview").innerHTML=src?`<img src="${attr(src)}" alt="">`:"No image"}
+function clearImage(){set("image-url","");updateImagePreview()}
+function loadImageFile(files){const file=files&&files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{set("image-url",reader.result);updateImagePreview()};reader.readAsDataURL(file)}
+async function saveProduct(){try{const product=productPayloadFromForm();if(!product.sku)throw new Error("Add or issue a SKU before saving.");const data=await apiJson(product.id?"/api/products/update":"/api/products",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({product})});await loadAll(false);fillProductForm(data.product);renderEvents(data.events||[]);notice("Product saved.","ok")}catch(error){notice(error.message,"err")}}
+async function issueSkuToEditor(){try{const data=await apiJson("/api/order-form/next-sku",{method:"POST",headers:{"content-type":"application/json"},body:"{}"});set("sku",data.sku);el("m-last-sku").textContent=data.sku;renderReadiness(productPayloadFromForm());notice(`Issued SKU ${data.sku}.`,"ok")}catch(error){notice(error.message,"err")}}
+function supplierPayloadFromForm(){return{id:val("supplier-id"),name:val("sup-name"),reference:val("sup-reference"),status:val("sup-status"),contact:val("sup-contact"),email:val("sup-email"),phone:val("sup-phone"),city:val("sup-city"),country:val("sup-country"),website:val("sup-website"),leadTimeDays:Number(val("sup-lead-time")||0),moq:Number(val("sup-moq")||0),currency:val("sup-currency"),incoterms:val("sup-incoterms"),paymentType:val("sup-payment-type"),bankName:val("sup-bank-name"),bankAccountName:val("sup-bank-account-name"),iban:val("sup-iban"),swift:val("sup-swift"),complianceNotes:val("sup-compliance-notes"),notes:val("sup-notes")}}
+function fillSupplierForm(s={}){selectedSupplierId=s.id||"";set("supplier-id",s.id||"");set("sup-name",s.name||"");set("sup-reference",s.reference||"");set("sup-status",s.status||"Active");set("sup-contact",s.contact||"");set("sup-email",s.email||"");set("sup-phone",s.phone||"");set("sup-city",s.city||"");set("sup-country",s.country||"");set("sup-website",s.website||"");set("sup-lead-time",s.leadTimeDays||"");set("sup-moq",s.moq||"");set("sup-currency",s.currency||"");set("sup-incoterms",s.incoterms||"");set("sup-payment-type",s.paymentType||"");set("sup-bank-name",s.bankName||"");set("sup-bank-account-name",s.bankAccountName||"");set("sup-iban",s.iban||"");set("sup-swift",s.swift||"");set("sup-compliance-notes",s.complianceNotes||"");set("sup-notes",s.notes||"");renderSupplierHistory(s);renderSuppliers()}
+function renderSupplierHistory(s={}){const h=s.history||{};el("supplier-history").innerHTML=s.id?`${Number(h.productCount||0).toLocaleString("en-GB")} products<br>${(h.orders||[]).map(o=>`${esc(o.orderNumber)} - ${esc(o.status||"")}`).join("<br>")||"No recent orders."}`:"No supplier selected."}
+function renderSuppliers(){el("supplier-list").innerHTML=suppliers.length?suppliers.map(s=>`<button class="supplier-card ${String(s.id)===String(selectedSupplierId)?"selected":""}" type="button" onclick="selectSupplier('${attr(s.id)}')"><strong>${esc(s.name)}</strong><span>${esc(s.country||"")} - ${esc(s.status||"Active")}</span><span>${Number(s.history?.productCount||0).toLocaleString("en-GB")} products</span></button>`).join(""):'<p class="empty">No suppliers yet.</p>'}
+function selectSupplier(id){const supplier=suppliers.find(s=>String(s.id)===String(id));if(supplier)fillSupplierForm(supplier)}
+function newSupplier(){fillSupplierForm({status:"Active"})}
+async function saveSupplier(){try{const supplier=supplierPayloadFromForm();const data=await apiJson("/api/suppliers/update",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({supplier})});await loadAll(false);fillSupplierForm(data.supplier);notice("Supplier saved.","ok")}catch(error){notice(error.message,"err")}}
+function syncQueueRows(){return products.filter(p=>p.status==="Ready for Shopify"||p.syncStatus==="Ready"||p.syncStatus==="Error"||p.syncStatus==="Conflict")}
+function currentSyncIds(){const queueIds=new Set(syncQueueRows().map(p=>String(p.id)));selectedSyncIds=new Set([...selectedSyncIds].filter(id=>queueIds.has(id)));if(!selectedSyncIds.size&&queueIds.size===1)selectedSyncIds=new Set([...queueIds]);return[...selectedSyncIds]}
+function renderSyncQueue(){const rows=syncQueueRows();currentSyncIds();el("sync-body").innerHTML=rows.length?rows.map(p=>`<tr><td><input type="checkbox" ${selectedSyncIds.has(String(p.id))?"checked":""} onchange="toggleSync('${attr(p.id)}',this.checked)"></td><td><span class="sku">${esc(p.sku)}</span></td><td>${esc(p.title||p.style)}</td><td>${esc(p.supplierName||"")}</td><td>${statusBadge(p.status)}</td><td>${p.readiness?.ready?badge("Ready","good"):esc((p.readiness?.blocking||[]).join(", "))}</td><td>${syncBadge(p.syncStatus)}</td></tr>`).join(""):`<tr><td colspan="7" class="empty">No products are queued.</td></tr>`}
+function toggleSync(id,checked){if(checked)selectedSyncIds.add(String(id));else selectedSyncIds.delete(String(id))}
+async function previewSelected(){try{const ids=currentSyncIds();if(!ids.length)throw new Error("Select at least one product.");const data=await apiJson("/api/products/shopify/preview",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids})});el("payload-preview").textContent=JSON.stringify(data.previews||[],null,2);renderSyncQueue()}catch(error){notice(error.message,"err")}}
+async function pushSelectedDrafts(){try{const ids=currentSyncIds();if(!ids.length)throw new Error("Select at least one product.");const data=await apiJson("/api/products/shopify/push-draft",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids})});products=data.products||products;setFilterOptions();renderProducts();selectedSyncIds=new Set([...selectedSyncIds].filter(id=>syncQueueRows().some(p=>String(p.id)===id)));renderSyncQueue();el("payload-preview").textContent=JSON.stringify(data.results||[],null,2);notice(data.ok?"Shopify draft push finished.":"Shopify draft push returned errors.",data.ok?"ok":"warn")}catch(error){notice(error.message,"err")}}
+async function refreshSelectedStatus(){try{const ids=currentSyncIds();if(!ids.length)throw new Error("Select at least one product.");const data=await apiJson("/api/products/shopify/sync-status",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids})});products=data.products||products;setFilterOptions();renderProducts();selectedSyncIds=new Set([...selectedSyncIds].filter(id=>syncQueueRows().some(p=>String(p.id)===id)));renderSyncQueue();el("payload-preview").textContent=JSON.stringify(data.results||[],null,2);notice("Shopify status refreshed.","ok")}catch(error){notice(error.message,"err")}}
+function parseCsvLine(line){const out=[];let cur="",quoted=false;for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"'&&line[i+1]==='"'){cur+='"';i++;continue}if(ch==='"'){quoted=!quoted;continue}if(ch===","&&!quoted){out.push(cur.trim());cur="";continue}cur+=ch}out.push(cur.trim());return out}
+function reviewImport(){const lines=val("import-text").split(/\r?\n/).filter(Boolean);if(!lines.length){importRows=[];el("import-review").textContent="No rows loaded.";return}const headers=parseCsvLine(lines.shift()).map(h=>h.trim());importRows=lines.map(line=>{const cells=parseCsvLine(line);return Object.fromEntries(headers.map((h,i)=>[h,cells[i]||""]))}).filter(row=>row.sku);el("import-review").innerHTML=importRows.length?`<strong>${importRows.length} rows ready</strong><br>${importRows.slice(0,12).map(row=>`${esc(row.sku)} - ${esc(row.title||row.style||"")}`).join("<br>")}`:"No SKU rows found."}
+async function saveImportRows(){try{if(!importRows.length)reviewImport();if(!importRows.length)throw new Error("No reviewed rows to save.");for(const row of importRows){await apiJson("/api/products",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({product:row})})}await loadAll(false);notice(`${importRows.length} products saved.`,"ok")}catch(error){notice(error.message,"err")}}
+async function loadAll(keepSelection=true){const data=await apiJson("/api/products?includeArchived=1");products=data.products||[];suppliers=(await apiJson("/api/suppliers")).suppliers||[];setFilterOptions();renderMetrics(data);renderProducts();renderSuppliers();renderSyncQueue();if(!keepSelection)newProduct()}
+loadAll().catch(error=>notice(error.message,"err"));
+</script>
+</body>
+</html>
