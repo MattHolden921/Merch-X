@@ -4455,6 +4455,298 @@ function orderWorkflowMetrics(orders) {
   };
 }
 
+function parseReportWindowDays(value) {
+  const days = Number(value || 30);
+  if (!Number.isFinite(days)) return 30;
+  return Math.min(365, Math.max(1, Math.round(days)));
+}
+
+function addDaysIso(dateIso, days) {
+  const date = new Date(`${dateIso}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
+  return date.toISOString().slice(0, 10);
+}
+
+function isoDateOrBlank(value) {
+  const text = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+
+function dateInRange(dateIso, fromIso, toIso) {
+  return Boolean(dateIso && dateIso >= fromIso && dateIso <= toIso);
+}
+
+function reportGroupKey(value) {
+  const text = String(value || "").trim();
+  return text || "Unassigned";
+}
+
+function incrementReportGroup(groups, key, patch = {}) {
+  const id = reportGroupKey(key);
+  if (!groups.has(id)) groups.set(id, { label: id, orders: 0, units: 0, valueGbp: 0, outstandingGbp: 0 });
+  const group = groups.get(id);
+  group.orders += Number(patch.orders || 0);
+  group.units += Number(patch.units || 0);
+  group.valueGbp += Number(patch.valueGbp || 0);
+  group.outstandingGbp += Number(patch.outstandingGbp || 0);
+  return group;
+}
+
+function sortedReportGroups(groups, metric = "valueGbp") {
+  return [...groups.values()].sort((a, b) => Number(b[metric] || 0) - Number(a[metric] || 0) || String(a.label).localeCompare(String(b.label)));
+}
+
+function reportLineCategories(lines) {
+  return [...new Set((lines || []).map(line => String(line.category || "").trim()).filter(Boolean))];
+}
+
+function reportLineValueGbp(line) {
+  return Number(line?.lineCost || 0);
+}
+
+function reportOrderLineStats(order) {
+  const lines = order?.lines || [];
+  const categoryMap = new Map();
+  let unbatchedUnits = 0;
+  for (const line of lines) {
+    const quantity = Number(line.quantity || 0);
+    const category = reportGroupKey(line.category || "Uncategorised");
+    if (!categoryMap.has(category)) categoryMap.set(category, { label: category, units: 0, valueGbp: 0 });
+    const group = categoryMap.get(category);
+    group.units += quantity;
+    group.valueGbp += reportLineValueGbp(line);
+    unbatchedUnits += quantity;
+  }
+  return {
+    categories: [...categoryMap.values()].sort((a, b) => Number(b.valueGbp || 0) - Number(a.valueGbp || 0)),
+    unbatchedUnits
+  };
+}
+
+function batchLineQuantityMap(batchLines) {
+  const map = new Map();
+  for (const line of batchLines || []) {
+    const key = String(line.batchId || "");
+    map.set(key, Number(map.get(key) || 0) + Number(line.quantity || 0));
+  }
+  return map;
+}
+
+function arrivalSignalForOrder(order, workflow) {
+  const batchDate = isoDateOrBlank(order?.nextBatchEta);
+  if (batchDate) return { date: batchDate, source: "Batch ETA" };
+  const workflowDate = isoDateOrBlank(workflow?.intakeEtaDate);
+  if (workflowDate) return { date: workflowDate, source: "Workflow ETA" };
+  const requiredDate = isoDateOrBlank(order?.requiredDate);
+  if (requiredDate) return { date: requiredDate, source: "Required date" };
+  return { date: "", source: "Missing date" };
+}
+
+function orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invoices) {
+  const order = managedOrder.order || {};
+  const batchLinesByBatch = batchLineQuantityMap(batchLines);
+  const lineStats = reportOrderLineStats(order);
+  const batchDates = batches.map(batch => isoDateOrBlank(batch.etaDate)).filter(Boolean).sort();
+  const nextBatchEta = batchDates[0] || "";
+  const arrivalSignal = arrivalSignalForOrder({ ...managedOrder, nextBatchEta }, workflow);
+  const invoiceRows = invoices || [];
+  const openInvoiceCount = invoiceRows.filter(invoice => invoice.status !== "Paid").length;
+  const invoiceWithoutBatch = invoiceRows.filter(invoice => !invoice.batchId).length;
+  const batchesWithoutLines = batches.filter(batch => !Number(batchLinesByBatch.get(batch.id) || 0)).length;
+  const batchedUnits = [...batchLinesByBatch.values()].reduce((total, quantity) => total + Number(quantity || 0), 0);
+  const unbatchedUnits = Math.max(0, Number(managedOrder.units || 0) - batchedUnits);
+  return {
+    id: managedOrder.id,
+    orderNumber: managedOrder.orderNumber,
+    orderDate: managedOrder.orderDate,
+    supplierName: managedOrder.supplierName,
+    supplierReference: managedOrder.supplierReference,
+    buyerName: managedOrder.buyerName,
+    buyerEmail: managedOrder.buyerEmail,
+    season: managedOrder.season,
+    status: managedOrder.status,
+    compositeStatus: managedOrder.compositeStatus,
+    archivedAt: managedOrder.archivedAt,
+    currency: managedOrder.currency,
+    categories: reportLineCategories(order.lines),
+    totalGbp: Number(managedOrder.totalGbp || managedOrder.total || 0),
+    totalEur: Number(managedOrder.totalEur || 0),
+    units: Number(managedOrder.units || 0),
+    lineCount: Number(managedOrder.lineCount || 0),
+    requiredDate: managedOrder.requiredDate,
+    arrivalDate: arrivalSignal.date,
+    arrivalSource: arrivalSignal.source,
+    workflow: {
+      approvalStatus: workflow.approvalStatus,
+      paymentStatus: workflow.paymentStatus,
+      paymentDueDate: workflow.paymentDueDate,
+      intakeStatus: workflow.intakeStatus,
+      intakeEtaDate: workflow.intakeEtaDate,
+      nextActionOwner: workflow.nextActionOwner,
+      nextAction: workflow.nextAction
+    },
+    productCompletion: managedOrder.productCompletion,
+    invoices: {
+      ...managedOrder.invoices,
+      openInvoiceCount,
+      invoiceWithoutBatch
+    },
+    batches: {
+      ...managedOrder.batchSummary,
+      batchedUnits,
+      unbatchedUnits,
+      batchesWithoutLines,
+      nextBatchEta
+    },
+    categoryBreakdown: lineStats.categories,
+    openUrl: `orders.html?id=${encodeURIComponent(managedOrder.id)}`
+  };
+}
+
+function buildOrderReports(params = {}) {
+  const today = todayIsoDate();
+  const windowDays = parseReportWindowDays(params.windowDays);
+  const windowEnd = addDaysIso(today, windowDays);
+  const includeArchived = params.includeArchived === true || params.includeArchived === "true" || params.includeArchived === "1";
+  const db = readOrderDb();
+  const workflows = readOrderWorkflowMap();
+  const products = catalogProductMap();
+  const supplierGroups = new Map();
+  const seasonGroups = new Map();
+  const categoryGroups = new Map();
+  const buyerGroups = new Map();
+  const currencyGroups = new Map();
+  const ownerGroups = new Map();
+  const paymentGroups = new Map();
+  const intakeGroups = new Map();
+  const arrivals = [];
+  const exceptions = [];
+  const nextActions = [];
+  const financeRows = [];
+  const dataQuality = [];
+  const orders = [];
+
+  for (const savedOrder of db.orders) {
+    const workflowRow = workflows.get(String(savedOrder.id));
+    const syncedOrder = syncOrderStatusFromWorkflowRow(savedOrder, workflowRow);
+    const managedOrder = publicManagedOrder(syncedOrder, workflowRow, products);
+    if (!includeArchived && managedOrder.archivedAt) continue;
+    const workflow = managedOrder.workflow || workflowFromRow(workflowRow, syncedOrder);
+    const batches = readOrderBatches(managedOrder.id);
+    const batchLines = readOrderBatchLines(managedOrder.id);
+    const invoices = readOrderInvoices(managedOrder.id, false);
+    const row = orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invoices);
+    orders.push(row);
+
+    incrementReportGroup(supplierGroups, row.supplierName || "No supplier", { orders: 1, units: row.units, valueGbp: row.totalGbp, outstandingGbp: row.invoices.outstanding });
+    incrementReportGroup(seasonGroups, row.season || "No season", { orders: 1, units: row.units, valueGbp: row.totalGbp, outstandingGbp: row.invoices.outstanding });
+    incrementReportGroup(buyerGroups, row.buyerName || row.buyerEmail || "No buyer", { orders: 1, units: row.units, valueGbp: row.totalGbp, outstandingGbp: row.invoices.outstanding });
+    incrementReportGroup(currencyGroups, row.currency || "No currency", { orders: 1, units: row.units, valueGbp: row.totalGbp, outstandingGbp: row.invoices.outstanding });
+    incrementReportGroup(ownerGroups, workflow.nextActionOwner || "Unassigned", { orders: 1, units: row.units, valueGbp: row.totalGbp, outstandingGbp: row.invoices.outstanding });
+    incrementReportGroup(paymentGroups, workflow.paymentStatus || "No payment status", { orders: 1, units: row.units, valueGbp: row.totalGbp, outstandingGbp: row.invoices.outstanding });
+    incrementReportGroup(intakeGroups, workflow.intakeStatus || "No intake status", { orders: 1, units: row.units, valueGbp: row.totalGbp, outstandingGbp: row.invoices.outstanding });
+    for (const category of row.categoryBreakdown) {
+      incrementReportGroup(categoryGroups, category.label, { orders: 1, units: category.units, valueGbp: category.valueGbp, outstandingGbp: 0 });
+    }
+
+    if (row.arrivalDate && dateInRange(row.arrivalDate, today, windowEnd) && workflow.intakeStatus !== "Received") {
+      arrivals.push(row);
+    }
+
+    const exceptionReasons = [];
+    if (workflow.intakeStatus === "Delayed") exceptionReasons.push("Delayed intake");
+    if (row.arrivalDate && row.arrivalDate < today && workflow.intakeStatus !== "Received") exceptionReasons.push("Overdue ETA");
+    if (["Shipped", "Part shipped"].includes(workflow.intakeStatus) && !row.arrivalDate) exceptionReasons.push("Shipped with no ETA");
+    if (workflow.intakeStatus === "In production" && !row.arrivalDate) exceptionReasons.push("In production with no ETA");
+    if (!row.requiredDate) exceptionReasons.push("Missing required date");
+    if (!row.batches.count && workflow.intakeStatus !== "Received") exceptionReasons.push("Missing batch plan");
+    if (row.batches.outstandingUnits > 0 && workflow.intakeStatus === "Received") exceptionReasons.push("Received status with outstanding units");
+    if (exceptionReasons.length) exceptions.push({ ...row, reason: exceptionReasons.join(", ") });
+
+    const actionReason = [];
+    if (workflow.approvalStatus === "Pending director approval") actionReason.push("Approval waiting");
+    if (["Ready to pay", "Overdue"].includes(workflow.paymentStatus)) actionReason.push("Finance waiting");
+    if (workflow.paymentStatus === "Part paid") actionReason.push("Part paid");
+    if (["Confirmed", "In production", "Part shipped", "Shipped", "Delayed", "Part received"].includes(workflow.intakeStatus)) actionReason.push("Intake follow-up");
+    if (!row.productCompletion?.complete) actionReason.push("Product completion block");
+    if (!workflow.nextActionOwner) actionReason.push("Unassigned next action");
+    nextActions.push({ ...row, reason: actionReason.join(", ") || "Next action" });
+
+    if (row.invoices.count || row.totalGbp || row.invoices.outstanding || ["Ready to pay", "Part paid", "Overdue"].includes(workflow.paymentStatus)) {
+      financeRows.push(row);
+    }
+
+    const qualityReasons = [];
+    if (!row.arrivalDate && workflow.intakeStatus !== "Received") qualityReasons.push("Missing ETA");
+    if (!row.supplierReference) qualityReasons.push("Missing supplier reference");
+    if (String(row.currency || "").toUpperCase() === "EUR" && !Number(savedOrder.fxRate || savedOrder.totals?.fxRate || 0)) qualityReasons.push("Missing FX rate");
+    if (!row.productCompletion?.complete) qualityReasons.push("Missing product links");
+    if (row.batches.unbatchedUnits > 0) qualityReasons.push("Unbatched units");
+    if (row.invoices.invoiceWithoutBatch > 0) qualityReasons.push("Invoice without batch");
+    if (row.batches.batchesWithoutLines > 0) qualityReasons.push("Batch without line allocations");
+    if (qualityReasons.length) dataQuality.push({ ...row, reason: qualityReasons.join(", ") });
+  }
+
+  orders.sort((a, b) => String(a.arrivalDate || "9999-99-99").localeCompare(String(b.arrivalDate || "9999-99-99")) || String(a.orderNumber).localeCompare(String(b.orderNumber)));
+  arrivals.sort((a, b) => String(a.arrivalDate).localeCompare(String(b.arrivalDate)) || String(a.orderNumber).localeCompare(String(b.orderNumber)));
+  exceptions.sort((a, b) => String(a.arrivalDate || "9999-99-99").localeCompare(String(b.arrivalDate || "9999-99-99")) || String(a.orderNumber).localeCompare(String(b.orderNumber)));
+  nextActions.sort((a, b) => String(a.workflow.nextActionOwner || "").localeCompare(String(b.workflow.nextActionOwner || "")) || String(a.orderNumber).localeCompare(String(b.orderNumber)));
+  financeRows.sort((a, b) => Number(b.invoices.outstanding || 0) - Number(a.invoices.outstanding || 0) || Number(b.totalGbp || 0) - Number(a.totalGbp || 0));
+  dataQuality.sort((a, b) => String(a.reason).localeCompare(String(b.reason)) || String(a.orderNumber).localeCompare(String(b.orderNumber)));
+
+  const metrics = orders.reduce((total, order) => {
+    total.orders += 1;
+    total.units += Number(order.units || 0);
+    total.arrivalUnits += arrivals.includes(order) ? Number(order.units || 0) : 0;
+    total.orderValueGbp += Number(order.totalGbp || 0);
+    total.invoicedGbp += Number(order.invoices.totalDue || 0);
+    total.paidGbp += Number(order.invoices.totalPaid || 0);
+    total.outstandingGbp += Number(order.invoices.outstanding || 0);
+    total.exceptionOrders = exceptions.length;
+    total.nextActionOrders = nextActions.length;
+    total.dataQualityOrders = dataQuality.length;
+    return total;
+  }, { orders: 0, units: 0, arrivalUnits: 0, orderValueGbp: 0, invoicedGbp: 0, paidGbp: 0, outstandingGbp: 0, exceptionOrders: 0, nextActionOrders: 0, dataQualityOrders: 0 });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    today,
+    windowDays,
+    windowEnd,
+    includeArchived,
+    metrics,
+    filters: {
+      suppliers: [...new Set(orders.map(order => order.supplierName).filter(Boolean))].sort(),
+      seasons: [...new Set(orders.map(order => order.season).filter(Boolean))].sort().reverse(),
+      categories: [...new Set(orders.flatMap(order => order.categories || []).filter(Boolean))].sort(),
+      intakeStatuses: [...new Set(orders.map(order => order.workflow.intakeStatus).filter(Boolean))].sort(),
+      paymentStatuses: [...new Set(orders.map(order => order.workflow.paymentStatus).filter(Boolean))].sort(),
+      owners: [...new Set(orders.map(order => order.workflow.nextActionOwner).filter(Boolean))].sort()
+    },
+    reports: {
+      arrivals,
+      exceptions,
+      nextActions,
+      finance: financeRows,
+      dataQuality,
+      buyingMix: {
+        suppliers: sortedReportGroups(supplierGroups),
+        seasons: sortedReportGroups(seasonGroups),
+        categories: sortedReportGroups(categoryGroups),
+        buyers: sortedReportGroups(buyerGroups),
+        currencies: sortedReportGroups(currencyGroups),
+        topOrders: [...orders].sort((a, b) => Number(b.totalGbp || 0) - Number(a.totalGbp || 0)).slice(0, 30)
+      },
+      grouped: {
+        owners: sortedReportGroups(ownerGroups, "orders"),
+        paymentStatuses: sortedReportGroups(paymentGroups, "orders"),
+        intakeStatuses: sortedReportGroups(intakeGroups, "orders")
+      },
+      orders
+    }
+  };
+}
+
 function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") {
   const db = openOrderSqliteDb();
   const currentRow = db.prepare("SELECT * FROM order_workflows WHERE order_id = ?").get(String(order.id));
@@ -8051,6 +8343,18 @@ async function handleApi(req, res) {
       googleWorkspaceReady: true,
       generatedAt: new Date().toISOString()
     });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/orders/reports") {
+    try {
+      sendJson(res, 200, buildOrderReports({
+        windowDays: url.searchParams.get("windowDays"),
+        includeArchived: url.searchParams.get("includeArchived")
+      }));
+    } catch (error) {
+      sendJson(res, 500, { error: error.message || "Could not build order reports" });
+    }
     return true;
   }
 

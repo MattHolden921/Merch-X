@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Order Reports</title>
+<link rel="stylesheet" href="design-system.css">
+<style>
+.wrap{max-width:1680px}
+.head{align-items:center}
+.toolbar{display:grid;grid-template-columns:120px repeat(5,minmax(132px,1fr)) 132px auto;gap:10px;align-items:end}
+.field.check-field{display:flex;align-items:center;gap:8px;min-height:32px}
+.field.check-field label{margin:0;text-transform:none;letter-spacing:0;font-size:12px;color:var(--ds-text-muted)}
+.field.check-field input{width:16px;min-height:16px}
+.metric-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.tab{border:1px solid var(--ds-line-strong);background:var(--ds-bg-surface);border-radius:var(--ds-radius);min-height:34px;padding:0 12px;font-size:12px;font-weight:650;cursor:pointer;color:var(--ds-text-muted)}
+.tab:hover{background:var(--ds-bg-muted);color:var(--ds-text)}
+.tab.active{background:var(--ds-action);border-color:var(--ds-action);color:#fff}
+.report-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;color:var(--ds-text-muted);font-size:12px}
+.table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
+table{width:100%;border-collapse:collapse;font-size:12px;min-width:1180px}
+th{position:sticky;top:0;z-index:1;background:var(--ds-bg-muted);color:var(--ds-text-soft);font-size:10px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:8px;border-bottom:1px solid var(--ds-line);white-space:nowrap;cursor:pointer}
+th:hover{color:var(--ds-text)}
+td{padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:top;color:var(--ds-text-muted)}
+tr:last-child td{border-bottom:0}
+.num{text-align:right;white-space:nowrap}
+.primary-cell strong{display:block;color:var(--ds-text);font-size:12px;margin-bottom:2px}
+.primary-cell span,.subline{display:block;color:var(--ds-text-soft);font-size:11px;line-height:1.4}
+.badge{display:inline-flex;align-items:center;min-height:20px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:2px 7px;font-size:10px;font-weight:650;color:var(--ds-text-muted);background:var(--ds-bg-muted);white-space:nowrap}
+.badge.good{color:var(--ds-good);border-color:rgba(21,128,61,.35)}
+.badge.warn{color:var(--ds-warn);border-color:rgba(180,83,9,.35)}
+.badge.bad{color:var(--ds-bad);border-color:rgba(185,28,28,.35)}
+.badge.info{color:var(--ds-info);border-color:rgba(37,99,235,.35)}
+.mix-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(420px,.9fr);gap:14px}
+.panel-title{font-size:13px;font-weight:650;margin-bottom:10px}
+.empty-state{padding:36px 14px;text-align:center;color:var(--ds-text-muted);font-size:13px}
+@media(max-width:1280px){.toolbar{grid-template-columns:repeat(4,1fr)}.metric-grid{grid-template-columns:repeat(3,1fr)}.mix-layout{grid-template-columns:1fr}}
+@media(max-width:760px){.toolbar,.metric-grid{grid-template-columns:1fr}.report-meta{display:block}.actions{justify-content:flex-start}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>Order reports</h1>
+      <p class="sub">Operational reporting for arrivals, intake exceptions, next actions, finance, buying mix, and data quality.</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="orders.html">Orders</a>
+      <button type="button" class="btn primary" id="refresh-btn">Refresh</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label>Date window</label><select class="select" id="window-days"><option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option></select></div>
+      <div class="field"><label>Supplier</label><select class="select" id="supplier-filter"></select></div>
+      <div class="field"><label>Season</label><select class="select" id="season-filter"></select></div>
+      <div class="field"><label>Category</label><select class="select" id="category-filter"></select></div>
+      <div class="field"><label>Intake</label><select class="select" id="intake-filter"></select></div>
+      <div class="field"><label>Payment</label><select class="select" id="payment-filter"></select></div>
+      <div class="field"><label>Owner</label><select class="select" id="owner-filter"></select></div>
+      <div class="field check-field"><input id="include-archived" type="checkbox"><label for="include-archived">Archived</label></div>
+    </div>
+  </section>
+
+  <section class="metric-grid" id="metrics"></section>
+
+  <section class="tabs" id="tabs"></section>
+
+  <section class="panel">
+    <div class="report-meta">
+      <span id="report-title">Loading reports...</span>
+      <span id="report-generated"></span>
+    </div>
+    <div id="report-body"></div>
+  </section>
+</main>
+
+<script>
+const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"});
+const numberFmt=new Intl.NumberFormat("en-GB");
+const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
+const tabs=[
+  {id:"arrivals",label:"Arrivals"},
+  {id:"exceptions",label:"Exceptions"},
+  {id:"nextActions",label:"Next actions"},
+  {id:"finance",label:"Finance"},
+  {id:"buyingMix",label:"Buying mix"},
+  {id:"dataQuality",label:"Data quality"}
+];
+let state={data:null,tab:"arrivals",sort:{key:"arrivalDate",dir:"asc"}};
+const el=id=>document.getElementById(id);
+const val=id=>el(id)?.value||"";
+
+async function apiFetch(path,options){
+  let lastError=null;
+  for(const origin of API_ORIGINS){
+    try{
+      const response=await fetch(`${origin}${path}`,options);
+      if(response.ok||response.status>=400)return response;
+      lastError=new Error(`API returned ${response.status}`);
+    }catch(error){lastError=error;}
+  }
+  throw lastError||new Error("API unavailable");
+}
+
+function escapeHtml(value){
+  return String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[char]));
+}
+function attr(value){return escapeHtml(value).replace(/`/g,"&#096;");}
+function formatDate(value){
+  if(!value)return "-";
+  const date=new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime())?escapeHtml(value):dateFmt.format(date);
+}
+function formatMoney(value){return money.format(Number(value||0));}
+function badgeClass(value){
+  if(["Received","Paid","Approved","Complete"].includes(value))return"good";
+  if(["Delayed","Overdue","Rejected","Missing ETA"].includes(value))return"bad";
+  if(["Ready to pay","Part paid","Pending director approval","Awaiting FD","Shipped","In production","Query"].includes(value))return"warn";
+  return"info";
+}
+function setOptions(id,items,allLabel){
+  const current=val(id);
+  const opts=[`<option value="">${escapeHtml(allLabel)}</option>`,...(items||[]).map(item=>`<option value="${attr(item)}">${escapeHtml(item)}</option>`)];
+  el(id).innerHTML=opts.join("");
+  if([...el(id).options].some(option=>option.value===current))el(id).value=current;
+}
+function openLink(row){
+  return `<a class="btn" href="${attr(row.openUrl||`orders.html?id=${encodeURIComponent(row.id)}`)}">Open order</a>`;
+}
+function orderCell(row){
+  return `<div class="primary-cell"><strong>${escapeHtml(row.orderNumber||"No order")}</strong><span>${escapeHtml(row.supplierName||"No supplier")}</span><span>${escapeHtml(row.season||"No season")} / ${Number(row.units||0).toLocaleString("en-GB")} units</span></div>`;
+}
+function statusBadge(value){
+  return `<span class="badge ${badgeClass(value)}">${escapeHtml(value||"-")}</span>`;
+}
+function rowMatches(row){
+  const supplier=val("supplier-filter");
+  const season=val("season-filter");
+  const category=val("category-filter");
+  const intake=val("intake-filter");
+  const payment=val("payment-filter");
+  const owner=val("owner-filter");
+  return (!supplier||row.supplierName===supplier)
+    &&(!season||row.season===season)
+    &&(!category||(row.categories||[]).includes(category))
+    &&(!intake||row.workflow?.intakeStatus===intake)
+    &&(!payment||row.workflow?.paymentStatus===payment)
+    &&(!owner||row.workflow?.nextActionOwner===owner);
+}
+function filteredRows(id=state.tab){
+  const reports=state.data?.reports||{};
+  if(id==="buyingMix")return (reports.orders||[]).filter(rowMatches);
+  return (reports[id]||[]).filter(rowMatches);
+}
+function sortRows(rows,columns){
+  const sort=state.sort;
+  const column=columns.find(item=>item.key===sort.key)||columns[0];
+  const dir=sort.dir==="desc"?-1:1;
+  return [...rows].sort((a,b)=>{
+    const av=column.sort?column.sort(a):(a[column.key]??"");
+    const bv=column.sort?column.sort(b):(b[column.key]??"");
+    if(typeof av==="number"||typeof bv==="number")return (Number(av||0)-Number(bv||0))*dir;
+    return String(av||"").localeCompare(String(bv||""))*dir;
+  });
+}
+function renderTable(rows,columns,emptyText){
+  if(!rows.length)return `<div class="empty-state">${escapeHtml(emptyText||"No matching rows.")}</div>`;
+  const sorted=sortRows(rows,columns);
+  return `<div class="table-wrap"><table><thead><tr>${columns.map(col=>`<th onclick="setSort('${attr(col.key)}')">${escapeHtml(col.label)}${state.sort.key===col.key?state.sort.dir==="asc"?" asc":" desc":""}</th>`).join("")}</tr></thead><tbody>${sorted.map(row=>`<tr>${columns.map(col=>`<td class="${col.className||""}">${col.render?col.render(row):escapeHtml(row[col.key]??"")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+function setSort(key){
+  state.sort={key,dir:state.sort.key===key&&state.sort.dir==="asc"?"desc":"asc"};
+  render();
+}
+function columnsFor(tab){
+  const base=[
+    {key:"order",label:"Order",render:orderCell,sort:row=>row.orderNumber},
+    {key:"arrivalDate",label:"Date",render:row=>`${formatDate(row.arrivalDate)}<span class="subline">${escapeHtml(row.arrivalSource||"")}</span>`,sort:row=>row.arrivalDate||"9999-99-99"},
+    {key:"units",label:"Units",className:"num",render:row=>numberFmt.format(Number(row.units||0)),sort:row=>Number(row.units||0)},
+    {key:"totalGbp",label:"Value",className:"num",render:row=>formatMoney(row.totalGbp),sort:row=>Number(row.totalGbp||0)},
+    {key:"intake",label:"Intake",render:row=>statusBadge(row.workflow?.intakeStatus),sort:row=>row.workflow?.intakeStatus||""},
+    {key:"payment",label:"Payment",render:row=>statusBadge(row.workflow?.paymentStatus),sort:row=>row.workflow?.paymentStatus||""},
+    {key:"owner",label:"Owner",render:row=>`${escapeHtml(row.workflow?.nextActionOwner||"Unassigned")}<span class="subline">${escapeHtml(row.workflow?.nextAction||"")}</span>`,sort:row=>row.workflow?.nextActionOwner||""},
+    {key:"open",label:"",render:openLink,sort:row=>row.orderNumber}
+  ];
+  if(tab==="exceptions")return [
+    base[0],
+    {key:"reason",label:"Reason",render:row=>escapeHtml(row.reason),sort:row=>row.reason},
+    base[1],base[2],
+    {key:"outstanding",label:"Outstanding",className:"num",render:row=>numberFmt.format(Number(row.batches?.outstandingUnits||0)),sort:row=>Number(row.batches?.outstandingUnits||0)},
+    base[4],base[6],base[7]
+  ];
+  if(tab==="nextActions")return [
+    base[0],
+    {key:"reason",label:"Queue",render:row=>escapeHtml(row.reason),sort:row=>row.reason},
+    base[6],
+    {key:"approval",label:"Approval",render:row=>statusBadge(row.workflow?.approvalStatus),sort:row=>row.workflow?.approvalStatus||""},
+    base[5],base[4],base[1],base[7]
+  ];
+  if(tab==="finance")return [
+    base[0],
+    {key:"payment",label:"Payment",render:row=>statusBadge(row.workflow?.paymentStatus),sort:row=>row.workflow?.paymentStatus||""},
+    {key:"orderValue",label:"Order value",className:"num",render:row=>formatMoney(row.invoices?.orderTotal||row.totalGbp),sort:row=>Number(row.invoices?.orderTotal||row.totalGbp||0)},
+    {key:"invoiced",label:"Invoiced",className:"num",render:row=>formatMoney(row.invoices?.totalDue),sort:row=>Number(row.invoices?.totalDue||0)},
+    {key:"paid",label:"Paid",className:"num",render:row=>formatMoney(row.invoices?.totalPaid),sort:row=>Number(row.invoices?.totalPaid||0)},
+    {key:"outstanding",label:"Outstanding",className:"num",render:row=>formatMoney(row.invoices?.outstanding),sort:row=>Number(row.invoices?.outstanding||0)},
+    {key:"invoices",label:"Invoices",className:"num",render:row=>numberFmt.format(Number(row.invoices?.count||0)),sort:row=>Number(row.invoices?.count||0)},
+    base[7]
+  ];
+  if(tab==="dataQuality")return [
+    base[0],
+    {key:"reason",label:"Issue",render:row=>escapeHtml(row.reason),sort:row=>row.reason},
+    {key:"unbatched",label:"Unbatched",className:"num",render:row=>numberFmt.format(Number(row.batches?.unbatchedUnits||0)),sort:row=>Number(row.batches?.unbatchedUnits||0)},
+    {key:"batchLines",label:"Batches without lines",className:"num",render:row=>numberFmt.format(Number(row.batches?.batchesWithoutLines||0)),sort:row=>Number(row.batches?.batchesWithoutLines||0)},
+    {key:"invoiceBatch",label:"Invoices without batch",className:"num",render:row=>numberFmt.format(Number(row.invoices?.invoiceWithoutBatch||0)),sort:row=>Number(row.invoices?.invoiceWithoutBatch||0)},
+    base[1],base[6],base[7]
+  ];
+  return base;
+}
+function buildGroups(rows,keyFn){
+  const map=new Map();
+  for(const row of rows){
+    const labels=keyFn(row);
+    for(const label of labels){
+      const key=label||"Unassigned";
+      if(!map.has(key))map.set(key,{label:key,orders:0,units:0,valueGbp:0,outstandingGbp:0});
+      const group=map.get(key);
+      group.orders+=1;
+      group.units+=Number(row.units||0);
+      group.valueGbp+=Number(row.totalGbp||0);
+      group.outstandingGbp+=Number(row.invoices?.outstanding||0);
+    }
+  }
+  return [...map.values()].sort((a,b)=>Number(b.valueGbp||0)-Number(a.valueGbp||0)||String(a.label).localeCompare(String(b.label)));
+}
+function renderBuyingMix(){
+  const rows=filteredRows("buyingMix");
+  const groupRows=[
+    ...buildGroups(rows,row=>[row.supplierName||"No supplier"]).map(row=>({...row,type:"Supplier"})),
+    ...buildGroups(rows,row=>[row.season||"No season"]).map(row=>({...row,type:"Season"})),
+    ...buildGroups(rows,row=>(row.categories||[]).length?row.categories:["No category"]).map(row=>({...row,type:"Category"})),
+    ...buildGroups(rows,row=>[row.buyerName||row.buyerEmail||"No buyer"]).map(row=>({...row,type:"Buyer"})),
+    ...buildGroups(rows,row=>[row.currency||"No currency"]).map(row=>({...row,type:"Currency"}))
+  ];
+  const groupColumns=[
+    {key:"type",label:"Type",render:row=>escapeHtml(row.type),sort:row=>row.type},
+    {key:"label",label:"Group",render:row=>escapeHtml(row.label),sort:row=>row.label},
+    {key:"orders",label:"Orders",className:"num",render:row=>numberFmt.format(row.orders),sort:row=>row.orders},
+    {key:"units",label:"Units",className:"num",render:row=>numberFmt.format(row.units),sort:row=>row.units},
+    {key:"valueGbp",label:"Value",className:"num",render:row=>formatMoney(row.valueGbp),sort:row=>row.valueGbp},
+    {key:"outstandingGbp",label:"Outstanding",className:"num",render:row=>formatMoney(row.outstandingGbp),sort:row=>row.outstandingGbp}
+  ];
+  const orderColumns=[
+    {key:"order",label:"Order",render:orderCell,sort:row=>row.orderNumber},
+    {key:"valueGbp",label:"Value",className:"num",render:row=>formatMoney(row.totalGbp),sort:row=>Number(row.totalGbp||0)},
+    {key:"units",label:"Units",className:"num",render:row=>numberFmt.format(Number(row.units||0)),sort:row=>Number(row.units||0)},
+    {key:"outstanding",label:"Outstanding",className:"num",render:row=>formatMoney(row.invoices?.outstanding),sort:row=>Number(row.invoices?.outstanding||0)},
+    {key:"open",label:"",render:openLink,sort:row=>row.orderNumber}
+  ];
+  const topOrders=[...rows].sort((a,b)=>Number(b.totalGbp||0)-Number(a.totalGbp||0)).slice(0,30);
+  return `<div class="mix-layout"><section><div class="panel-title">Open order mix</div>${renderTable(groupRows,groupColumns,"No matching mix rows.")}</section><section><div class="panel-title">Top orders by value</div>${renderTable(topOrders,orderColumns,"No matching orders.")}</section></div>`;
+}
+function renderMetrics(){
+  const rows=(state.data?.reports?.orders||[]).filter(rowMatches);
+  const arrivals=filteredRows("arrivals");
+  const exceptions=filteredRows("exceptions");
+  const finance=filteredRows("finance");
+  const dataQuality=filteredRows("dataQuality");
+  const totals=rows.reduce((acc,row)=>{
+    acc.orders+=1;
+    acc.units+=Number(row.units||0);
+    acc.value+=Number(row.totalGbp||0);
+    acc.outstanding+=Number(row.invoices?.outstanding||0);
+    return acc;
+  },{orders:0,units:0,value:0,outstanding:0});
+  const items=[
+    ["Orders",numberFmt.format(totals.orders),`${state.data?.includeArchived?"all":"active"} scope`],
+    [`Arriving ${state.data?.windowDays||30}d`,numberFmt.format(arrivals.reduce((sum,row)=>sum+Number(row.units||0),0)),"units"],
+    ["Exceptions",numberFmt.format(exceptions.length),"orders"],
+    ["Open value",formatMoney(totals.value),"order book"],
+    ["Outstanding",formatMoney(totals.outstanding),`${finance.length} finance rows`],
+    ["Data issues",numberFmt.format(dataQuality.length),"orders"]
+  ];
+  el("metrics").innerHTML=items.map(item=>`<div class="metric"><label>${escapeHtml(item[0])}</label><span>${escapeHtml(item[1])}</span><small>${escapeHtml(item[2])}</small></div>`).join("");
+}
+function renderTabs(){
+  el("tabs").innerHTML=tabs.map(tab=>`<button type="button" class="tab ${state.tab===tab.id?"active":""}" onclick="setTab('${tab.id}')">${escapeHtml(tab.label)}</button>`).join("");
+}
+function setTab(tab){
+  state.tab=tab;
+  const defaults={arrivals:"arrivalDate",exceptions:"reason",nextActions:"owner",finance:"outstanding",buyingMix:"valueGbp",dataQuality:"reason"};
+  state.sort={key:defaults[tab]||"order",dir:tab==="finance"||tab==="buyingMix"?"desc":"asc"};
+  render();
+}
+function render(){
+  if(!state.data)return;
+  renderMetrics();
+  renderTabs();
+  const active=tabs.find(tab=>tab.id===state.tab);
+  el("report-title").textContent=`${active?.label||"Report"} / ${filteredRows().length.toLocaleString("en-GB")} matching rows`;
+  el("report-generated").textContent=`Generated ${new Date(state.data.generatedAt).toLocaleString("en-GB")} / window ends ${formatDate(state.data.windowEnd)}`;
+  if(state.tab==="buyingMix"){el("report-body").innerHTML=renderBuyingMix();return;}
+  const rows=filteredRows();
+  el("report-body").innerHTML=renderTable(rows,columnsFor(state.tab),"No matching report rows.");
+}
+function populateFilters(){
+  const filters=state.data?.filters||{};
+  setOptions("supplier-filter",filters.suppliers||[],"All suppliers");
+  setOptions("season-filter",filters.seasons||[],"All seasons");
+  setOptions("category-filter",filters.categories||[],"All categories");
+  setOptions("intake-filter",filters.intakeStatuses||[],"All intake");
+  setOptions("payment-filter",filters.paymentStatuses||[],"All payment");
+  setOptions("owner-filter",filters.owners||[],"All owners");
+}
+async function loadReports(){
+  el("report-title").textContent="Loading reports...";
+  el("report-body").innerHTML="";
+  const params=new URLSearchParams({windowDays:val("window-days")||"30"});
+  if(el("include-archived").checked)params.set("includeArchived","true");
+  const response=await apiFetch(`/api/orders/reports?${params.toString()}`);
+  const data=await response.json();
+  if(!response.ok)throw new Error(data.error||"Could not load reports");
+  state.data=data;
+  populateFilters();
+  render();
+}
+function showError(error){
+  el("report-title").textContent="Report unavailable";
+  el("report-generated").textContent="";
+  el("report-body").innerHTML=`<div class="empty-state">${escapeHtml(error.message||"Could not load reports.")}</div>`;
+}
+["supplier-filter","season-filter","category-filter","intake-filter","payment-filter","owner-filter"].forEach(id=>el(id).addEventListener("input",render));
+["window-days","include-archived"].forEach(id=>el(id).addEventListener("input",()=>loadReports().catch(showError)));
+el("refresh-btn").addEventListener("click",()=>loadReports().catch(showError));
+loadReports().catch(showError);
+</script>
+</body>
+</html>

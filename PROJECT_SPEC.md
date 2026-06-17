@@ -39,6 +39,7 @@ The app favours simple operational tools over a large framework:
 - `public/bestsellers.html`: TY/LY bestsellers, revenue analysis, stock position, slow sellers, methodology, trade last week, CSV/import workflows.
 - `public/order-form.html`: purchase order creation, SKU issuing/lookup, line image upload, printable PO output.
 - `public/orders.html`: order workspace, approval/payment/intake workflow, invoices, notes, archive/delete.
+- `public/order-reports.html`: read-only operational reports for arrivals, intake exceptions, next actions, finance, buying mix, and data quality.
 - `public/sku-register.html`: local SKU register and safe deletion of unused issued SKUs.
 - `public/products.html`: product and supplier master-data workspace, local SKU enrichment, readiness review, and Shopify draft push workflow.
 - `public/merchandising.html`: Shopify product merchandising view using product, order, and optional GA4 metrics.
@@ -176,6 +177,7 @@ Product and supplier master data:
 Order workspace:
 
 - `GET /api/orders/workspace`
+- `GET /api/orders/reports`
 - `GET /api/orders/detail`
 - `POST /api/orders/workflow`
 - `POST /api/orders/invoices`
