@@ -4257,10 +4257,9 @@ function productIsShopifyComplete(product = {}) {
   return Boolean(
     product.shopifyProductGid
     || product.shopifyVariantGid
-    || syncStatus.includes("synced")
+    || ["synced", "synced draft"].includes(syncStatus)
     || status === "shopify draft"
     || status === "live"
-    || status.includes("shopify")
     || shopifyStatus === "DRAFT"
     || shopifyStatus === "ACTIVE"
   );
