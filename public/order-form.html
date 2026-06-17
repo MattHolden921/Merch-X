@@ -417,6 +417,12 @@ function addLine(data={},afterId=null){
           ${skuField(id,data.sku)}
           <input id="source-${id}" type="hidden" value="${escapeHtml(data.source||"")}">
           <input id="sourceSku-${id}" type="hidden" value="${escapeHtml(data.source?normalizeLineSku(data.sku):"")}">
+          <input id="shopifyProductGid-${id}" type="hidden" value="${escapeHtml(data.shopifyProductGid||"")}">
+          <input id="shopifyVariantGid-${id}" type="hidden" value="${escapeHtml(data.shopifyVariantGid||"")}">
+          <input id="shopifyStatus-${id}" type="hidden" value="${escapeHtml(data.shopifyStatus||"")}">
+          <input id="productStatus-${id}" type="hidden" value="${escapeHtml(data.status||"")}">
+          <input id="syncStatus-${id}" type="hidden" value="${escapeHtml(data.syncStatus||"")}">
+          <input id="lastSyncedAt-${id}" type="hidden" value="${escapeHtml(data.lastSyncedAt||"")}">
           <input id="duplicated-${id}" type="hidden" value="${data.duplicated?"1":""}">
           <input id="confirmedImage-${id}" type="hidden" value="${escapeHtml(data.confirmedImageUrl||"")}">
           <input id="pendingImage-${id}" type="hidden" value="${escapeHtml(data.pendingImageUrl||"")}">
@@ -625,16 +631,23 @@ function lineData(id){
     sku:val(`sku-${id}`),style:val(`style-${id}`),category:val(`category-${id}`),colour:val(`colour-${id}`),size:val(`size-${id}`),
     buyingCode:val(`buyingCode-${id}`),supplierSku:val(`buyingCode-${id}`),quantity,unitCostEur,unitCostGbp,unitCost:unitCostGbp,costMode:mode,rrp,exitRetail,repeatType:val(`repeatType-${id}`),season:val(`season-${id}`),imageUrl:lineDisplayImage(id),
     source:lineSource(id)||undefined,
+    shopifyProductGid:val(`shopifyProductGid-${id}`)||undefined,
+    shopifyVariantGid:val(`shopifyVariantGid-${id}`)||undefined,
+    shopifyStatus:val(`shopifyStatus-${id}`)||undefined,
+    status:val(`productStatus-${id}`)||undefined,
+    syncStatus:val(`syncStatus-${id}`)||undefined,
+    lastSyncedAt:val(`lastSyncedAt-${id}`)||undefined,
     lineCost:quantity*unitCostGbp,lineRrp:quantity*rrp,lineExitRetail:quantity*exitRetail
   };
 }
 
 function duplicateLine(id){
-  const copy={...lineData(id),sku:"",source:"",imageUrl:"",pendingImageUrl:lineDisplayImage(id),duplicated:true};
+  const copy={...lineData(id),sku:"",source:"",shopifyProductGid:"",shopifyVariantGid:"",shopifyStatus:"",status:"",syncStatus:"",lastSyncedAt:"",imageUrl:"",pendingImageUrl:lineDisplayImage(id),duplicated:true};
   addLine(copy,id);
   const newId=lineId;
   set(`source-${newId}`,"");
   set(`sourceSku-${newId}`,"");
+  clearLineShopifyIdentity(newId);
   el(`sku-${newId}`)?.focus();
 }
 
@@ -689,15 +702,31 @@ async function lookupSku(id){
 function applyProductToLine(id,product,options={}){
   const map={style:"style",category:"category",colour:"colour",size:"size",quantity:"quantity",unitCostEur:"unitCostEur",unitCost:"unitCostEur",repeatType:"repeatType",season:"season",buyingCode:"buyingCode",supplierSku:"buyingCode"};
   Object.entries(map).forEach(([from,to])=>{if(product[from]!=null&&product[from]!=="")set(`${to}-${id}`,product[from])});
+  set(`shopifyProductGid-${id}`,product.shopifyProductGid||"");
+  set(`shopifyVariantGid-${id}`,product.shopifyVariantGid||"");
+  set(`shopifyStatus-${id}`,product.shopifyStatus||"");
+  set(`productStatus-${id}`,product.status||"");
+  set(`syncStatus-${id}`,product.syncStatus||"");
+  set(`lastSyncedAt-${id}`,product.lastSyncedAt||"");
   if(product.unitCostEur!=null||product.unitCost!=null)set(`costMode-${id}`,"eur");
   if(options.replaceCopiedImage||product.imageUrl)setLineImage(id,product.imageUrl||"");
   if(product.supplierName&&!val("sup-name"))set("sup-name",product.supplierName);
   calc();
 }
 
+function clearLineShopifyIdentity(id){
+  set(`shopifyProductGid-${id}`,"");
+  set(`shopifyVariantGid-${id}`,"");
+  set(`shopifyStatus-${id}`,"");
+  set(`productStatus-${id}`,"");
+  set(`syncStatus-${id}`,"");
+  set(`lastSyncedAt-${id}`,"");
+}
+
 function setLineSource(id,source,sku=val(`sku-${id}`)){
   set(`source-${id}`,source||"");
   set(`sourceSku-${id}`,source?normalizeLineSku(sku):"");
+  if(!["shopify","master"].includes(source||""))clearLineShopifyIdentity(id);
 }
 
 function clearLineSourceIfSkuChanged(id){

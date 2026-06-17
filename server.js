@@ -6440,13 +6440,16 @@ async function shopifyLookupBySku(sku) {
     productVariants(first: 1, query: $query) {
       edges {
         node {
+          id
           sku
           title
           price
           inventoryQuantity
           image { url }
           product {
+            id
             title
+            status
             productType
             vendor
             featuredImage { url }
@@ -6459,6 +6462,7 @@ async function shopifyLookupBySku(sku) {
 
   const node = data?.productVariants?.edges?.[0]?.node;
   if (!node) return { configured: true, product: null };
+  const shopifyStatus = node.product?.status || "";
 
   return {
     configured: true,
@@ -6467,11 +6471,18 @@ async function shopifyLookupBySku(sku) {
       style: node.product?.title || "",
       variant: node.title || "",
       category: node.product?.productType || "",
+      productType: node.product?.productType || "",
       supplierName: node.product?.vendor || "",
       rrp: node.price || "",
       season: node.product?.metafield?.value || "",
       imageUrl: node.image?.url || node.product?.featuredImage?.url || "",
       inventoryQuantity: node.inventoryQuantity ?? null,
+      shopifyProductGid: node.product?.id || "",
+      shopifyVariantGid: node.id || "",
+      shopifyStatus,
+      status: localProductStatusFromShopifyStatus(shopifyStatus),
+      syncStatus: "Synced draft",
+      lastSyncedAt: new Date().toISOString(),
       source: "shopify"
     }
   };
@@ -6508,6 +6519,14 @@ function shopifyPushError(message, code = "shopify_push_error", details = {}) {
 
 const productStatuses = new Set(["Draft", "Ready for Shopify", "Shopify draft", "Live", "Archived"]);
 const productSyncStatuses = new Set(["Not synced", "Ready", "Synced draft", "Conflict", "Error"]);
+
+function localProductStatusFromShopifyStatus(status) {
+  const normalized = cleanText(status).toUpperCase();
+  if (normalized === "ACTIVE") return "Live";
+  if (normalized === "DRAFT") return "Shopify draft";
+  if (normalized === "ARCHIVED") return "Archived";
+  return "Shopify draft";
+}
 
 function cleanText(value) {
   return String(value == null ? "" : value).trim();
@@ -6781,8 +6800,11 @@ function normalizeProductInput(input = {}, existing = {}) {
   if (!sku) throw new Error("Product SKU is required.");
   let status = productStatuses.has(merged.status) ? merged.status : existing.status || "Draft";
   const linkedShopifyProductGid = cleanText(merged.shopifyProductGid || existing.shopifyProductGid);
+  if (linkedShopifyProductGid && !productStatuses.has(merged.status)) {
+    status = localProductStatusFromShopifyStatus(merged.shopifyStatus || existing.shopifyStatus);
+  }
   if (linkedShopifyProductGid && status === "Ready for Shopify") {
-    status = existing.status === "Live" ? "Live" : "Shopify draft";
+    status = existing.status === "Live" ? "Live" : localProductStatusFromShopifyStatus(merged.shopifyStatus || existing.shopifyStatus);
   }
   const rawTags = merged.tags || firstNonEmpty(merged, ["Tags"]);
   const rawColour = merged.colour || merged.color || firstNonEmpty(merged, [
