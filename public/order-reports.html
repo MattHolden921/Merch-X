@@ -8,11 +8,11 @@
 <style>
 .wrap{max-width:1680px}
 .head{align-items:center}
-.toolbar{display:grid;grid-template-columns:120px repeat(5,minmax(132px,1fr)) 132px auto;gap:10px;align-items:end}
+.toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;align-items:end}
 .field.check-field{display:flex;align-items:center;gap:8px;min-height:32px}
 .field.check-field label{margin:0;text-transform:none;letter-spacing:0;font-size:12px;color:var(--ds-text-muted)}
 .field.check-field input{width:16px;min-height:16px}
-.metric-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px}
+.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
 .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
 .tab{border:1px solid var(--ds-line-strong);background:var(--ds-bg-surface);border-radius:var(--ds-radius);min-height:34px;padding:0 12px;font-size:12px;font-weight:650;cursor:pointer;color:var(--ds-text-muted)}
 .tab:hover{background:var(--ds-bg-muted);color:var(--ds-text)}
@@ -40,7 +40,7 @@ tr:last-child td{border-bottom:0}
 .mix-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(420px,.9fr);gap:14px}
 .panel-title{font-size:13px;font-weight:650;margin-bottom:10px}
 .empty-state{padding:36px 14px;text-align:center;color:var(--ds-text-muted);font-size:13px}
-@media(max-width:1280px){.toolbar{grid-template-columns:repeat(4,1fr)}.metric-grid{grid-template-columns:repeat(3,1fr)}.mix-layout{grid-template-columns:1fr}}
+@media(max-width:1280px){.metric-grid{grid-template-columns:repeat(3,1fr)}.mix-layout{grid-template-columns:1fr}}
 @media(max-width:760px){.toolbar,.metric-grid{grid-template-columns:1fr}.report-meta{display:block}.actions{justify-content:flex-start}}
 </style>
 </head>
@@ -60,7 +60,9 @@ tr:last-child td{border-bottom:0}
 
   <section class="panel">
     <div class="toolbar">
-      <div class="field"><label>Date window</label><select class="select" id="window-days"><option>7</option><option>14</option><option selected>30</option><option>60</option><option>90</option></select></div>
+      <div class="field"><label>Quick period</label><select class="select" id="window-days"><option value="7">Next 7 days</option><option value="14">Next 14 days</option><option value="30" selected>Next 30 days</option><option value="60">Next 60 days</option><option value="90">Next 90 days</option></select></div>
+      <div class="field"><label>Due from</label><input class="input" id="date-from" type="date"></div>
+      <div class="field"><label>Due to</label><input class="input" id="date-to" type="date"></div>
       <div class="field"><label>Supplier</label><select class="select" id="supplier-filter"></select></div>
       <div class="field"><label>Season</label><select class="select" id="season-filter"></select></div>
       <div class="field"><label>Category</label><select class="select" id="category-filter"></select></div>
@@ -124,6 +126,17 @@ function formatDate(value){
   return Number.isNaN(date.getTime())?escapeHtml(value):dateFmt.format(date);
 }
 function formatMoney(value){return money.format(Number(value||0));}
+function localIsoDate(date){
+  const local=new Date(date.getTime()-date.getTimezoneOffset()*60000);
+  return local.toISOString().slice(0,10);
+}
+function setQuickPeriod(){
+  const from=new Date();
+  const to=new Date(from);
+  to.setDate(to.getDate()+Number(val("window-days")||30));
+  el("date-from").value=localIsoDate(from);
+  el("date-to").value=localIsoDate(to);
+}
 function badgeClass(value){
   if(["Received","Paid","Approved","Complete"].includes(value))return"good";
   if(["Delayed","Overdue","Rejected","Missing ETA"].includes(value))return"bad";
@@ -156,12 +169,16 @@ function rowMatches(row){
   const intake=val("intake-filter");
   const payment=val("payment-filter");
   const owner=val("owner-filter");
+  const dateFrom=val("date-from");
+  const dateTo=val("date-to");
   return (!supplier||row.supplierName===supplier)
     &&(!season||row.season===season)
     &&(!category||(row.categories||[]).includes(category))
     &&(!intake||row.workflow?.intakeStatus===intake)
     &&(!payment||row.workflow?.paymentStatus===payment)
-    &&(!owner||row.workflow?.nextActionOwner===owner);
+    &&(!owner||row.workflow?.nextActionOwner===owner)
+    &&(!dateFrom||(row.arrivalDate&&row.arrivalDate>=dateFrom))
+    &&(!dateTo||(row.arrivalDate&&row.arrivalDate<=dateTo));
 }
 function filteredRows(id=state.tab){
   const reports=state.data?.reports||{};
@@ -193,8 +210,11 @@ function columnsFor(tab){
     {key:"order",label:"PO number",render:orderCell,sort:row=>row.orderNumber},
     {key:"pah",label:"PAH",className:"check-cell",render:pahCell,sort:row=>Number(Boolean(row.workflow?.pahUploaded))},
     {key:"arrivalDate",label:"Date",render:row=>`${formatDate(row.arrivalDate)}<span class="subline">${escapeHtml(row.arrivalSource||"")}</span>`,sort:row=>row.arrivalDate||"9999-99-99"},
+    {key:"week",label:"Week",render:row=>escapeHtml(row.weekLabel||"-"),sort:row=>row.weekLabel||"9999-W99"},
+    {key:"styles",label:"Styles",className:"num",render:row=>numberFmt.format(Number(row.styleCount||0)),sort:row=>Number(row.styleCount||0)},
     {key:"units",label:"Units",className:"num",render:row=>numberFmt.format(Number(row.units||0)),sort:row=>Number(row.units||0)},
-    {key:"totalGbp",label:"Value",className:"num",render:row=>formatMoney(row.totalGbp),sort:row=>Number(row.totalGbp||0)},
+    {key:"costValueGbp",label:"Cost value",className:"num",render:row=>formatMoney(row.costValueGbp),sort:row=>Number(row.costValueGbp||0)},
+    {key:"retailValueGbp",label:"Retail value",className:"num",render:row=>formatMoney(row.retailValueGbp),sort:row=>Number(row.retailValueGbp||0)},
     {key:"intake",label:"Intake",render:row=>statusBadge(row.workflow?.intakeStatus),sort:row=>row.workflow?.intakeStatus||""},
     {key:"payment",label:"Payment",render:row=>statusBadge(row.workflow?.paymentStatus),sort:row=>row.workflow?.paymentStatus||""},
     {key:"owner",label:"Owner",render:row=>`${escapeHtml(row.workflow?.nextActionOwner||"Unassigned")}<span class="subline">${escapeHtml(row.workflow?.nextAction||"")}</span>`,sort:row=>row.workflow?.nextActionOwner||""},
@@ -203,16 +223,16 @@ function columnsFor(tab){
   if(tab==="exceptions")return [
     base[0],base[1],
     {key:"reason",label:"Reason",render:row=>escapeHtml(row.reason),sort:row=>row.reason},
-    base[2],base[3],
+    base[2],base[3],base[4],base[5],
     {key:"outstanding",label:"Outstanding",className:"num",render:row=>numberFmt.format(Number(row.batches?.outstandingUnits||0)),sort:row=>Number(row.batches?.outstandingUnits||0)},
-    base[5],base[7],base[8]
+    base[8],base[10],base[11]
   ];
   if(tab==="nextActions")return [
     base[0],base[1],
     {key:"reason",label:"Queue",render:row=>escapeHtml(row.reason),sort:row=>row.reason},
-    base[7],
+    base[10],
     {key:"approval",label:"Approval",render:row=>statusBadge(row.workflow?.approvalStatus),sort:row=>row.workflow?.approvalStatus||""},
-    base[6],base[5],base[2],base[8]
+    base[9],base[8],base[2],base[3],base[11]
   ];
   if(tab==="finance")return [
     base[0],base[1],
@@ -222,7 +242,7 @@ function columnsFor(tab){
     {key:"paid",label:"Paid",className:"num",render:row=>formatMoney(row.invoices?.totalPaid),sort:row=>Number(row.invoices?.totalPaid||0)},
     {key:"outstanding",label:"Outstanding",className:"num",render:row=>formatMoney(row.invoices?.outstanding),sort:row=>Number(row.invoices?.outstanding||0)},
     {key:"invoices",label:"Invoices",className:"num",render:row=>numberFmt.format(Number(row.invoices?.count||0)),sort:row=>Number(row.invoices?.count||0)},
-    base[8]
+    base[11]
   ];
   if(tab==="dataQuality")return [
     base[0],base[1],
@@ -230,7 +250,7 @@ function columnsFor(tab){
     {key:"unbatched",label:"Unbatched",className:"num",render:row=>numberFmt.format(Number(row.batches?.unbatchedUnits||0)),sort:row=>Number(row.batches?.unbatchedUnits||0)},
     {key:"batchLines",label:"Batches without lines",className:"num",render:row=>numberFmt.format(Number(row.batches?.batchesWithoutLines||0)),sort:row=>Number(row.batches?.batchesWithoutLines||0)},
     {key:"invoiceBatch",label:"Invoices without batch",className:"num",render:row=>numberFmt.format(Number(row.invoices?.invoiceWithoutBatch||0)),sort:row=>Number(row.invoices?.invoiceWithoutBatch||0)},
-    base[2],base[7],base[8]
+    base[2],base[3],base[10],base[11]
   ];
   return base;
 }
@@ -280,22 +300,26 @@ function renderBuyingMix(){
 }
 function renderMetrics(){
   const rows=(state.data?.reports?.orders||[]).filter(rowMatches);
-  const arrivals=filteredRows("arrivals");
   const exceptions=filteredRows("exceptions");
   const finance=filteredRows("finance");
   const dataQuality=filteredRows("dataQuality");
   const totals=rows.reduce((acc,row)=>{
     acc.orders+=1;
     acc.units+=Number(row.units||0);
-    acc.value+=Number(row.totalGbp||0);
+    acc.cost+=Number(row.costValueGbp||0);
+    acc.retail+=Number(row.retailValueGbp||0);
     acc.outstanding+=Number(row.invoices?.outstanding||0);
+    (row.styles||[]).forEach(style=>acc.styles.add(String(style).toLowerCase()));
     return acc;
-  },{orders:0,units:0,value:0,outstanding:0});
+  },{orders:0,units:0,cost:0,retail:0,outstanding:0,styles:new Set()});
+  const period=`${formatDate(val("date-from"))} to ${formatDate(val("date-to"))}`;
   const items=[
+    ["Styles due",numberFmt.format(totals.styles.size),period],
+    ["Cost value",formatMoney(totals.cost),"due in period"],
+    ["Retail value",formatMoney(totals.retail),"due in period"],
     ["Orders",numberFmt.format(totals.orders),`${state.data?.includeArchived?"all":"active"} scope`],
-    [`Arriving ${state.data?.windowDays||30}d`,numberFmt.format(arrivals.reduce((sum,row)=>sum+Number(row.units||0),0)),"units"],
+    ["Units due",numberFmt.format(totals.units),period],
     ["Exceptions",numberFmt.format(exceptions.length),"orders"],
-    ["Open value",formatMoney(totals.value),"order book"],
     ["Outstanding",formatMoney(totals.outstanding),`${finance.length} finance rows`],
     ["Data issues",numberFmt.format(dataQuality.length),"orders"]
   ];
@@ -316,7 +340,7 @@ function render(){
   renderTabs();
   const active=tabs.find(tab=>tab.id===state.tab);
   el("report-title").textContent=`${active?.label||"Report"} / ${filteredRows().length.toLocaleString("en-GB")} matching rows`;
-  el("report-generated").textContent=`Generated ${new Date(state.data.generatedAt).toLocaleString("en-GB")} / window ends ${formatDate(state.data.windowEnd)}`;
+  el("report-generated").textContent=`Generated ${new Date(state.data.generatedAt).toLocaleString("en-GB")} / due ${formatDate(val("date-from"))} to ${formatDate(val("date-to"))}`;
   if(state.tab==="buyingMix"){el("report-body").innerHTML=renderBuyingMix();return;}
   const rows=filteredRows();
   el("report-body").innerHTML=renderTable(rows,columnsFor(state.tab),"No matching report rows.");
@@ -333,7 +357,7 @@ function populateFilters(){
 async function loadReports(){
   el("report-title").textContent="Loading reports...";
   el("report-body").innerHTML="";
-  const params=new URLSearchParams({windowDays:val("window-days")||"30"});
+  const params=new URLSearchParams({windowDays:val("window-days")||"30",dateFrom:val("date-from"),dateTo:val("date-to")});
   if(el("include-archived").checked)params.set("includeArchived","true");
   const response=await apiFetch(`/api/orders/reports?${params.toString()}`);
   const data=await response.json();
@@ -348,8 +372,10 @@ function showError(error){
   el("report-body").innerHTML=`<div class="empty-state">${escapeHtml(error.message||"Could not load reports.")}</div>`;
 }
 ["supplier-filter","season-filter","category-filter","intake-filter","payment-filter","owner-filter"].forEach(id=>el(id).addEventListener("input",render));
-["window-days","include-archived"].forEach(id=>el(id).addEventListener("input",()=>loadReports().catch(showError)));
+el("window-days").addEventListener("input",()=>{setQuickPeriod();loadReports().catch(showError);});
+["date-from","date-to","include-archived"].forEach(id=>el(id).addEventListener("input",()=>loadReports().catch(showError)));
 el("refresh-btn").addEventListener("click",()=>loadReports().catch(showError));
+setQuickPeriod();
 loadReports().catch(showError);
 </script>
 </body>

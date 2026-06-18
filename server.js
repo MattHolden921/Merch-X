@@ -4510,14 +4510,34 @@ function reportLineCategories(lines) {
 }
 
 function reportLineValueGbp(line) {
-  return Number(line?.lineCost || 0);
+  const quantity = Number(line?.quantity || 0);
+  return Number(line?.lineCost || (quantity * Number(line?.unitCostGbp || line?.unitCost || 0)) || 0);
+}
+
+function reportLineRetailValueGbp(line) {
+  const quantity = Number(line?.quantity || 0);
+  return Number(line?.lineRrp || (quantity * Number(line?.rrp || 0)) || 0);
+}
+
+function isoWeekForDate(dateIso) {
+  if (!isoDateOrBlank(dateIso)) return { weekNumber: null, weekYear: null, weekLabel: "" };
+  const date = new Date(`${dateIso}T00:00:00Z`);
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const weekYear = date.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(weekYear, 0, 1));
+  const weekNumber = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  return { weekNumber, weekYear, weekLabel: `${weekYear}-W${String(weekNumber).padStart(2, "0")}` };
 }
 
 function reportOrderLineStats(order) {
   const lines = order?.lines || [];
   const categoryMap = new Map();
+  const styleMap = new Map();
   let unbatchedUnits = 0;
-  for (const line of lines) {
+  let costValueGbp = 0;
+  let retailValueGbp = 0;
+  lines.forEach((line, index) => {
     const quantity = Number(line.quantity || 0);
     const category = reportGroupKey(line.category || "Uncategorised");
     if (!categoryMap.has(category)) categoryMap.set(category, { label: category, units: 0, valueGbp: 0 });
@@ -4525,10 +4545,18 @@ function reportOrderLineStats(order) {
     group.units += quantity;
     group.valueGbp += reportLineValueGbp(line);
     unbatchedUnits += quantity;
-  }
+    costValueGbp += reportLineValueGbp(line);
+    retailValueGbp += reportLineRetailValueGbp(line);
+    const style = String(line.style || line.buyingCode || line.supplierSku || line.sku || `Line ${index + 1}`).trim();
+    if (style) styleMap.set(style.toLowerCase(), style);
+  });
   return {
     categories: [...categoryMap.values()].sort((a, b) => Number(b.valueGbp || 0) - Number(a.valueGbp || 0)),
-    unbatchedUnits
+    unbatchedUnits,
+    styles: [...styleMap.values()],
+    styleCount: styleMap.size,
+    costValueGbp,
+    retailValueGbp
   };
 }
 
@@ -4558,6 +4586,7 @@ function orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invo
   const batchDates = batches.map(batch => isoDateOrBlank(batch.etaDate)).filter(Boolean).sort();
   const nextBatchEta = batchDates[0] || "";
   const arrivalSignal = arrivalSignalForOrder({ ...managedOrder, nextBatchEta }, workflow);
+  const arrivalWeek = isoWeekForDate(arrivalSignal.date);
   const invoiceRows = invoices || [];
   const openInvoiceCount = invoiceRows.filter(invoice => invoice.status !== "Paid").length;
   const invoiceWithoutBatch = invoiceRows.filter(invoice => !invoice.batchId).length;
@@ -4582,9 +4611,14 @@ function orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invo
     totalEur: Number(managedOrder.totalEur || 0),
     units: Number(managedOrder.units || 0),
     lineCount: Number(managedOrder.lineCount || 0),
+    styles: lineStats.styles,
+    styleCount: lineStats.styleCount,
+    costValueGbp: lineStats.costValueGbp || Number(managedOrder.subtotal || managedOrder.totalGbp || 0),
+    retailValueGbp: lineStats.retailValueGbp,
     requiredDate: managedOrder.requiredDate,
     arrivalDate: arrivalSignal.date,
     arrivalSource: arrivalSignal.source,
+    ...arrivalWeek,
     workflow: {
       approvalStatus: workflow.approvalStatus,
       paymentStatus: workflow.paymentStatus,
@@ -4616,7 +4650,10 @@ function orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invo
 function buildOrderReports(params = {}) {
   const today = todayIsoDate();
   const windowDays = parseReportWindowDays(params.windowDays);
-  const windowEnd = addDaysIso(today, windowDays);
+  let dateFrom = isoDateOrBlank(params.dateFrom) || today;
+  let dateTo = isoDateOrBlank(params.dateTo) || addDaysIso(dateFrom, windowDays);
+  if (dateFrom > dateTo) [dateFrom, dateTo] = [dateTo, dateFrom];
+  const windowEnd = dateTo;
   const includeArchived = params.includeArchived === true || params.includeArchived === "true" || params.includeArchived === "1";
   const db = readOrderDb();
   const workflows = readOrderWorkflowMap();
@@ -4659,7 +4696,7 @@ function buildOrderReports(params = {}) {
       incrementReportGroup(categoryGroups, category.label, { orders: 1, units: category.units, valueGbp: category.valueGbp, outstandingGbp: 0 });
     }
 
-    if (row.arrivalDate && dateInRange(row.arrivalDate, today, windowEnd) && workflow.intakeStatus !== "Received") {
+    if (row.arrivalDate && dateInRange(row.arrivalDate, dateFrom, dateTo) && workflow.intakeStatus !== "Received") {
       arrivals.push(row);
     }
 
@@ -4719,6 +4756,8 @@ function buildOrderReports(params = {}) {
   return {
     generatedAt: new Date().toISOString(),
     today,
+    dateFrom,
+    dateTo,
     windowDays,
     windowEnd,
     includeArchived,
@@ -8354,6 +8393,8 @@ async function handleApi(req, res) {
     try {
       sendJson(res, 200, buildOrderReports({
         windowDays: url.searchParams.get("windowDays"),
+        dateFrom: url.searchParams.get("dateFrom"),
+        dateTo: url.searchParams.get("dateTo"),
         includeArchived: url.searchParams.get("includeArchived")
       }));
     } catch (error) {
