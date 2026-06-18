@@ -415,6 +415,7 @@ function addLine(data={},afterId=null){
         </div>
         <div class="line-row second">
           ${skuField(id,data.sku)}
+          <input id="reissuedFromSku-${id}" type="hidden" value="${escapeHtml(data.reissuedFromSku||"")}">
           <input id="source-${id}" type="hidden" value="${escapeHtml(data.source||"")}">
           <input id="sourceSku-${id}" type="hidden" value="${escapeHtml(data.source?normalizeLineSku(data.sku):"")}">
           <input id="shopifyProductGid-${id}" type="hidden" value="${escapeHtml(data.shopifyProductGid||"")}">
@@ -629,6 +630,7 @@ function lineData(id){
   const { mode, unitCostEur, unitCostGbp, rrp, exitRetail }=lineCostValues(id);
   return {
     sku:val(`sku-${id}`),style:val(`style-${id}`),category:val(`category-${id}`),colour:val(`colour-${id}`),size:val(`size-${id}`),
+    reissuedFromSku:val(`reissuedFromSku-${id}`)||undefined,
     buyingCode:val(`buyingCode-${id}`),supplierSku:val(`buyingCode-${id}`),quantity,unitCostEur,unitCostGbp,unitCost:unitCostGbp,costMode:mode,rrp,exitRetail,repeatType:val(`repeatType-${id}`),season:val(`season-${id}`),imageUrl:lineDisplayImage(id),
     source:lineSource(id)||undefined,
     shopifyProductGid:val(`shopifyProductGid-${id}`)||undefined,
@@ -642,7 +644,7 @@ function lineData(id){
 }
 
 function duplicateLine(id){
-  const copy={...lineData(id),sku:"",source:"",shopifyProductGid:"",shopifyVariantGid:"",shopifyStatus:"",status:"",syncStatus:"",lastSyncedAt:"",imageUrl:"",pendingImageUrl:lineDisplayImage(id),duplicated:true};
+  const copy={...lineData(id),sku:"",reissuedFromSku:"",source:"",shopifyProductGid:"",shopifyVariantGid:"",shopifyStatus:"",status:"",syncStatus:"",lastSyncedAt:"",imageUrl:"",pendingImageUrl:lineDisplayImage(id),duplicated:true};
   addLine(copy,id);
   const newId=lineId;
   set(`source-${newId}`,"");
@@ -653,6 +655,7 @@ function duplicateLine(id){
 
 async function issueSku(id){
   const state=el(`lookup-${id}`);
+  const previousSku=normalizeLineSku(val(`sku-${id}`));
   state.textContent="Issuing SKU";
   state.className="lookup-state";
   const response=await apiFetch("/api/order-form/next-sku",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({currentSku:val(`sku-${id}`)})});
@@ -662,9 +665,11 @@ async function issueSku(id){
     state.className="lookup-state err";
     return;
   }
+  if(previousSku&&!val(`reissuedFromSku-${id}`))set(`reissuedFromSku-${id}`,previousSku);
   set(`sku-${id}`,result.sku);
   setLineSource(id,"issued",result.sku);
-  state.textContent=`Issued after ${result.previousSku||"last saved SKU"}`;
+  const skipped=(result.skippedShopifySkus||[]).length?` (skipped Shopify SKU${result.skippedShopifySkus.length===1?"":"s"}: ${result.skippedShopifySkus.join(", ")})`:"";
+  state.textContent=`Issued after ${result.previousSku||"last saved SKU"}${skipped}`;
   state.className="lookup-state ok";
   bootstrap.lastIssuedSku=result.sku;
 }

@@ -340,9 +340,9 @@ function requestMultipart(url, fields, file) {
 }
 
 function shopifyConfig() {
-  const rawShop = process.env.SHOPIFY_SHOP || process.env.SHOPIFY_STORE_DOMAIN || process.env.SHOPIFY_SHOP_DOMAIN || "";
-  const clientId = process.env.SHOPIFY_CLIENT_ID || "";
-  const clientSecret = process.env.SHOPIFY_CLIENT_SECRET || "";
+  const rawShop = String(process.env.SHOPIFY_SHOP || process.env.SHOPIFY_STORE_DOMAIN || process.env.SHOPIFY_SHOP_DOMAIN || "").trim();
+  const clientId = String(process.env.SHOPIFY_CLIENT_ID || "").trim();
+  const clientSecret = String(process.env.SHOPIFY_CLIENT_SECRET || "").trim();
   const apiVersion = process.env.SHOPIFY_API_VERSION || "2026-04";
   const shop = rawShop.replace(/^https?:\/\//, "").replace(/\/+$/, "").replace(/\.myshopify\.com$/i, "");
   const domain = `${shop}.myshopify.com`;
@@ -3891,6 +3891,50 @@ function nextAvailableIssuedSku(dbData = {}, baselineSku = "") {
   throw new Error("Could not find an unused SKU in the configured sequence.");
 }
 
+let skuIssueQueue = Promise.resolve();
+
+async function issueNextAvailableSku() {
+  const dbData = readOrderDb();
+  let baseline = getLastIssuedSku(dbData);
+  const skippedShopifySkus = [];
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  const shopifyConfigured = Boolean(shop && clientId && clientSecret);
+
+  for (let attempts = 0; attempts < 100000; attempts += 1) {
+    const candidate = nextAvailableIssuedSku(readOrderDb(), baseline);
+    if (shopifyConfigured) {
+      const existingVariant = await shopifyVariantBySku(candidate);
+      if (existingVariant?.product?.id && normalizeSku(existingVariant.sku) === normalizeSku(candidate)) {
+        reserveIssuedSku(candidate, {
+          source: "shopify-existing",
+          shopifyProductGid: existingVariant.product.id,
+          shopifyVariantGid: existingVariant.id || ""
+        });
+        writeLastIssuedSkuSetting(candidate);
+        skippedShopifySkus.push(candidate);
+        baseline = candidate;
+        continue;
+      }
+    }
+
+    setLastIssuedSku(candidate);
+    return {
+      sku: candidate,
+      previousSku: baseline || "",
+      shopifyVerified: shopifyConfigured,
+      skippedShopifySkus
+    };
+  }
+
+  throw new Error("Could not find an unused SKU in the configured sequence.");
+}
+
+function queueNextAvailableSku() {
+  const issuance = skuIssueQueue.then(() => issueNextAvailableSku());
+  skuIssueQueue = issuance.catch(() => undefined);
+  return issuance;
+}
+
 function getLastIssuedSku(dbData) {
   return sequentialIssuedSkuCursor(dbData);
 }
@@ -6993,6 +7037,86 @@ function migrateOrderRelations(sqlite, fromId, toId) {
   sqlite.prepare("UPDATE notifications SET entity_id = ? WHERE entity_type = 'order' AND entity_id = ?").run(to, from);
 }
 
+function migrateReissuedOrderLineSkus(sqlite, storedOrder) {
+  const migrations = new Map();
+  for (const line of storedOrder.lines || []) {
+    const fromSku = normalizeSku(line.reissuedFromSku);
+    const toSku = normalizeSku(line.sku);
+    if (!fromSku || !toSku || fromSku === toSku) {
+      delete line.reissuedFromSku;
+      continue;
+    }
+    if (migrations.has(fromSku) && migrations.get(fromSku) !== toSku) {
+      throw new Error(`SKU ${fromSku} cannot be reissued to two different SKUs in one order.`);
+    }
+    migrations.set(fromSku, toSku);
+  }
+  if (!migrations.size) return [];
+
+  const orderRows = sqlite.prepare("SELECT id, data FROM orders").all();
+  const updateOrder = sqlite.prepare("UPDATE orders SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+  const updateProduct = sqlite.prepare(`
+    UPDATE products
+    SET sku = @toSku,
+        shopify_product_gid = '',
+        shopify_variant_gid = '',
+        shopify_status = '',
+        sync_status = @syncStatus,
+        data = @data,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `);
+
+  for (const [fromSku, toSku] of migrations) {
+    const oldRow = sqlite.prepare("SELECT * FROM products WHERE sku = ?").get(fromSku);
+    const oldProduct = productFromRow(oldRow);
+    if (oldProduct && productHasShopifyIdentity(oldProduct)) {
+      throw new Error(`SKU ${fromSku} is already linked to Shopify and cannot be reissued locally.`);
+    }
+    const duplicate = sqlite.prepare("SELECT id FROM products WHERE sku = ?").get(toSku);
+    if (duplicate && Number(duplicate.id) !== Number(oldRow?.id || 0)) {
+      throw new Error(`Replacement SKU ${toSku} already belongs to another local product.`);
+    }
+
+    if (oldRow) {
+      const skuHistory = [...new Set([...(oldProduct.skuHistory || []), fromSku])];
+      const updatedProduct = {
+        ...oldProduct,
+        sku: toSku,
+        skuHistory,
+        shopifyProductGid: "",
+        shopifyVariantGid: "",
+        shopifyStatus: "",
+        syncStatus: oldProduct.status === "Ready for Shopify" ? "Ready" : "Not synced"
+      };
+      updateProduct.run({
+        id: oldRow.id,
+        toSku,
+        syncStatus: updatedProduct.syncStatus,
+        data: JSON.stringify(updatedProduct)
+      });
+    }
+
+    for (const orderRow of orderRows) {
+      const order = parseJson(orderRow.data, null);
+      if (!order?.lines?.some(line => normalizeSku(line.sku) === fromSku)) continue;
+      order.lines = order.lines.map(line => normalizeSku(line.sku) === fromSku
+        ? { ...line, sku: toSku, reissuedFromSku: undefined }
+        : line);
+      updateOrder.run(JSON.stringify(order), orderRow.id);
+    }
+    sqlite.prepare("UPDATE order_batch_lines SET sku = ? WHERE sku = ?").run(toSku, fromSku);
+    sqlite.prepare(`
+      INSERT INTO issued_skus (sku, data, issued_at, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(sku) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP
+    `).run(toSku, JSON.stringify({ source: "reissue", previousSku: fromSku }));
+  }
+
+  for (const line of storedOrder.lines || []) delete line.reissuedFromSku;
+  return [...migrations].map(([fromSku, toSku]) => ({ fromSku, toSku }));
+}
+
 function saveOrderFormOrder(dbData, savedOrder) {
   const sqlite = openOrderSqliteDb();
   const storedOrder = materializeOrderImages(savedOrder);
@@ -7012,10 +7136,17 @@ function saveOrderFormOrder(dbData, savedOrder) {
   ) : null;
   const productPatches = (storedOrder.lines || [])
     .filter(line => line.sku)
-    .map(line => mergeNonEmpty(
-      existingByNormalized(dbData.products || [], "sku", line.sku) || {},
+    .map(line => {
+      const previousProduct = existingByNormalized(dbData.products || [], "sku", line.reissuedFromSku);
+      const existingProduct = existingByNormalized(dbData.products || [], "sku", line.sku) || previousProduct || {};
+      const skuHistory = previousProduct
+        ? [...new Set([...(previousProduct.skuHistory || []), normalizeSku(line.reissuedFromSku)])]
+        : existingProduct.skuHistory;
+      return mergeNonEmpty(
+      existingProduct,
       {
         ...line,
+        skuHistory,
         supplierName: storedOrder.supplier?.name || line.supplierName || ""
       },
       {
@@ -7023,9 +7154,11 @@ function saveOrderFormOrder(dbData, savedOrder) {
         lastOrderNumber: storedOrder.orderNumber,
         lastOrderedAt: storedOrder.savedAt
       }
-    ));
+    );
+    });
 
   const write = sqlite.transaction(() => {
+    migrateReissuedOrderLineSkus(sqlite, storedOrder);
     migrateOrderRelations(sqlite, incomingOrderId, canonicalOrderId);
     sqlite.prepare("DELETE FROM orders WHERE id = ? OR order_number = ?").run(canonicalOrderId, storedOrder.orderNumber);
     sqlite.prepare(`
@@ -7396,6 +7529,7 @@ function productFromRow(row) {
     extraMetafields: Array.isArray(data.extraMetafields) ? data.extraMetafields : [],
     notes: data.notes || "",
     source: data.source || "saved",
+    skuHistory: Array.isArray(data.skuHistory) ? data.skuHistory.map(normalizeSku).filter(Boolean) : [],
     lastOrderNumber: data.lastOrderNumber || row.last_order_number || "",
     lastOrderedAt: data.lastOrderedAt || row.last_ordered_at || "",
     updatedAt: row.updated_at || "",
@@ -7556,6 +7690,7 @@ function normalizeProductInput(input = {}, existing = {}) {
     extraMetafields: mergeMetafields(merged.extraMetafields || [], metafieldsFromShopifyExportRow(merged)),
     notes: cleanText(merged.notes),
     source: cleanText(merged.source || existing.source || "saved"),
+    skuHistory: [...new Set((merged.skuHistory || existing.skuHistory || []).map(normalizeSku).filter(Boolean))],
     lastOrderNumber: cleanText(merged.lastOrderNumber),
     lastOrderedAt: cleanText(merged.lastOrderedAt)
   });
@@ -7616,6 +7751,35 @@ function upsertCatalogProduct(input, req = null) {
   const created = findCatalogProduct(product.sku);
   if (req) recordProductSyncEvent(created, "local_save", req, { result: "ok", payload: { sku: created.sku, status: created.status } });
   return created;
+}
+
+function deleteCatalogProduct(identifier) {
+  const product = findCatalogProduct(identifier);
+  if (!product) throw new Error("Product not found.");
+  const sqlite = openOrderSqliteDb();
+  const sku = normalizeSku(product.sku);
+  const orderReferences = readOrderDb().orders.filter(order => orderContainsSku(order, sku));
+  const batchReferenceCount = sqlite.prepare("SELECT COUNT(*) AS count FROM order_batch_lines WHERE sku = ?").get(sku).count;
+  if (orderReferences.length || batchReferenceCount) {
+    const orderNumbers = orderReferences.slice(0, 4).map(order => order.orderNumber).filter(Boolean);
+    const suffix = orderReferences.length > orderNumbers.length ? ", …" : "";
+    const detail = orderNumbers.length ? ` Order${orderNumbers.length === 1 ? "" : "s"}: ${orderNumbers.join(", ")}${suffix}.` : "";
+    const error = new Error(`SKU ${sku} is still referenced by an order or supplier batch and cannot be deleted.${detail}`);
+    error.code = "product_referenced";
+    throw error;
+  }
+
+  const remove = sqlite.transaction(() => {
+    sqlite.prepare("DELETE FROM product_sync_events WHERE product_id = ?").run(product.id);
+    return sqlite.prepare("DELETE FROM products WHERE id = ?").run(product.id).changes;
+  });
+  if (!remove()) throw new Error("Product could not be deleted.");
+  return {
+    id: product.id,
+    sku,
+    title: product.title || product.style || "",
+    shopifyLinked: productHasShopifyIdentity(product)
+  };
 }
 
 function normalizeSupplierInput(input = {}, existing = {}) {
@@ -8142,6 +8306,24 @@ async function handleApi(req, res) {
     return true;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/products/delete") {
+    if (!requireRoles(req, res, ["Admin"], "Only Admin users can permanently delete products.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const deleted = deleteCatalogProduct(body.id || body.sku);
+      sendJson(res, 200, {
+        ok: true,
+        deleted,
+        message: deleted.shopifyLinked
+          ? `Deleted local product ${deleted.sku}. The Shopify product was not changed.`
+          : `Deleted local product ${deleted.sku}.`
+      });
+    } catch (error) {
+      sendJson(res, error.code === "product_referenced" ? 409 : 400, { error: error.message || "Could not delete product." });
+    }
+    return true;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/suppliers") {
     sendJson(res, 200, {
       suppliers: readCatalogSuppliers(),
@@ -8417,11 +8599,8 @@ async function handleApi(req, res) {
     if (!requireRoles(req, res, ["Buyer", "Admin"])) return true;
     try {
       await readJsonBody(req);
-      const dbData = readOrderDb();
-      const baseline = getLastIssuedSku(dbData);
-      const nextSku = nextAvailableIssuedSku(dbData, baseline);
-      setLastIssuedSku(nextSku);
-      sendJson(res, 200, { sku: nextSku, previousSku: baseline || "" });
+      const issued = await queueNextAvailableSku();
+      sendJson(res, 200, issued);
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not issue SKU" });
     }
