@@ -155,7 +155,7 @@ function openLink(row){
   return `<a class="btn" href="${attr(row.openUrl||`orders.html?id=${encodeURIComponent(row.id)}`)}">Open order</a>`;
 }
 function orderCell(row){
-  return `<div class="primary-cell"><strong>${escapeHtml(row.orderNumber||"No order")}</strong><span>${escapeHtml(row.supplierName||"No supplier")}</span><span>${escapeHtml(row.season||"No season")} / ${Number(row.units||0).toLocaleString("en-GB")} units</span></div>`;
+  return `<div class="primary-cell"><strong>${escapeHtml(row.orderNumber||"No order")}</strong><span>${escapeHtml(row.supplierName||"No supplier")}</span>${row.portionLabel?`<span>${escapeHtml(row.portionLabel)}</span>`:""}<span>${escapeHtml(row.season||"No season")} / ${Number(row.units||0).toLocaleString("en-GB")} units</span></div>`;
 }
 function statusBadge(value){
   return `<span class="badge ${badgeClass(value)}">${escapeHtml(value||"-")}</span>`;
@@ -305,26 +305,30 @@ function renderBuyingMix(){
   return `<div class="mix-layout"><section><div class="panel-title">Open order mix</div>${renderTable(groupRows,groupColumns,"No matching mix rows.")}</section><section><div class="panel-title">Top orders by value</div>${renderTable(topOrders,orderColumns,"No matching orders.")}</section></div>`;
 }
 function renderMetrics(){
-  const rows=(state.data?.reports?.orders||[]).filter(row=>rowMatches(row));
+  const missing=val("due-scope")==="missing";
+  const source=missing?(state.data?.reports?.withoutDates||[]):(state.data?.reports?.arrivals||[]);
+  const rows=source.filter(row=>rowMatches(row,missing));
   const exceptions=filteredRows("exceptions");
   const finance=filteredRows("finance");
   const dataQuality=filteredRows("dataQuality");
   const totals=rows.reduce((acc,row)=>{
-    acc.orders+=1;
+    acc.orderIds.add(String(row.id||row.orderNumber||""));
     acc.units+=Number(row.units||0);
     acc.cost+=Number(row.costValueGbp||0);
     acc.retail+=Number(row.retailValueGbp||0);
-    acc.outstanding+=Number(row.invoices?.outstanding||0);
+    if(!acc.outstandingOrderIds.has(String(row.id||""))){
+      acc.outstanding+=Number(row.invoices?.outstanding||0);
+      acc.outstandingOrderIds.add(String(row.id||""));
+    }
     (row.styles||[]).forEach(style=>acc.styles.add(String(style).toLowerCase()));
     return acc;
-  },{orders:0,units:0,cost:0,retail:0,outstanding:0,styles:new Set()});
-  const missing=val("due-scope")==="missing";
+  },{orderIds:new Set(),outstandingOrderIds:new Set(),units:0,cost:0,retail:0,outstanding:0,styles:new Set()});
   const period=missing?"without a due date":`${formatDate(val("date-from"))} to ${formatDate(val("date-to"))}`;
   const items=[
     [missing?"Styles without date":"Styles due",numberFmt.format(totals.styles.size),period],
     ["Cost value",formatMoney(totals.cost),period],
     ["Retail value",formatMoney(totals.retail),period],
-    ["Orders",numberFmt.format(totals.orders),`${state.data?.includeArchived?"all":"active"} scope`],
+    ["Orders",numberFmt.format(totals.orderIds.size),`${rows.length} ${missing?rows.length===1?"undated balance":"undated balances":rows.length===1?"batch":"batches"}`],
     [missing?"Units without date":"Units due",numberFmt.format(totals.units),period],
     ["Exceptions",numberFmt.format(exceptions.length),"orders"],
     ["Outstanding",formatMoney(totals.outstanding),`${finance.length} finance rows`],

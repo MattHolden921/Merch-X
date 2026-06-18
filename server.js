@@ -4553,11 +4553,136 @@ function reportOrderLineStats(order) {
   return {
     categories: [...categoryMap.values()].sort((a, b) => Number(b.valueGbp || 0) - Number(a.valueGbp || 0)),
     unbatchedUnits,
+    units: unbatchedUnits,
     styles: [...styleMap.values()],
     styleCount: styleMap.size,
     costValueGbp,
     retailValueGbp
   };
+}
+
+function reportStatsForLineQuantities(order, quantityByLine) {
+  const styles = new Map();
+  let units = 0;
+  let costValueGbp = 0;
+  let retailValueGbp = 0;
+  (order?.lines || []).forEach((line, index) => {
+    const quantity = Math.max(0, Number(quantityByLine.get(index) || 0));
+    if (!quantity) return;
+    const orderedQuantity = Number(line.quantity || 0);
+    const unitCost = orderedQuantity > 0 ? reportLineValueGbp(line) / orderedQuantity : Number(line.unitCostGbp || line.unitCost || 0);
+    const unitRetail = orderedQuantity > 0 ? reportLineRetailValueGbp(line) / orderedQuantity : Number(line.rrp || 0);
+    const style = String(line.style || line.buyingCode || line.supplierSku || line.sku || `Line ${index + 1}`).trim();
+    if (style) styles.set(style.toLowerCase(), style);
+    units += quantity;
+    costValueGbp += unitCost * quantity;
+    retailValueGbp += unitRetail * quantity;
+  });
+  return { styles: [...styles.values()], styleCount: styles.size, units, costValueGbp, retailValueGbp };
+}
+
+function reportStatsForAllocations(order, allocations) {
+  const quantities = new Map();
+  for (const allocation of allocations || []) {
+    const lineIndex = Number(allocation.lineIndex);
+    if (!Number.isInteger(lineIndex)) continue;
+    quantities.set(lineIndex, Number(quantities.get(lineIndex) || 0) + Number(allocation.quantity || 0));
+  }
+  return reportStatsForLineQuantities(order, quantities);
+}
+
+function combineReportStats(...parts) {
+  const styles = new Map();
+  const total = { styles: [], styleCount: 0, units: 0, costValueGbp: 0, retailValueGbp: 0 };
+  for (const part of parts) {
+    for (const style of part?.styles || []) styles.set(String(style).toLowerCase(), style);
+    total.units += Number(part?.units || 0);
+    total.costValueGbp += Number(part?.costValueGbp || 0);
+    total.retailValueGbp += Number(part?.retailValueGbp || 0);
+  }
+  total.styles = [...styles.values()];
+  total.styleCount = styles.size;
+  return total;
+}
+
+function reportBatchStats(order, batch, allocations, orderStats) {
+  if ((allocations || []).length) return reportStatsForAllocations(order, allocations);
+  const units = Math.max(0, Number(batch.units || 0));
+  const costValueGbp = Math.max(0, Number(batch.value || 0));
+  const retailRatio = Number(orderStats.costValueGbp || 0) > 0 ? Number(orderStats.retailValueGbp || 0) / Number(orderStats.costValueGbp) : 0;
+  const styleCount = Math.max(0, Number(batch.styleCount || 0));
+  return {
+    styles: Array.from({ length: styleCount }, (_, index) => `${order.id}:batch:${batch.id}:style:${index + 1}`),
+    styleCount,
+    units,
+    costValueGbp,
+    retailValueGbp: costValueGbp * retailRatio
+  };
+}
+
+function reportPortionRow(row, stats, patch = {}) {
+  return {
+    ...row,
+    ...stats,
+    totalGbp: Number(stats.costValueGbp || 0),
+    ...patch,
+    ...isoWeekForDate(patch.arrivalDate || "")
+  };
+}
+
+function orderReportPortions(row, order, batches, batchLines) {
+  const allocationsByBatch = new Map();
+  const allocatedByLine = new Map();
+  for (const allocation of batchLines || []) {
+    const batchId = String(allocation.batchId || "");
+    if (!allocationsByBatch.has(batchId)) allocationsByBatch.set(batchId, []);
+    allocationsByBatch.get(batchId).push(allocation);
+    const lineIndex = Number(allocation.lineIndex);
+    allocatedByLine.set(lineIndex, Number(allocatedByLine.get(lineIndex) || 0) + Number(allocation.quantity || 0));
+  }
+  const orderStats = reportOrderLineStats(order);
+  const dated = [];
+  const undatedParts = [];
+  const committedParts = [];
+  for (const batch of batches || []) {
+    const allocations = allocationsByBatch.get(String(batch.id)) || [];
+    const stats = reportBatchStats(order, batch, allocations, orderStats);
+    if (batch.etaDate || batch.intakeStatus === "Received") committedParts.push(stats);
+    if (batch.intakeStatus === "Received") continue;
+    if (batch.etaDate) {
+      dated.push(reportPortionRow(row, stats, {
+        reportRowType: "batch",
+        batchId: batch.id,
+        batchNumber: batch.batchNumber,
+        portionLabel: batch.batchNumber || batch.title || "Batch",
+        arrivalDate: batch.etaDate,
+        arrivalSource: "Batch ETA"
+      }));
+    } else if (stats.units || stats.costValueGbp) {
+      undatedParts.push(stats);
+    }
+  }
+  const remainingByLine = new Map();
+  (order?.lines || []).forEach((line, index) => {
+    remainingByLine.set(index, Math.max(0, Number(line.quantity || 0) - Number(allocatedByLine.get(index) || 0)));
+  });
+  const remaining = reportStatsForLineQuantities(order, remainingByLine);
+  if (remaining.units || remaining.costValueGbp) undatedParts.push(remaining);
+  const committed = combineReportStats(...committedParts);
+  const undatedCandidate = combineReportStats(...undatedParts);
+  const undatedUnits = Math.max(0, Number(orderStats.units || 0) - Number(committed.units || 0));
+  const undatedStats = {
+    ...undatedCandidate,
+    styles: undatedCandidate.styles.length ? undatedCandidate.styles : orderStats.styles,
+    styleCount: undatedCandidate.styles.length ? undatedCandidate.styleCount : orderStats.styleCount,
+    units: undatedUnits,
+    costValueGbp: Math.max(0, Number(orderStats.costValueGbp || 0) - Number(committed.costValueGbp || 0)),
+    retailValueGbp: Math.max(0, Number(orderStats.retailValueGbp || 0) - Number(committed.retailValueGbp || 0))
+  };
+  const undated = undatedStats.units || undatedStats.costValueGbp
+    ? reportPortionRow(row, undatedStats, { reportRowType: "undated", portionLabel: "Unbatched / no ETA", arrivalDate: "", arrivalSource: "Missing date" })
+    : null;
+  return { dated, undated };
 }
 
 function batchLineQuantityMap(batchLines) {
@@ -4684,6 +4809,7 @@ function buildOrderReports(params = {}) {
     const batchLines = readOrderBatchLines(managedOrder.id);
     const invoices = readOrderInvoices(managedOrder.id, false);
     const row = orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invoices);
+    const portions = orderReportPortions(row, managedOrder.order, batches, batchLines);
     orders.push(row);
 
     incrementReportGroup(supplierGroups, row.supplierName || "No supplier", { orders: 1, units: row.units, valueGbp: row.totalGbp, outstandingGbp: row.invoices.outstanding });
@@ -4697,10 +4823,8 @@ function buildOrderReports(params = {}) {
       incrementReportGroup(categoryGroups, category.label, { orders: 1, units: category.units, valueGbp: category.valueGbp, outstandingGbp: 0 });
     }
 
-    if (row.arrivalDate && dateInRange(row.arrivalDate, dateFrom, dateTo) && workflow.intakeStatus !== "Received") {
-      arrivals.push(row);
-    }
-    if (!row.arrivalDate && workflow.intakeStatus !== "Received") withoutDates.push(row);
+    arrivals.push(...portions.dated.filter(portion => dateInRange(portion.arrivalDate, dateFrom, dateTo)));
+    if (portions.undated) withoutDates.push(portions.undated);
 
     const exceptionReasons = [];
     if (workflow.intakeStatus === "Delayed") exceptionReasons.push("Delayed intake");
@@ -4745,7 +4869,6 @@ function buildOrderReports(params = {}) {
   const metrics = orders.reduce((total, order) => {
     total.orders += 1;
     total.units += Number(order.units || 0);
-    total.arrivalUnits += arrivals.includes(order) ? Number(order.units || 0) : 0;
     total.orderValueGbp += Number(order.totalGbp || 0);
     total.invoicedGbp += Number(order.invoices.totalDue || 0);
     total.paidGbp += Number(order.invoices.totalPaid || 0);
@@ -4755,6 +4878,7 @@ function buildOrderReports(params = {}) {
     total.dataQualityOrders = dataQuality.length;
     return total;
   }, { orders: 0, units: 0, arrivalUnits: 0, orderValueGbp: 0, invoicedGbp: 0, paidGbp: 0, outstandingGbp: 0, exceptionOrders: 0, nextActionOrders: 0, dataQualityOrders: 0 });
+  metrics.arrivalUnits = arrivals.reduce((sum, portion) => sum + Number(portion.units || 0), 0);
 
   return {
     generatedAt: new Date().toISOString(),
