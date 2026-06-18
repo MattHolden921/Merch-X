@@ -328,7 +328,7 @@ function renderMetrics(){
     [missing?"Styles without date":"Styles due",numberFmt.format(totals.styles.size),period],
     ["Cost value",formatMoney(totals.cost),period],
     ["Retail value",formatMoney(totals.retail),period],
-    ["Orders",numberFmt.format(totals.orderIds.size),`${rows.length} ${missing?rows.length===1?"undated balance":"undated balances":rows.length===1?"batch":"batches"}`],
+    ["Orders",numberFmt.format(totals.orderIds.size),`${rows.length} ${missing?rows.length===1?"undated balance":"undated balances":rows.length===1?"due line":"due lines"}`],
     [missing?"Units without date":"Units due",numberFmt.format(totals.units),period],
     ["Exceptions",numberFmt.format(exceptions.length),"orders"],
     ["Outstanding",formatMoney(totals.outstanding),`${finance.length} finance rows`],

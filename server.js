@@ -4641,6 +4641,29 @@ function orderReportPortions(row, order, batches, batchLines) {
     allocatedByLine.set(lineIndex, Number(allocatedByLine.get(lineIndex) || 0) + Number(allocation.quantity || 0));
   }
   const orderStats = reportOrderLineStats(order);
+  if (!(batches || []).length) {
+    if (row.workflow?.intakeStatus === "Received") return { dated: [], undated: null };
+    if (row.arrivalDate) {
+      return {
+        dated: [reportPortionRow(row, orderStats, {
+          reportRowType: "order",
+          portionLabel: "Order ETA",
+          arrivalDate: row.arrivalDate,
+          arrivalSource: row.arrivalSource
+        })],
+        undated: null
+      };
+    }
+    return {
+      dated: [],
+      undated: reportPortionRow(row, orderStats, {
+        reportRowType: "undated",
+        portionLabel: "No batch / no ETA",
+        arrivalDate: "",
+        arrivalSource: "Missing date"
+      })
+    };
+  }
   const dated = [];
   const undatedParts = [];
   const committedParts = [];
