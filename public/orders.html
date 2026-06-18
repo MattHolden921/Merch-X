@@ -87,6 +87,10 @@ textarea{min-height:70px;resize:vertical}
 .workflow-checks{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;font-size:12px;color:var(--ds-text-muted)}
 .workflow-checks label{display:inline-flex;align-items:center;gap:6px}
 .workflow-checks input{width:auto;min-height:0}
+.pah-check{appearance:none;box-sizing:border-box;width:17px!important;height:17px;min-height:17px!important;padding:0;margin:0;border:1px solid var(--ds-line-strong);border-radius:3px;background:var(--ds-bg-surface);display:inline-grid;place-content:center;flex:0 0 17px}
+.pah-check:checked{background:var(--ds-action);border-color:var(--ds-action)}
+.pah-check:checked::after{content:"\2713";color:#fff;font-size:13px;font-weight:700;line-height:1}
+.pah-check:disabled{opacity:1;cursor:not-allowed}
 .file-input{padding:6px 8px;min-height:34px}
 .line-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 .line-tabs button{border:1px solid var(--ds-line-strong);border-radius:var(--ds-radius);background:var(--ds-bg-surface);color:var(--ds-text-muted);font-size:11px;line-height:1;padding:6px 8px;cursor:pointer}
@@ -1015,7 +1019,7 @@ function renderDetail(){
       <div class="work-panel">
         <div class="work-head"><h3>Merchandising</h3><span class="badge ${badgeClass(w.intakeStatus)}">${escapeHtml(w.intakeStatus)}</span></div>
         ${intakeHold}
-        <div class="workflow-checks"><label><input id="pah-uploaded" type="checkbox" ${w.pahUploaded?"checked":""} ${canSaveMerchandising?"":"disabled"} onchange="savePahUploaded(this.checked)"> PAH uploaded</label></div>
+        <div class="workflow-checks"><label><input class="pah-check" id="pah-uploaded" type="checkbox" ${w.pahUploaded?"checked":""} ${canSaveMerchandising?"":"disabled"} onchange="savePahUploaded(this.checked)"> PAH uploaded</label></div>
         <div class="grid2">
           ${select("intake-status","Intake status",intakeStatuses,w.intakeStatus,intakeAttrs)}
           ${input("intake-eta","ETA warehouse",w.intakeEtaDate,"date",intakeAttrs)}
