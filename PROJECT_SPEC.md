@@ -246,7 +246,7 @@ Important principles:
 - Invoice changes can update payment workflow.
 - Archiving hides orders from active creation/bootstrap views but preserves history.
 - Deleting an order should remove related invoice records/files and workflow data only through the server's delete logic.
-- The Orders workspace can print a warehouse-facing image report for the full order, a selected delivery batch, or remaining unbatched units. The report contains product image, SKU, buying code, and quantity only; batch reports use allocated quantities and unbatched reports use ordered quantity less all allocations.
+- The Orders workspace can print a warehouse-facing image report for the full order, a selected delivery batch, or remaining unbatched units. The report contains product image, SKU, buying code, colour/material, and quantity only; batch reports use allocated quantities and unbatched reports use ordered quantity less all allocations.
 
 ### Invoices
 
