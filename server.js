@@ -4667,6 +4667,7 @@ function buildOrderReports(params = {}) {
   const paymentGroups = new Map();
   const intakeGroups = new Map();
   const arrivals = [];
+  const withoutDates = [];
   const exceptions = [];
   const nextActions = [];
   const financeRows = [];
@@ -4699,6 +4700,7 @@ function buildOrderReports(params = {}) {
     if (row.arrivalDate && dateInRange(row.arrivalDate, dateFrom, dateTo) && workflow.intakeStatus !== "Received") {
       arrivals.push(row);
     }
+    if (!row.arrivalDate && workflow.intakeStatus !== "Received") withoutDates.push(row);
 
     const exceptionReasons = [];
     if (workflow.intakeStatus === "Delayed") exceptionReasons.push("Delayed intake");
@@ -4734,6 +4736,7 @@ function buildOrderReports(params = {}) {
 
   orders.sort((a, b) => String(a.arrivalDate || "9999-99-99").localeCompare(String(b.arrivalDate || "9999-99-99")) || String(a.orderNumber).localeCompare(String(b.orderNumber)));
   arrivals.sort((a, b) => String(a.arrivalDate).localeCompare(String(b.arrivalDate)) || String(a.orderNumber).localeCompare(String(b.orderNumber)));
+  withoutDates.sort((a, b) => String(a.supplierName).localeCompare(String(b.supplierName)) || String(a.orderNumber).localeCompare(String(b.orderNumber)));
   exceptions.sort((a, b) => String(a.arrivalDate || "9999-99-99").localeCompare(String(b.arrivalDate || "9999-99-99")) || String(a.orderNumber).localeCompare(String(b.orderNumber)));
   nextActions.sort((a, b) => String(a.workflow.nextActionOwner || "").localeCompare(String(b.workflow.nextActionOwner || "")) || String(a.orderNumber).localeCompare(String(b.orderNumber)));
   financeRows.sort((a, b) => Number(b.invoices.outstanding || 0) - Number(a.invoices.outstanding || 0) || Number(b.totalGbp || 0) - Number(a.totalGbp || 0));
@@ -4772,6 +4775,7 @@ function buildOrderReports(params = {}) {
     },
     reports: {
       arrivals,
+      withoutDates,
       exceptions,
       nextActions,
       finance: financeRows,

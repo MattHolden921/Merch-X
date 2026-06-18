@@ -60,7 +60,8 @@ tr:last-child td{border-bottom:0}
 
   <section class="panel">
     <div class="toolbar">
-      <div class="field"><label>Quick period</label><select class="select" id="window-days"><option value="7">Next 7 days</option><option value="14">Next 14 days</option><option value="30" selected>Next 30 days</option><option value="60">Next 60 days</option><option value="90">Next 90 days</option></select></div>
+      <div class="field"><label>Due scope</label><select class="select" id="due-scope"><option value="dated" selected>Due in period</option><option value="missing">Without a date</option></select></div>
+      <div class="field"><label>Quick period</label><select class="select" id="window-days"><option value="7">Next 1 week</option><option value="14">Next 2 weeks</option><option value="28" selected>Next 4 weeks</option><option value="56">Next 8 weeks</option><option value="84">Next 12 weeks</option></select></div>
       <div class="field"><label>Due from</label><input class="input" id="date-from" type="date"></div>
       <div class="field"><label>Due to</label><input class="input" id="date-to" type="date"></div>
       <div class="field"><label>Supplier</label><select class="select" id="supplier-filter"></select></div>
@@ -94,6 +95,7 @@ const naturalSort=new Intl.Collator("en-GB",{numeric:true,sensitivity:"base"});
 const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
 const tabs=[
   {id:"arrivals",label:"Arrivals"},
+  {id:"withoutDates",label:"Without dates"},
   {id:"exceptions",label:"Exceptions"},
   {id:"nextActions",label:"Next actions"},
   {id:"finance",label:"Finance"},
@@ -162,7 +164,7 @@ function pahCell(row){
   const checked=Boolean(row.workflow?.pahUploaded);
   return `<input class="report-check" type="checkbox" ${checked?"checked":""} disabled aria-label="PAH ${checked?"uploaded":"not uploaded"}">`;
 }
-function rowMatches(row){
+function rowMatches(row,ignoreDate=false){
   const supplier=val("supplier-filter");
   const season=val("season-filter");
   const category=val("category-filter");
@@ -171,19 +173,23 @@ function rowMatches(row){
   const owner=val("owner-filter");
   const dateFrom=val("date-from");
   const dateTo=val("date-to");
+  const dueScope=val("due-scope")||"dated";
+  const dateMatch=ignoreDate||(dueScope==="missing"
+    ?!row.arrivalDate
+    :(!dateFrom||(row.arrivalDate&&row.arrivalDate>=dateFrom))&&(!dateTo||(row.arrivalDate&&row.arrivalDate<=dateTo)));
   return (!supplier||row.supplierName===supplier)
     &&(!season||row.season===season)
     &&(!category||(row.categories||[]).includes(category))
     &&(!intake||row.workflow?.intakeStatus===intake)
     &&(!payment||row.workflow?.paymentStatus===payment)
     &&(!owner||row.workflow?.nextActionOwner===owner)
-    &&(!dateFrom||(row.arrivalDate&&row.arrivalDate>=dateFrom))
-    &&(!dateTo||(row.arrivalDate&&row.arrivalDate<=dateTo));
+    &&dateMatch;
 }
 function filteredRows(id=state.tab){
   const reports=state.data?.reports||{};
-  if(id==="buyingMix")return (reports.orders||[]).filter(rowMatches);
-  return (reports[id]||[]).filter(rowMatches);
+  if(id==="buyingMix")return (reports.orders||[]).filter(row=>rowMatches(row));
+  if(id==="withoutDates")return (reports.withoutDates||[]).filter(row=>rowMatches(row,true));
+  return (reports[id]||[]).filter(row=>rowMatches(row));
 }
 function sortRows(rows,columns){
   const sort=state.sort;
@@ -299,7 +305,7 @@ function renderBuyingMix(){
   return `<div class="mix-layout"><section><div class="panel-title">Open order mix</div>${renderTable(groupRows,groupColumns,"No matching mix rows.")}</section><section><div class="panel-title">Top orders by value</div>${renderTable(topOrders,orderColumns,"No matching orders.")}</section></div>`;
 }
 function renderMetrics(){
-  const rows=(state.data?.reports?.orders||[]).filter(rowMatches);
+  const rows=(state.data?.reports?.orders||[]).filter(row=>rowMatches(row));
   const exceptions=filteredRows("exceptions");
   const finance=filteredRows("finance");
   const dataQuality=filteredRows("dataQuality");
@@ -312,13 +318,14 @@ function renderMetrics(){
     (row.styles||[]).forEach(style=>acc.styles.add(String(style).toLowerCase()));
     return acc;
   },{orders:0,units:0,cost:0,retail:0,outstanding:0,styles:new Set()});
-  const period=`${formatDate(val("date-from"))} to ${formatDate(val("date-to"))}`;
+  const missing=val("due-scope")==="missing";
+  const period=missing?"without a due date":`${formatDate(val("date-from"))} to ${formatDate(val("date-to"))}`;
   const items=[
-    ["Styles due",numberFmt.format(totals.styles.size),period],
-    ["Cost value",formatMoney(totals.cost),"due in period"],
-    ["Retail value",formatMoney(totals.retail),"due in period"],
+    [missing?"Styles without date":"Styles due",numberFmt.format(totals.styles.size),period],
+    ["Cost value",formatMoney(totals.cost),period],
+    ["Retail value",formatMoney(totals.retail),period],
     ["Orders",numberFmt.format(totals.orders),`${state.data?.includeArchived?"all":"active"} scope`],
-    ["Units due",numberFmt.format(totals.units),period],
+    [missing?"Units without date":"Units due",numberFmt.format(totals.units),period],
     ["Exceptions",numberFmt.format(exceptions.length),"orders"],
     ["Outstanding",formatMoney(totals.outstanding),`${finance.length} finance rows`],
     ["Data issues",numberFmt.format(dataQuality.length),"orders"]
@@ -326,11 +333,18 @@ function renderMetrics(){
   el("metrics").innerHTML=items.map(item=>`<div class="metric"><label>${escapeHtml(item[0])}</label><span>${escapeHtml(item[1])}</span><small>${escapeHtml(item[2])}</small></div>`).join("");
 }
 function renderTabs(){
-  el("tabs").innerHTML=tabs.map(tab=>`<button type="button" class="tab ${state.tab===tab.id?"active":""}" onclick="setTab('${tab.id}')">${escapeHtml(tab.label)}</button>`).join("");
+  const missingCount=(state.data?.reports?.withoutDates||[]).filter(row=>rowMatches(row,true)).length;
+  el("tabs").innerHTML=tabs.map(tab=>`<button type="button" class="tab ${state.tab===tab.id?"active":""}" onclick="setTab('${tab.id}')">${escapeHtml(tab.label)}${tab.id==="withoutDates"?` (${numberFmt.format(missingCount)})`:""}</button>`).join("");
 }
 function setTab(tab){
+  if(tab==="withoutDates"){
+    el("due-scope").value="missing";
+    el("window-days").disabled=true;
+    el("date-from").disabled=true;
+    el("date-to").disabled=true;
+  }
   state.tab=tab;
-  const defaults={arrivals:"arrivalDate",exceptions:"reason",nextActions:"owner",finance:"outstanding",buyingMix:"valueGbp",dataQuality:"reason"};
+  const defaults={arrivals:"arrivalDate",withoutDates:"order",exceptions:"reason",nextActions:"owner",finance:"outstanding",buyingMix:"valueGbp",dataQuality:"reason"};
   state.sort={key:defaults[tab]||"order",dir:tab==="finance"||tab==="buyingMix"?"desc":"asc"};
   render();
 }
@@ -340,7 +354,9 @@ function render(){
   renderTabs();
   const active=tabs.find(tab=>tab.id===state.tab);
   el("report-title").textContent=`${active?.label||"Report"} / ${filteredRows().length.toLocaleString("en-GB")} matching rows`;
-  el("report-generated").textContent=`Generated ${new Date(state.data.generatedAt).toLocaleString("en-GB")} / due ${formatDate(val("date-from"))} to ${formatDate(val("date-to"))}`;
+  el("report-generated").textContent=val("due-scope")==="missing"
+    ?`Generated ${new Date(state.data.generatedAt).toLocaleString("en-GB")} / without a due date`
+    :`Generated ${new Date(state.data.generatedAt).toLocaleString("en-GB")} / due ${formatDate(val("date-from"))} to ${formatDate(val("date-to"))}`;
   if(state.tab==="buyingMix"){el("report-body").innerHTML=renderBuyingMix();return;}
   const rows=filteredRows();
   el("report-body").innerHTML=renderTable(rows,columnsFor(state.tab),"No matching report rows.");
@@ -374,6 +390,13 @@ function showError(error){
 ["supplier-filter","season-filter","category-filter","intake-filter","payment-filter","owner-filter"].forEach(id=>el(id).addEventListener("input",render));
 el("window-days").addEventListener("input",()=>{setQuickPeriod();loadReports().catch(showError);});
 ["date-from","date-to","include-archived"].forEach(id=>el(id).addEventListener("input",()=>loadReports().catch(showError)));
+el("due-scope").addEventListener("input",()=>{
+  const missing=val("due-scope")==="missing";
+  el("window-days").disabled=missing;
+  el("date-from").disabled=missing;
+  el("date-to").disabled=missing;
+  setTab(missing?"withoutDates":"arrivals");
+});
 el("refresh-btn").addEventListener("click",()=>loadReports().catch(showError));
 setQuickPeriod();
 loadReports().catch(showError);
