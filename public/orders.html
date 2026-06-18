@@ -576,7 +576,7 @@ function renderLineTable(order){
   if(!lines.length)return "";
   const visible=filteredOrderLines(lines);
   return `<section class="work-panel" style="margin-top:14px">
-    <div class="work-head"><h3>Order lines</h3><div class="actions"><span class="pill">${visible.length} of ${lines.length} lines</span><button type="button" class="btn" onclick="exportOrderLinesExcel()">Export Excel</button></div></div>
+    <div class="work-head"><h3>Order lines</h3><div class="actions"><span class="pill">${visible.length} of ${lines.length} lines</span><button type="button" class="btn" onclick="exportWarehouseReport()">Warehouse report</button><button type="button" class="btn" onclick="exportOrderLinesExcel()">Export Excel</button></div></div>
     ${lineFilterTabs()}
     <div class="line-table-wrap"><table class="line-table">
       <thead><tr><th>Batch</th><th>Product</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
@@ -599,6 +599,96 @@ function renderLineTable(order){
       }).join("")}</tbody>
     </table></div>
   </section>`;
+}
+
+function warehouseReportScope(){
+  const filter=state.lineBatchFilter||"all";
+  if(filter==="all")return "Full order";
+  if(filter==="unbatched")return "Unbatched / remaining";
+  return batchDisplayName(batchById(filter)||{});
+}
+
+function warehouseReportLines(lines){
+  const filter=state.lineBatchFilter||"all";
+  return lines.map((line,index)=>{
+    const orderedQuantity=Math.max(0,Number(line.quantity||0));
+    let quantity=orderedQuantity;
+    if(filter==="unbatched")quantity=Math.max(0,orderedQuantity-allocatedQuantityForLine(index));
+    if(filter!=="all"&&filter!=="unbatched"){
+      quantity=allocationsForLine(index)
+        .filter(allocation=>allocation.batchId===filter)
+        .reduce((total,allocation)=>total+Number(allocation.quantity||0),0);
+    }
+    return {line,index,quantity};
+  }).filter(item=>item.quantity>0);
+}
+
+function warehouseImageUrl(value){
+  const raw=String(value||"").trim();
+  if(!raw)return "";
+  if(/^data:image\//i.test(raw))return raw;
+  try{
+    const url=new URL(raw,location.href);
+    return ["http:","https:"].includes(url.protocol)?url.href:"";
+  }catch(error){
+    return "";
+  }
+}
+
+function exportWarehouseReport(){
+  const order=state.selected;
+  const lines=order?.order?.lines||[];
+  if(!order||!lines.length)return;
+  const reportLines=warehouseReportLines(lines);
+  if(!reportLines.length){
+    showStatus(`There are no units in the ${warehouseReportScope()} view to export.`,"err");
+    return;
+  }
+  const reportWindow=window.open("","_blank");
+  if(!reportWindow){
+    showStatus("Allow pop-ups to open the warehouse report.","err");
+    return;
+  }
+  const generatedAt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:"numeric"}).format(new Date());
+  const rows=reportLines.map(({line,quantity})=>{
+    const imageUrl=warehouseImageUrl(line.imageUrl||line.confirmedImageUrl||line.pendingImageUrl);
+    const image=imageUrl
+      ? `<div class="image-frame"><img src="${attr(imageUrl)}" alt="${attr(line.sku?`Product ${line.sku}`:"Product image")}"><div class="image-missing" hidden>No image available</div></div>`
+      : `<div class="image-frame"><div class="image-missing">No image available</div></div>`;
+    return `<tr>
+      <td class="image-cell">${image}</td>
+      <td class="code-cell"><span>SKU</span><strong>${escapeHtml(line.sku||"Not supplied")}</strong></td>
+      <td class="code-cell"><span>Buying code</span><strong>${escapeHtml(line.buyingCode||line.supplierSku||"Not supplied")}</strong></td>
+      <td class="qty-cell"><span>QTY</span><strong>${Number(quantity).toLocaleString("en-GB")}</strong></td>
+    </tr>`;
+  }).join("");
+  const printHtml=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHtml(order.orderNumber||"Order")} warehouse report</title>
+    <style>
+      *{box-sizing:border-box}body{margin:0;background:#fff;color:#172033;font-family:Arial,sans-serif}.page{padding:13mm 12mm}
+      header{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;border-bottom:2px solid #172033;padding-bottom:9px;margin-bottom:10px}
+      h1{font-size:21px;line-height:1.15;margin:0 0 5px}.supplier{font-size:12px;color:#526176;margin:0}.meta{text-align:right;font-size:10px;line-height:1.55;color:#526176}.meta strong{display:block;color:#172033;font-size:14px}
+      table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}th{background:#eef2f6;color:#526176;font-size:9px;letter-spacing:.06em;text-align:left;text-transform:uppercase;padding:6px 8px;border:1px solid #cdd6e1}
+      th:first-child{width:48mm}th:nth-child(2){width:28%}th:nth-child(3){width:32%}th:last-child{width:25mm;text-align:center}
+      td{height:50mm;padding:5px 8px;border:1px solid #cdd6e1;vertical-align:middle}.image-cell{padding:3mm}.image-frame{width:42mm;height:42mm;display:flex;align-items:center;justify-content:center;background:#f6f8fb;border:1px solid #e1e7ef;overflow:hidden}.image-frame img{display:block;width:100%;height:100%;object-fit:contain}.image-missing{padding:8px;text-align:center;color:#8995a5;font-size:10px;line-height:1.35}
+      .code-cell span,.qty-cell span{display:block;margin-bottom:6px;color:#718096;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.code-cell strong{display:block;font-size:17px;line-height:1.25;overflow-wrap:anywhere}.qty-cell{text-align:center}.qty-cell strong{display:block;font-size:29px;line-height:1}
+      @page{size:A4 portrait;margin:0}@media print{.page{padding:11mm 10mm}tr{break-inside:avoid;page-break-inside:avoid}}
+    </style></head><body><main class="page">
+      <header><div><h1>Warehouse order report</h1><p class="supplier">${escapeHtml(order.supplierName||"Supplier not supplied")}</p></div><div class="meta"><strong>${escapeHtml(order.orderNumber||"Order")}</strong><div>Scope: ${escapeHtml(warehouseReportScope())}</div><div>Generated: ${escapeHtml(generatedAt)}</div></div></header>
+      <table><thead><tr><th>Product image</th><th>SKU</th><th>Buying code</th><th>QTY</th></tr></thead><tbody>${rows}</tbody></table>
+    </main><script>
+      const images=[...document.images];
+      const loaded=Promise.all(images.map(image=>new Promise(resolve=>{
+        const finish=()=>resolve();
+        const failed=()=>{image.hidden=true;const fallback=image.nextElementSibling;if(fallback)fallback.hidden=false;resolve();};
+        if(image.complete){image.naturalWidth?finish():failed();return;}
+        image.addEventListener("load",finish,{once:true});
+        image.addEventListener("error",failed,{once:true});
+      })));
+      Promise.race([loaded,new Promise(resolve=>setTimeout(resolve,4000))]).then(()=>setTimeout(()=>window.print(),100));
+    <\/script></body></html>`;
+  reportWindow.document.open();
+  reportWindow.document.write(printHtml);
+  reportWindow.document.close();
 }
 
 function exportOrderLinesExcel(){

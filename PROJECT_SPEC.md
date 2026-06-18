@@ -1,6 +1,6 @@
 # Merch X Project Spec
 
-Last reviewed: 2026-06-11
+Last reviewed: 2026-06-18
 
 This is the shared logic and product reference for Merch X. Keep it current when the app's workflows, calculations, data model, integrations, or page responsibilities change.
 
@@ -38,7 +38,7 @@ The app favours simple operational tools over a large framework:
 - `public/design-system.css`: shared visual system.
 - `public/bestsellers.html`: TY/LY bestsellers, revenue analysis, stock position, slow sellers, methodology, trade last week, CSV/import workflows.
 - `public/order-form.html`: purchase order creation, SKU issuing/lookup, line image upload, printable PO output.
-- `public/orders.html`: order workspace, approval/payment/intake workflow, invoices, notes, archive/delete.
+- `public/orders.html`: order workspace, approval/payment/intake workflow, invoices, notes, archive/delete, and printable warehouse image reports.
 - `public/order-reports.html`: read-only operational reports for arrivals, intake exceptions, next actions, finance, buying mix, and data quality.
 - `public/sku-register.html`: local SKU register and safe deletion of unused issued SKUs.
 - `public/products.html`: product and supplier master-data workspace, local SKU enrichment, readiness review, and Shopify draft push workflow.
@@ -246,6 +246,7 @@ Important principles:
 - Invoice changes can update payment workflow.
 - Archiving hides orders from active creation/bootstrap views but preserves history.
 - Deleting an order should remove related invoice records/files and workflow data only through the server's delete logic.
+- The Orders workspace can print a warehouse-facing image report for the full order, a selected delivery batch, or remaining unbatched units. The report contains product image, SKU, buying code, and quantity only; batch reports use allocated quantities and unbatched reports use ordered quantity less all allocations.
 
 ### Invoices
 
