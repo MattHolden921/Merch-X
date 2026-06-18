@@ -189,6 +189,7 @@ function filteredRows(id=state.tab){
   const reports=state.data?.reports||{};
   if(id==="buyingMix")return (reports.orders||[]).filter(row=>rowMatches(row));
   if(id==="withoutDates")return (reports.withoutDates||[]).filter(row=>rowMatches(row,true));
+  if(id==="nextActions")return (reports.nextActions||[]).filter(row=>rowMatches(row,true));
   return (reports[id]||[]).filter(row=>rowMatches(row));
 }
 function sortRows(rows,columns){
@@ -305,12 +306,14 @@ function renderBuyingMix(){
   return `<div class="mix-layout"><section><div class="panel-title">Open order mix</div>${renderTable(groupRows,groupColumns,"No matching mix rows.")}</section><section><div class="panel-title">Top orders by value</div>${renderTable(topOrders,orderColumns,"No matching orders.")}</section></div>`;
 }
 function renderMetrics(){
-  const missing=val("due-scope")==="missing";
-  const source=missing?(state.data?.reports?.withoutDates||[]):(state.data?.reports?.arrivals||[]);
-  const rows=source.filter(row=>rowMatches(row,missing));
-  const exceptions=filteredRows("exceptions");
-  const finance=filteredRows("finance");
-  const dataQuality=filteredRows("dataQuality");
+  const allActions=state.tab==="nextActions";
+  const missing=!allActions&&val("due-scope")==="missing";
+  const source=allActions?(state.data?.reports?.nextActions||[]):missing?(state.data?.reports?.withoutDates||[]):(state.data?.reports?.arrivals||[]);
+  const rows=source.filter(row=>rowMatches(row,allActions||missing));
+  const reportRows=id=>(state.data?.reports?.[id]||[]).filter(row=>rowMatches(row,allActions));
+  const exceptions=reportRows("exceptions");
+  const finance=reportRows("finance");
+  const dataQuality=reportRows("dataQuality");
   const totals=rows.reduce((acc,row)=>{
     acc.orderIds.add(String(row.id||row.orderNumber||""));
     acc.units+=Number(row.units||0);
@@ -323,13 +326,13 @@ function renderMetrics(){
     (row.styles||[]).forEach(style=>acc.styles.add(String(style).toLowerCase()));
     return acc;
   },{orderIds:new Set(),outstandingOrderIds:new Set(),units:0,cost:0,retail:0,outstanding:0,styles:new Set()});
-  const period=missing?"without a due date":`${formatDate(val("date-from"))} to ${formatDate(val("date-to"))}`;
+  const period=allActions?"all orders":missing?"without a due date":`${formatDate(val("date-from"))} to ${formatDate(val("date-to"))}`;
   const items=[
-    [missing?"Styles without date":"Styles due",numberFmt.format(totals.styles.size),period],
+    [allActions?"Styles":missing?"Styles without date":"Styles due",numberFmt.format(totals.styles.size),period],
     ["Cost value",formatMoney(totals.cost),period],
     ["Retail value",formatMoney(totals.retail),period],
-    ["Orders",numberFmt.format(totals.orderIds.size),`${rows.length} ${missing?rows.length===1?"undated balance":"undated balances":rows.length===1?"due line":"due lines"}`],
-    [missing?"Units without date":"Units due",numberFmt.format(totals.units),period],
+    ["Orders",numberFmt.format(totals.orderIds.size),allActions?"complete action queue":`${rows.length} ${missing?rows.length===1?"undated balance":"undated balances":rows.length===1?"due line":"due lines"}`],
+    [allActions?"Units":missing?"Units without date":"Units due",numberFmt.format(totals.units),period],
     ["Exceptions",numberFmt.format(exceptions.length),"orders"],
     ["Outstanding",formatMoney(totals.outstanding),`${finance.length} finance rows`],
     ["Data issues",numberFmt.format(dataQuality.length),"orders"]
@@ -358,7 +361,9 @@ function render(){
   renderTabs();
   const active=tabs.find(tab=>tab.id===state.tab);
   el("report-title").textContent=`${active?.label||"Report"} / ${filteredRows().length.toLocaleString("en-GB")} matching rows`;
-  el("report-generated").textContent=val("due-scope")==="missing"
+  el("report-generated").textContent=state.tab==="nextActions"
+    ?`Generated ${new Date(state.data.generatedAt).toLocaleString("en-GB")} / all orders`
+    :val("due-scope")==="missing"
     ?`Generated ${new Date(state.data.generatedAt).toLocaleString("en-GB")} / without a due date`
     :`Generated ${new Date(state.data.generatedAt).toLocaleString("en-GB")} / due ${formatDate(val("date-from"))} to ${formatDate(val("date-to"))}`;
   if(state.tab==="buyingMix"){el("report-body").innerHTML=renderBuyingMix();return;}
@@ -399,7 +404,7 @@ el("due-scope").addEventListener("input",()=>{
   el("window-days").disabled=missing;
   el("date-from").disabled=missing;
   el("date-to").disabled=missing;
-  setTab(missing?"withoutDates":"arrivals");
+  setTab(state.tab==="nextActions"?"nextActions":missing?"withoutDates":"arrivals");
 });
 el("refresh-btn").addEventListener("click",()=>loadReports().catch(showError));
 setQuickPeriod();
