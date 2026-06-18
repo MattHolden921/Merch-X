@@ -25,6 +25,8 @@ th:hover{color:var(--ds-text)}
 td{padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:top;color:var(--ds-text-muted)}
 tr:last-child td{border-bottom:0}
 .num{text-align:right;white-space:nowrap}
+.check-cell{text-align:center;white-space:nowrap}
+.report-check{width:16px;height:16px;min-height:16px;margin:1px 0 0;accent-color:var(--ds-action);pointer-events:none}
 .primary-cell strong{display:block;color:var(--ds-text);font-size:12px;margin-bottom:2px}
 .primary-cell span,.subline{display:block;color:var(--ds-text-soft);font-size:11px;line-height:1.4}
 .badge{display:inline-flex;align-items:center;min-height:20px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:2px 7px;font-size:10px;font-weight:650;color:var(--ds-text-muted);background:var(--ds-bg-muted);white-space:nowrap}
@@ -83,6 +85,7 @@ tr:last-child td{border-bottom:0}
 const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"});
 const numberFmt=new Intl.NumberFormat("en-GB");
 const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+const naturalSort=new Intl.Collator("en-GB",{numeric:true,sensitivity:"base"});
 const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
 const tabs=[
   {id:"arrivals",label:"Arrivals"},
@@ -139,6 +142,10 @@ function orderCell(row){
 function statusBadge(value){
   return `<span class="badge ${badgeClass(value)}">${escapeHtml(value||"-")}</span>`;
 }
+function pahCell(row){
+  const checked=Boolean(row.workflow?.pahUploaded);
+  return `<input class="report-check" type="checkbox" ${checked?"checked":""} disabled aria-label="PAH ${checked?"uploaded":"not uploaded"}">`;
+}
 function rowMatches(row){
   const supplier=val("supplier-filter");
   const season=val("season-filter");
@@ -166,7 +173,7 @@ function sortRows(rows,columns){
     const av=column.sort?column.sort(a):(a[column.key]??"");
     const bv=column.sort?column.sort(b):(b[column.key]??"");
     if(typeof av==="number"||typeof bv==="number")return (Number(av||0)-Number(bv||0))*dir;
-    return String(av||"").localeCompare(String(bv||""))*dir;
+    return naturalSort.compare(String(av||""),String(bv||""))*dir;
   });
 }
 function renderTable(rows,columns,emptyText){
@@ -180,7 +187,8 @@ function setSort(key){
 }
 function columnsFor(tab){
   const base=[
-    {key:"order",label:"Order",render:orderCell,sort:row=>row.orderNumber},
+    {key:"order",label:"PO number",render:orderCell,sort:row=>row.orderNumber},
+    {key:"pah",label:"PAH",className:"check-cell",render:pahCell,sort:row=>Number(Boolean(row.workflow?.pahUploaded))},
     {key:"arrivalDate",label:"Date",render:row=>`${formatDate(row.arrivalDate)}<span class="subline">${escapeHtml(row.arrivalSource||"")}</span>`,sort:row=>row.arrivalDate||"9999-99-99"},
     {key:"units",label:"Units",className:"num",render:row=>numberFmt.format(Number(row.units||0)),sort:row=>Number(row.units||0)},
     {key:"totalGbp",label:"Value",className:"num",render:row=>formatMoney(row.totalGbp),sort:row=>Number(row.totalGbp||0)},
@@ -190,36 +198,36 @@ function columnsFor(tab){
     {key:"open",label:"",render:openLink,sort:row=>row.orderNumber}
   ];
   if(tab==="exceptions")return [
-    base[0],
+    base[0],base[1],
     {key:"reason",label:"Reason",render:row=>escapeHtml(row.reason),sort:row=>row.reason},
-    base[1],base[2],
+    base[2],base[3],
     {key:"outstanding",label:"Outstanding",className:"num",render:row=>numberFmt.format(Number(row.batches?.outstandingUnits||0)),sort:row=>Number(row.batches?.outstandingUnits||0)},
-    base[4],base[6],base[7]
+    base[5],base[7],base[8]
   ];
   if(tab==="nextActions")return [
-    base[0],
+    base[0],base[1],
     {key:"reason",label:"Queue",render:row=>escapeHtml(row.reason),sort:row=>row.reason},
-    base[6],
+    base[7],
     {key:"approval",label:"Approval",render:row=>statusBadge(row.workflow?.approvalStatus),sort:row=>row.workflow?.approvalStatus||""},
-    base[5],base[4],base[1],base[7]
+    base[6],base[5],base[2],base[8]
   ];
   if(tab==="finance")return [
-    base[0],
+    base[0],base[1],
     {key:"payment",label:"Payment",render:row=>statusBadge(row.workflow?.paymentStatus),sort:row=>row.workflow?.paymentStatus||""},
     {key:"orderValue",label:"Order value",className:"num",render:row=>formatMoney(row.invoices?.orderTotal||row.totalGbp),sort:row=>Number(row.invoices?.orderTotal||row.totalGbp||0)},
     {key:"invoiced",label:"Invoiced",className:"num",render:row=>formatMoney(row.invoices?.totalDue),sort:row=>Number(row.invoices?.totalDue||0)},
     {key:"paid",label:"Paid",className:"num",render:row=>formatMoney(row.invoices?.totalPaid),sort:row=>Number(row.invoices?.totalPaid||0)},
     {key:"outstanding",label:"Outstanding",className:"num",render:row=>formatMoney(row.invoices?.outstanding),sort:row=>Number(row.invoices?.outstanding||0)},
     {key:"invoices",label:"Invoices",className:"num",render:row=>numberFmt.format(Number(row.invoices?.count||0)),sort:row=>Number(row.invoices?.count||0)},
-    base[7]
+    base[8]
   ];
   if(tab==="dataQuality")return [
-    base[0],
+    base[0],base[1],
     {key:"reason",label:"Issue",render:row=>escapeHtml(row.reason),sort:row=>row.reason},
     {key:"unbatched",label:"Unbatched",className:"num",render:row=>numberFmt.format(Number(row.batches?.unbatchedUnits||0)),sort:row=>Number(row.batches?.unbatchedUnits||0)},
     {key:"batchLines",label:"Batches without lines",className:"num",render:row=>numberFmt.format(Number(row.batches?.batchesWithoutLines||0)),sort:row=>Number(row.batches?.batchesWithoutLines||0)},
     {key:"invoiceBatch",label:"Invoices without batch",className:"num",render:row=>numberFmt.format(Number(row.invoices?.invoiceWithoutBatch||0)),sort:row=>Number(row.invoices?.invoiceWithoutBatch||0)},
-    base[1],base[6],base[7]
+    base[2],base[7],base[8]
   ];
   return base;
 }
@@ -257,7 +265,8 @@ function renderBuyingMix(){
     {key:"outstandingGbp",label:"Outstanding",className:"num",render:row=>formatMoney(row.outstandingGbp),sort:row=>row.outstandingGbp}
   ];
   const orderColumns=[
-    {key:"order",label:"Order",render:orderCell,sort:row=>row.orderNumber},
+    {key:"order",label:"PO number",render:orderCell,sort:row=>row.orderNumber},
+    {key:"pah",label:"PAH",className:"check-cell",render:pahCell,sort:row=>Number(Boolean(row.workflow?.pahUploaded))},
     {key:"valueGbp",label:"Value",className:"num",render:row=>formatMoney(row.totalGbp),sort:row=>Number(row.totalGbp||0)},
     {key:"units",label:"Units",className:"num",render:row=>numberFmt.format(Number(row.units||0)),sort:row=>Number(row.units||0)},
     {key:"outstanding",label:"Outstanding",className:"num",render:row=>formatMoney(row.invoices?.outstanding),sort:row=>Number(row.invoices?.outstanding||0)},

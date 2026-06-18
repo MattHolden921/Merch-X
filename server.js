@@ -4589,6 +4589,7 @@ function orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invo
       approvalStatus: workflow.approvalStatus,
       paymentStatus: workflow.paymentStatus,
       paymentDueDate: workflow.paymentDueDate,
+      pahUploaded: Boolean(workflow.pahUploaded),
       intakeStatus: workflow.intakeStatus,
       intakeEtaDate: workflow.intakeEtaDate,
       nextActionOwner: workflow.nextActionOwner,
