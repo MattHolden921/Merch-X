@@ -45,6 +45,7 @@ The app favours simple operational tools over a large framework:
 - `public/merchandising.html`: Shopify product merchandising view using product, order, and optional GA4 metrics.
 - `public/collection-planner.html`: Shopify collection reorder planning and apply-to-Shopify workflow.
 - `public/weekly-actions.html`: action board generated from saved bestsellers periods.
+- `public/email-merchandising.html`: guided six-product email campaign builder, Klaviyo draft handoff, campaign history, and performance reporting.
 - `README.md`: setup and storage overview.
 - `DESIGN.md`: visual/design guidance.
 
@@ -78,6 +79,7 @@ Primary table groups:
 - Collection reorder: `collection_reorder_audit`.
 - Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
 - Weekly actions: `weekly_actions`, `weekly_action_events`.
+- Email merchandising: `email_campaigns`, immutable product snapshots in `email_campaign_products`, and source-specific `email_campaign_metric_snapshots`.
 
 Legacy/prototype data:
 
@@ -127,6 +129,17 @@ Used for:
 - Product view/add/purchase/revenue metrics merged into merchandising and collection planning reports.
 - Google OAuth start/callback endpoints can write a refresh token back to `.env`.
 
+### Klaviyo
+
+Configuration:
+
+- `KLAVIYO_PRIVATE_API_KEY` and pinned `KLAVIYO_API_REVISION`.
+- `KLAVIYO_DEFAULT_AUDIENCE_ID` for the draft campaign's initial audience; marketing must confirm the audience in Klaviyo before sending.
+- Either `KLAVIYO_BASE_TEMPLATE_ID` or `KLAVIYO_BASE_TEMPLATE_PATH`. The template must contain `{{MERCH_X_PRODUCTS}}`; optional heading and preheader markers are `{{MERCH_X_HEADING}}` and `{{MERCH_X_PREHEADER}}`.
+- `KLAVIYO_CONVERSION_METRIC_ID` is optional for campaign value reporting. `STOREFRONT_URL` is used when Shopify does not return a complete online store URL.
+
+Merch X creates templates and draft campaigns but never schedules or sends them. Klaviyo remains responsible for audience confirmation, compliance, scheduling, and sending.
+
 ## Main API Surface
 
 Reports and actions:
@@ -143,6 +156,12 @@ Reports and actions:
 - `POST /api/weekly-actions/update`
 - `GET /api/auth/google/start`
 - `GET /api/auth/google/callback`
+- `GET /api/email-campaigns`
+- `POST /api/email-campaigns/recommendations`
+- `POST /api/email-campaigns/refresh-data`
+- `POST /api/email-campaigns/save`
+- `POST /api/email-campaigns/klaviyo-draft`
+- `POST /api/email-campaigns/sync-results`
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
 - `GET /api/admin/users`
@@ -299,6 +318,18 @@ Guardrails:
 - Reorder jobs are polled until complete/error.
 - Successful applies are written to `collection_reorder_audit`.
 - After apply, the user should sync collections again to verify live Shopify order.
+
+### Email Merchandiser
+
+The Email Merchandiser ranks active, published Shopify products with at least three units of stock, a product image, price, and storefront URL. Its objectives are Balanced Mix, New In, Underexposed, Never Featured, and Proven Performers. Scores combine objective relevance with stock, margin, sales, GA4 engagement, launch recency, feature history, campaign theme, and capsule cohesion.
+
+Shopify products/orders and GA4 metrics are fetched into one shared `email_merchandising:weekly` record in `report_snapshots`. Generating or regenerating a capsule reads that snapshot without calling external APIs. Users explicitly refresh it about once per week; snapshots older than seven days remain usable but show a stale-data warning, and a failed refresh leaves the previous successful snapshot intact.
+
+Each capsule contains exactly six products. Cohesion strongly rewards shared material/style terms, campaign-theme matches, season, compatible colours, related product types, and price proximity. More than two products of one type or colour carries a diversity penalty rather than a hard exclusion, preventing an unrelated sixth choice from being forced into the capsule. Users can pin, remove, reorder, search all eligible alternatives, and drag replacements directly into any of the six slots before saving. Saved rows snapshot the product content used in the campaign.
+
+Products from Klaviyo-confirmed sent campaigns are excluded for 28 days and receive a diminishing score penalty until day 56. Unsent drafts do not start cooldown. Product links use the campaign code and slot/product identifiers in `utm_campaign` and `utm_content`. Results sync stores Klaviyo engagement and GA4 campaign revenue snapshots independently, so one failed integration can be retried without losing the other source.
+
+Marketing, Merchandising, and Admin users can build campaigns, create Klaviyo drafts, and refresh results. Other active users have read-only campaign history and performance access.
 
 ## Frontend Behaviour Principles
 

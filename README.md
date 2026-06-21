@@ -59,6 +59,10 @@ NOTIFICATION_DIGEST_DELAY_MINUTES=10
 
 Order handoff emails are sent immediately. Weekly Action handoffs, owner changes, and blocked/unblocked updates are grouped into one email per user after the digest delay.
 
+## Email merchandising and Klaviyo
+
+The Email Merchandiser uses the existing Shopify and GA4 connections. To create Klaviyo drafts, configure `KLAVIYO_PRIVATE_API_KEY`, `KLAVIYO_DEFAULT_AUDIENCE_ID`, and `STOREFRONT_URL`. Optionally set `KLAVIYO_BASE_TEMPLATE_ID` or `KLAVIYO_BASE_TEMPLATE_PATH`; custom templates must include `{{MERCH_X_PRODUCTS}}`. Merch X creates drafts only and never schedules or sends campaigns.
+
 ## Database
 
 Order forms, suppliers, saved product details, invoice metadata, and workflow status are stored in SQLite. Uploaded invoice files and order/product images are stored on disk and referenced from SQLite.

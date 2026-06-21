@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const Database = require("better-sqlite3");
+const { createEmailCampaignService } = require("./lib/email-campaign-service");
 
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
@@ -63,7 +64,7 @@ const oauthStateCookieName = "mx_oauth_state";
 const oauthNextCookieName = "mx_oauth_next";
 const csrfHeaderName = "x-csrf-token";
 const sessionDurationMs = 14 * 24 * 60 * 60 * 1000;
-const authRoles = ["Admin", "Buyer", "Buying Director", "Finance", "Merchandising"];
+const authRoles = ["Admin", "Buyer", "Buying Director", "Finance", "Merchandising", "Marketing"];
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -533,6 +534,7 @@ function normalizeProduct(product, orderMetrics) {
     status,
     title: product.title,
     handle: product.handle,
+    onlineStoreUrl: product.onlineStoreUrl || "",
     vendor: product.vendor,
     productType: product.productType,
     tags: product.tags,
@@ -896,6 +898,10 @@ async function fetchShopifyMerchandising(req, res) {
           status
           title
           handle
+          onlineStoreUrl
+          createdAt
+          publishedAt
+          updatedAt
           vendor
           productType
           tags
@@ -3510,6 +3516,56 @@ function openOrderSqliteDb() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS email_campaigns (
+      id TEXT PRIMARY KEY,
+      campaign_code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      objective TEXT NOT NULL DEFAULT 'balanced',
+      theme TEXT,
+      subject TEXT,
+      preheader TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      source_start_date TEXT,
+      source_end_date TEXT,
+      klaviyo_campaign_id TEXT,
+      klaviyo_template_id TEXT,
+      klaviyo_message_id TEXT,
+      klaviyo_status TEXT,
+      sent_at TEXT,
+      created_by_user_id TEXT,
+      created_by_name TEXT,
+      last_error TEXT,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS email_campaign_products (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL,
+      product_key TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      rationale TEXT,
+      score REAL DEFAULT 0,
+      tracked_url TEXT,
+      snapshot_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(campaign_id, product_key),
+      UNIQUE(campaign_id, position)
+    );
+
+    CREATE TABLE IF NOT EXISTS email_campaign_metric_snapshots (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      window_start TEXT,
+      window_end TEXT,
+      metrics_json TEXT NOT NULL,
+      error TEXT,
+      fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_gid ON collection_reorder_audit(collection_gid);
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id, expires_at);
@@ -3535,6 +3591,10 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_weekly_actions_dedupe ON weekly_actions(dedupe_key, status, updated_at);
     CREATE INDEX IF NOT EXISTS idx_weekly_actions_source ON weekly_actions(source_period_id, action_type);
     CREATE INDEX IF NOT EXISTS idx_weekly_action_events_action ON weekly_action_events(action_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_email_campaigns_status ON email_campaigns(status, sent_at, created_at);
+    CREATE INDEX IF NOT EXISTS idx_email_campaign_products_campaign ON email_campaign_products(campaign_id, position);
+    CREATE INDEX IF NOT EXISTS idx_email_campaign_products_key ON email_campaign_products(product_key, campaign_id);
+    CREATE INDEX IF NOT EXISTS idx_email_campaign_metrics_campaign ON email_campaign_metric_snapshots(campaign_id, fetched_at);
   `);
   const orderColumns = orderSqliteDb.prepare("PRAGMA table_info(orders)").all().map(column => column.name);
   if (!orderColumns.includes("archived_at")) {
@@ -6354,6 +6414,7 @@ function userPermissions(user) {
     permissions.add("orders:archive");
     permissions.add("weekly:update");
   }
+  if (userHasRole(user, ["Marketing", "Merchandising"])) permissions.add("email-campaigns:write");
   return [...permissions];
 }
 
@@ -8231,8 +8292,96 @@ async function reconcileOrderProductsFromShopify(order, req) {
   return { order: afterOrder, before, after, results };
 }
 
+function captureShopifyMerchandising(range) {
+  return new Promise((resolve, reject) => {
+    let statusCode = 200;
+    const req = { url: `/api/shopify-merchandising?startDate=${encodeURIComponent(range.startDate)}&endDate=${encodeURIComponent(range.endDate)}&limit=all`, headers: { host: "localhost" } };
+    const res = {
+      writeHead(status) { statusCode = status; },
+      end(body) {
+        const payload = parseJson(body, {});
+        if (statusCode >= 400) reject(new Error(payload.message || payload.error || "Could not load Shopify products."));
+        else resolve(payload);
+      }
+    };
+    fetchShopifyMerchandising(req, res).catch(reject);
+  });
+}
+
+const emailCampaignService = createEmailCampaignService({
+  openDb: openOrderSqliteDb,
+  requestJson,
+  fetchProducts: captureShopifyMerchandising,
+  googleAccessToken,
+  gaConfig,
+  actorName
+});
+
 async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (req.method === "GET" && url.pathname === "/api/email-campaigns") {
+    const cfg = emailCampaignService.config();
+    sendJson(res, 200, { campaigns: emailCampaignService.list(), cache: emailCampaignService.cacheStatus(), canWrite: userHasRole(req.currentUser, ["Marketing", "Merchandising", "Admin"]), integrations: { klaviyoConfigured: Boolean(cfg.privateApiKey && cfg.defaultAudienceId), ga4Configured: Boolean(gaConfig().propertyId), shopifyConfigured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret) } });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/email-campaigns/refresh-data") {
+    if (!requireRoles(req, res, ["Marketing", "Merchandising", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      const result = await emailCampaignService.refreshData(body);
+      sendJson(res, 200, { ok: true, cache: result.cache, integrations: { orders: Boolean(result.data.ordersAvailable), ga4: Boolean(result.data.gaAvailable), gaMessage: result.data.gaMessage || "" } });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not refresh product data." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/email-campaigns/recommendations") {
+    if (!requireRoles(req, res, ["Marketing", "Merchandising", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      const result = await emailCampaignService.recommendations(body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not generate recommendations." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/email-campaigns/save") {
+    if (!requireRoles(req, res, ["Marketing", "Merchandising", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, { ok: true, campaign: emailCampaignService.save(body, req) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save campaign." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/email-campaigns/klaviyo-draft") {
+    if (!requireRoles(req, res, ["Marketing", "Merchandising", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, { ok: true, campaign: await emailCampaignService.createDraft(body.id) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not create Klaviyo draft." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/email-campaigns/sync-results") {
+    if (!requireRoles(req, res, ["Marketing", "Merchandising", "Admin"])) return true;
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, { ok: true, campaign: await emailCampaignService.sync(body.id) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not sync campaign results." });
+    }
+    return true;
+  }
 
   if (req.method === "GET" && url.pathname === "/api/products") {
     const products = readCatalogProducts({ includeArchived: url.searchParams.get("includeArchived") === "1" });
