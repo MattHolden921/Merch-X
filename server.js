@@ -6,6 +6,7 @@ const path = require("node:path");
 const Database = require("better-sqlite3");
 const { createEmailCampaignService } = require("./lib/email-campaign-service");
 const { buildLabelJobSnapshot, normalizeDoubleBarcodeSnapshot } = require("./lib/label-jobs");
+const { DEFAULT_PAH_SETTINGS, buildPahReport, safeSettings: safePahSettings } = require("./lib/pah-report");
 
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
@@ -114,6 +115,16 @@ function sendHtml(res, status, html) {
     "expires": "0"
   });
   res.end(html);
+}
+
+function sendCsv(res, filename, content) {
+  res.writeHead(200, {
+    "content-type": "text/csv; charset=utf-8",
+    "content-disposition": `attachment; filename="${String(filename || "PAH.csv").replace(/["\r\n]/g, "")}"`,
+    "cache-control": "no-store, no-cache, must-revalidate",
+    ...corsHeaders()
+  });
+  res.end(content);
 }
 
 function staticHeaders(ext) {
@@ -3698,6 +3709,10 @@ function openOrderSqliteDb() {
   migrateInvoiceFilesToDisk(orderSqliteDb);
   importOrderJsonIfNeeded(orderSqliteDb);
   migrateOrderImagesToDisk(orderSqliteDb);
+  orderSqliteDb.prepare(`
+    INSERT OR IGNORE INTO app_settings (key, value, updated_at)
+    VALUES ('pahCarrier', ?, CURRENT_TIMESTAMP)
+  `).run(JSON.stringify(DEFAULT_PAH_SETTINGS));
   syncAllBatchPaymentStatusesFromInvoices();
   return orderSqliteDb;
 }
@@ -3875,6 +3890,21 @@ function readOrderDb() {
     company,
     delivery
   };
+}
+
+function readPahSettings() {
+  const row = openOrderSqliteDb().prepare("SELECT value FROM app_settings WHERE key = 'pahCarrier'").get();
+  return safePahSettings(parseJson(row?.value, DEFAULT_PAH_SETTINGS));
+}
+
+function writePahSettings(input) {
+  const settings = safePahSettings(input);
+  openOrderSqliteDb().prepare(`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES ('pahCarrier', ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+  `).run(JSON.stringify(settings));
+  return settings;
 }
 
 function writeOrderDb(db) {
@@ -9007,8 +9037,46 @@ async function handleApi(req, res) {
       batches: readOrderBatches(orderId),
       batchLines: readOrderBatchLines(orderId),
       labelJobs: readOrderLabelJobs(orderId),
+      pahSettings: readPahSettings(),
       users: publicAssignableUsers()
     });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/pah-settings") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"], "Only Buyer, Merchandising, or Admin users can update PAH carrier settings.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const settings = writePahSettings(body.settings || body);
+      sendJson(res, 200, { ok: true, settings });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save PAH carrier settings" });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/orders/pah") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"], "Only Buyer, Merchandising, or Admin users can export PAH reports.")) return true;
+    const orderId = String(url.searchParams.get("orderId") || "");
+    const order = readOrderDb().orders.find(item => String(item.id) === orderId);
+    if (!order) {
+      sendJson(res, 404, { error: "Order not found" });
+      return true;
+    }
+    const workflowRow = readOrderWorkflowMap().get(orderId);
+    const report = buildPahReport({
+      order: { ...order, workflow: workflowFromRow(workflowRow, order) },
+      batches: readOrderBatches(orderId),
+      batchLines: readOrderBatchLines(orderId),
+      scopeType: url.searchParams.get("scopeType") || "order",
+      batchId: url.searchParams.get("batchId") || "",
+      settings: readPahSettings()
+    });
+    if (!report.valid) {
+      sendJson(res, 400, { error: report.errors[0] || "Could not build PAH report", errors: report.errors });
+      return true;
+    }
+    sendCsv(res, report.filename, report.content);
     return true;
   }
 

@@ -75,7 +75,7 @@ Primary table groups:
 - Work management: `work_handoffs`, `notifications`.
 - Buying/order form: `suppliers`, `products`, `issued_skus`, `orders`.
 - Product/supplier master data: extended `suppliers` and `products` rows plus `product_sync_events`.
-- Order management: `order_workflows`, `order_events`, `order_invoices`, supplier batches, and immutable `order_label_jobs` report snapshots.
+- Order management: `order_workflows`, `order_events`, `order_invoices`, supplier batches, PAH carrier defaults in `app_settings`, and immutable `order_label_jobs` report snapshots.
 - Collection reorder: `collection_reorder_audit`.
 - Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
 - Weekly actions: `weekly_actions`, `weekly_action_events`.
@@ -205,6 +205,8 @@ Order workspace:
 - `POST /api/orders/delete`
 - `POST /api/orders/events`
 - `POST /api/orders/label-jobs`
+- `GET /api/orders/pah`
+- `POST /api/orders/pah-settings`
 
 Shopify and Google:
 
@@ -267,6 +269,15 @@ Important principles:
 - Archiving hides orders from active creation/bootstrap views but preserves history.
 - Deleting an order should remove related invoice records/files and workflow data only through the server's delete logic.
 - The Orders workspace can print a warehouse-facing image report for the full order, a selected delivery batch, or remaining unbatched units. The report contains product image, SKU, buying code, colour/material, and quantity only; batch reports use allocated quantities and unbatched reports use ordered quantity less all allocations.
+
+### PAH Delivery Reports
+
+- The Orders workspace exports the freight forwarder's 20-column PAH CSV contract in one click for a full order, a selected supplier batch, or remaining unbatched units.
+- Product description, SKU, colour/fabric, and quantities come from the saved order. A batch export uses only that batch's line allocations and its warehouse ETA; an unbatched export subtracts all existing allocations.
+- Full-order and unbatched exports use the workflow warehouse ETA when available, then the order's required delivery date. Export is blocked when no valid ETA/date, no scoped units, a SKU, or a whole-unit quantity is missing.
+- Batch pre-advice IDs append the saved batch number/title to the PO number so separate deliveries cannot overwrite one another at the warehouse. The CSV filename uses the same reference.
+- Pre-advice type, warehouse supplier ID, carrier/contact details, warehouse address, country, and return flag are stored as editable JSON under the SQLite `app_settings.pahCarrier` key. Initial values match the current Europe Logistics / Rebecca Bird workflow; report generation reads the persisted setting rather than inline UI values.
+- Buyer, Merchandising, and Admin roles can export PAH files and edit the shared PAH defaults. Every supplier-batch row also has a direct PAH CSV action.
 
 ### Barcode Label Jobs
 

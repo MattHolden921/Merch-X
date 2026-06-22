@@ -192,7 +192,7 @@ const invoiceTypes=["Deposit invoice","Balance invoice","Full invoice","Credit n
 const invoiceStatuses=["Awaiting FD","Sent to FD","Paid","Query"];
 const currencyOptions=["EUR","GBP","USD","Other"];
 const owners=["Buyer","Buying Director","FD / Finance","Merchandising","Supplier"];
-let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],labelJobs:[],labelValidation:null,labelSettings:{sparePerSku:0,placementInstructions:""},metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,lineBatchFilter:"all",authMode:"none",currentUser:null};
+let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],labelJobs:[],labelValidation:null,labelSettings:{sparePerSku:0,placementInstructions:""},pahSettings:{},metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,lineBatchFilter:"all",authMode:"none",currentUser:null};
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
@@ -585,6 +585,76 @@ function labelScopePayload(){
   if(filter==="unbatched")return {scopeType:"unbatched",batchId:""};
   if(filter!=="all")return {scopeType:"batch",batchId:filter};
   return {scopeType:"order",batchId:""};
+}
+
+function canManagePah(){
+  return userHasAppRole("Buyer")||userHasAppRole("Merchandising")||userHasAppRole("Admin");
+}
+
+function pahSettingInput(id,label,key,type="text"){
+  const disabled=canManagePah()?"":"disabled";
+  return input(id,label,state.pahSettings?.[key]||"",type,disabled);
+}
+
+function renderPahControls(){
+  const scope=warehouseReportScope();
+  const disabled=canManagePah()?"":"disabled";
+  return `<div style="margin:10px 0 12px">
+    <div class="actions" style="justify-content:flex-start">
+      <button type="button" class="btn primary" onclick="exportPah()" ${disabled}>Export PAH CSV</button>
+      <span class="pill">${escapeHtml(scope)}</span>
+    </div>
+    <p class="muted" style="font-size:11px;line-height:1.5;margin-top:6px">Uses the selected order-line scope. Batch exports use allocated quantities and that batch's warehouse ETA.</p>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-size:12px;font-weight:650">Carrier and warehouse defaults</summary>
+      <div class="grid3" style="margin-top:10px">
+        ${pahSettingInput("pah-type","Pre-advice type","preAdviceType")}
+        ${pahSettingInput("pah-supplier","Supplier ID","supplierId")}
+        ${pahSettingInput("pah-contact","Carrier / contact company","contact")}
+        ${pahSettingInput("pah-phone","Contact phone","contactPhone")}
+        ${pahSettingInput("pah-email","Contact email","contactEmail","email")}
+        ${pahSettingInput("pah-name","Contact name","name")}
+        ${pahSettingInput("pah-address1","Address 1","address1")}
+        ${pahSettingInput("pah-address2","Address 2","address2")}
+        ${pahSettingInput("pah-town","Town","town")}
+        ${pahSettingInput("pah-county","County","county")}
+        ${pahSettingInput("pah-postcode","Postcode","postcode")}
+        ${pahSettingInput("pah-country","Country","country")}
+        ${pahSettingInput("pah-return","Return flag","returnFlag")}
+      </div>
+      <button type="button" class="btn" style="margin-top:10px" onclick="savePahSettings().catch(showError)" ${disabled}>Save PAH defaults</button>
+    </details>
+  </div>`;
+}
+
+async function savePahSettings(){
+  const fields={preAdviceType:"pah-type",supplierId:"pah-supplier",contact:"pah-contact",contactPhone:"pah-phone",contactEmail:"pah-email",name:"pah-name",address1:"pah-address1",address2:"pah-address2",town:"pah-town",county:"pah-county",postcode:"pah-postcode",country:"pah-country",returnFlag:"pah-return"};
+  const settings=Object.fromEntries(Object.entries(fields).map(([key,id])=>[key,val(id)]));
+  const response=await apiFetch("/api/orders/pah-settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({settings})});
+  const result=await response.json();
+  if(!response.ok||!result.ok)throw new Error(result.error||"Could not save PAH defaults");
+  state.pahSettings=result.settings||settings;
+  showStatus("PAH carrier defaults saved.");
+}
+
+async function exportPah(scopeType="",batchId=""){
+  try{
+    const scope=scopeType?{scopeType,batchId}:labelScopePayload();
+    const params=new URLSearchParams({orderId:state.selectedId,scopeType:scope.scopeType,batchId:scope.batchId||""});
+    const response=await apiFetch(`/api/orders/pah?${params.toString()}`);
+    if(!response.ok){
+      const result=await response.json().catch(()=>({}));
+      throw new Error((result.errors||[]).join(" ")||result.error||"Could not export PAH report");
+    }
+    const blob=await response.blob();
+    const disposition=response.headers.get("content-disposition")||"";
+    const filename=disposition.match(/filename="([^"]+)"/i)?.[1]||"PAH.csv";
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement("a");
+    link.href=url;link.download=filename;document.body.appendChild(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    showStatus(`${filename} exported.`);
+  }catch(error){showError(error);}
 }
 
 function rememberLabelSettings(){
@@ -1087,7 +1157,7 @@ function renderBatchRow(order,batch){
   const dateText=batch.intakeStatus==="Received"?(formatDate(batch.receivedDate)||"-"):(formatDate(batch.etaDate)||"-");
   const value=Number(batch.value||0)?`<span class="money-sub">${formatCurrency(Number(batch.value||0),batch.currency||order.currency)}</span>`:"";
   return `<tr>
-    <td><strong title="${attr(batch.styleNotes||"")}">${escapeHtml(batchDisplayName(batch))}</strong>${value}<div class="invoice-row-actions">${canManage?`<button type="button" class="mini-btn" onclick="editBatch('${attr(batch.id)}')">Edit</button>`:""}${deleteButton}</div></td>
+    <td><strong title="${attr(batch.styleNotes||"")}">${escapeHtml(batchDisplayName(batch))}</strong>${value}<div class="invoice-row-actions">${canManagePah()?`<button type="button" class="mini-btn" onclick="exportPah('batch','${attr(batch.id)}')">PAH CSV</button>`:""}${canManage?`<button type="button" class="mini-btn" onclick="editBatch('${attr(batch.id)}')">Edit</button>`:""}${deleteButton}</div></td>
     <td class="num">${Number(batch.styleCount||0).toLocaleString("en-GB")}</td>
     <td class="num">${Number(batch.units||0).toLocaleString("en-GB")}</td>
     <td><span class="badge ${badgeClass(batch.paymentStatus)}">${escapeHtml(batch.paymentStatus||"Awaiting invoice")}</span></td>
@@ -1338,6 +1408,7 @@ function renderDetail(){
         <div class="work-head"><h3>Merchandising</h3><span class="badge ${badgeClass(w.intakeStatus)}">${escapeHtml(w.intakeStatus)}</span></div>
         ${intakeHold}
         <div class="workflow-checks"><label><input class="pah-check" id="pah-uploaded" type="checkbox" ${w.pahUploaded?"checked":""} ${canSaveMerchandising?"":"disabled"} onchange="savePahUploaded(this.checked)"> PAH uploaded</label></div>
+        ${renderPahControls()}
         <div class="grid2">
           ${select("intake-status","Intake status",intakeStatuses,w.intakeStatus,intakeAttrs)}
           ${input("intake-eta","ETA warehouse",w.intakeEtaDate,"date",intakeAttrs)}
@@ -1778,6 +1849,7 @@ async function selectOrder(id){
   state.batches=result.batches||[];
   state.batchLines=result.batchLines||[];
   state.labelJobs=result.labelJobs||[];
+  state.pahSettings=result.pahSettings||state.pahSettings||{};
   const index=state.orders.findIndex(order=>order.id===id);
   if(index!==-1)state.orders[index]=result.order;
   renderOrders();
