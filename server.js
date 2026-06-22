@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const Database = require("better-sqlite3");
 const { createEmailCampaignService } = require("./lib/email-campaign-service");
+const { buildLabelJobSnapshot, normalizeDoubleBarcodeSnapshot } = require("./lib/label-jobs");
 
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
@@ -3335,6 +3336,22 @@ function openOrderSqliteDb() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS order_label_jobs (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      job_number TEXT NOT NULL UNIQUE,
+      version INTEGER NOT NULL,
+      scope_type TEXT NOT NULL,
+      batch_id TEXT,
+      status TEXT NOT NULL DEFAULT 'Draft',
+      barcode_format TEXT NOT NULL DEFAULT 'Code 128',
+      data TEXT NOT NULL,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_order_label_jobs_order ON order_label_jobs(order_id, version DESC);
+
     CREATE TABLE IF NOT EXISTS collection_reorder_audit (
       id TEXT PRIMARY KEY,
       collection_id TEXT NOT NULL,
@@ -5182,6 +5199,7 @@ function deleteStoredOrder(orderId, actorName = "") {
     db.prepare("DELETE FROM order_invoices WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_batch_lines WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_batches WHERE order_id = ?").run(String(orderId));
+    db.prepare("DELETE FROM order_label_jobs WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_events WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_workflows WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM orders WHERE id = ?").run(String(orderId));
@@ -5263,6 +5281,96 @@ function readOrderBatchLines(orderId) {
     WHERE order_id = ?
     ORDER BY batch_id, line_index
   `).all(String(orderId)).map(batchLineFromRow);
+}
+
+function labelJobFromRow(row) {
+  if (!row) return null;
+  const snapshot = normalizeDoubleBarcodeSnapshot(parseJson(row.data, {}));
+  return {
+    ...snapshot,
+    id: row.id,
+    orderId: row.order_id,
+    jobNumber: row.job_number,
+    version: Number(row.version || 0),
+    scopeType: row.scope_type || "order",
+    batchId: row.batch_id || "",
+    status: row.status || "Draft",
+    barcodeFormat: row.barcode_format || "Code 128",
+    createdBy: row.created_by || "",
+    createdAt: row.created_at || ""
+  };
+}
+
+function readOrderLabelJobs(orderId) {
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM order_label_jobs
+    WHERE order_id = ?
+    ORDER BY version DESC, created_at DESC
+  `).all(String(orderId)).map(labelJobFromRow);
+}
+
+function createOrderLabelJob(order, input = {}, createdBy = "") {
+  const scopeType = ["order", "batch", "unbatched"].includes(input.scopeType) ? input.scopeType : "order";
+  const batchId = scopeType === "batch" ? cleanText(input.batchId) : "";
+  const batches = readOrderBatches(order.id);
+  if (scopeType === "batch" && !batches.some(batch => String(batch.id) === batchId)) {
+    const error = new Error("The selected supplier batch no longer exists.");
+    error.validation = { valid: false, errors: [error.message], warnings: [] };
+    throw error;
+  }
+  const snapshot = buildLabelJobSnapshot({
+    order,
+    batches,
+    batchLines: readOrderBatchLines(order.id),
+    scopeType,
+    batchId,
+    sparePerSku: input.sparePerSku,
+    labelTemplate: input.labelTemplate,
+    placementInstructions: input.placementInstructions
+  });
+  if (!snapshot.valid) {
+    const error = new Error("Resolve the label-job validation errors before generating reports.");
+    error.validation = snapshot;
+    throw error;
+  }
+  if (input.preview) return { ...snapshot, preview: true };
+  const db = openOrderSqliteDb();
+  const version = Number(db.prepare("SELECT MAX(version) AS version FROM order_label_jobs WHERE order_id = ?").get(String(order.id))?.version || 0) + 1;
+  const id = crypto.randomUUID();
+  const safeOrderNumber = cleanText(order.orderNumber || "ORDER").replace(/[^A-Z0-9-]+/gi, "-").replace(/^-+|-+$/g, "") || "ORDER";
+  const jobNumber = `LABEL-${safeOrderNumber}-V${String(version).padStart(2, "0")}`;
+  const generatedAt = new Date().toISOString();
+  const supplier = order.supplier || {};
+  const job = {
+    ...snapshot,
+    id,
+    orderId: String(order.id),
+    orderNumber: cleanText(order.orderNumber),
+    supplierName: cleanText(supplier.name || order.supplierName),
+    supplierContact: cleanText(supplier.contact),
+    supplierEmail: cleanText(supplier.email),
+    supplierCity: cleanText(supplier.city),
+    supplierCountry: cleanText(supplier.country),
+    jobNumber,
+    version,
+    status: "Draft",
+    generatedAt,
+    generatedBy: cleanText(createdBy)
+  };
+  db.prepare(`
+    INSERT INTO order_label_jobs (
+      id, order_id, job_number, version, scope_type, batch_id, status,
+      barcode_format, data, created_by, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'Draft', 'Code 128', ?, ?, ?)
+  `).run(id, String(order.id), jobNumber, version, scopeType, batchId, JSON.stringify(job), cleanText(createdBy), generatedAt);
+  recordOrderEvent(order.id, "label_job", createdBy, `Label job ${jobNumber} generated`, {
+    jobNumber,
+    scope: snapshot.scopeLabel,
+    skus: snapshot.totals.skus,
+    labelsRequired: snapshot.totals.labelsRequired
+  });
+  return labelJobFromRow(db.prepare("SELECT * FROM order_label_jobs WHERE id = ?").get(id));
 }
 
 function lineIdentity(line, index) {
@@ -8898,8 +9006,36 @@ async function handleApi(req, res) {
       invoices: readOrderInvoices(orderId),
       batches: readOrderBatches(orderId),
       batchLines: readOrderBatchLines(orderId),
+      labelJobs: readOrderLabelJobs(orderId),
       users: publicAssignableUsers()
     });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/label-jobs") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"], "Only Buyer, Merchandising, or Admin users can generate label jobs.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const orderId = String(body.orderId || "");
+      const db = readOrderDb();
+      const order = db.orders.find(item => String(item.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      const job = createOrderLabelJob(order, body, actorName(req));
+      sendJson(res, 200, {
+        ok: true,
+        job,
+        labelJobs: readOrderLabelJobs(orderId),
+        events: readOrderEvents(orderId)
+      });
+    } catch (error) {
+      sendJson(res, 400, {
+        error: error.message || "Could not generate label job",
+        validation: error.validation || null
+      });
+    }
     return true;
   }
 

@@ -127,9 +127,12 @@ textarea{min-height:70px;resize:vertical}
 .line-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:8px;border-bottom:1px solid var(--ds-line)}
 .line-table td{font-size:12px;color:var(--ds-text-muted);padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:top}
 .line-table tr:last-child td{border-bottom:0}
+.label-grid{display:grid;grid-template-columns:140px minmax(180px,1fr) minmax(240px,2fr);gap:10px;align-items:end}
+.label-validation{margin-top:10px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px;font-size:12px;line-height:1.55}
+.label-validation ul{margin:6px 0 0;padding-left:20px}.label-history{display:flex;flex-direction:column;gap:7px;margin-top:12px}.label-job-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;border-top:1px solid var(--ds-line);padding-top:8px}.label-job-row:first-child{border-top:0}.label-job-row strong,.label-job-row span{display:block}.label-job-row span{font-size:11px;color:var(--ds-text-muted);margin-top:2px}
 .num{text-align:right;white-space:nowrap}
 @media(max-width:1180px){.toolbar{grid-template-columns:repeat(3,minmax(0,1fr))}.layout{grid-template-columns:1fr}.order-list{max-height:none}.metric-grid,.summary-grid{grid-template-columns:repeat(2,1fr)}.filter-summary{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:760px){.toolbar,.workflow-grid,.grid2,.grid3,.invoice-form,.invoice-totals,.batch-form,.batch-totals{grid-template-columns:1fr}.metric-grid,.summary-grid,.filter-summary{grid-template-columns:1fr}.filter-context{grid-column:auto}.detail-head{grid-template-columns:1fr}.actions{justify-content:flex-start}.order-row{grid-template-columns:1fr}.order-side{text-align:left;display:flex;gap:6px;flex-wrap:wrap;min-width:0}.order-side span{display:inline-flex;width:auto}.badge{max-width:100%}}
+@media(max-width:760px){.toolbar,.workflow-grid,.grid2,.grid3,.invoice-form,.invoice-totals,.batch-form,.batch-totals,.label-grid{grid-template-columns:1fr}.metric-grid,.summary-grid,.filter-summary{grid-template-columns:1fr}.filter-context{grid-column:auto}.detail-head{grid-template-columns:1fr}.actions{justify-content:flex-start}.order-row{grid-template-columns:1fr}.order-side{text-align:left;display:flex;gap:6px;flex-wrap:wrap;min-width:0}.order-side span{display:inline-flex;width:auto}.badge{max-width:100%}.label-job-row{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -189,7 +192,7 @@ const invoiceTypes=["Deposit invoice","Balance invoice","Full invoice","Credit n
 const invoiceStatuses=["Awaiting FD","Sent to FD","Paid","Query"];
 const currencyOptions=["EUR","GBP","USD","Other"];
 const owners=["Buyer","Buying Director","FD / Finance","Merchandising","Supplier"];
-let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,lineBatchFilter:"all",authMode:"none",currentUser:null};
+let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],labelJobs:[],labelValidation:null,labelSettings:{sparePerSku:0,placementInstructions:""},metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,lineBatchFilter:"all",authMode:"none",currentUser:null};
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
@@ -569,7 +572,217 @@ function filteredOrderLines(lines){
 
 function setLineBatchFilter(filter){
   state.lineBatchFilter=filter||"all";
+  state.labelValidation=null;
   renderDetail();
+}
+
+function canManageLabelJobs(){
+  return userHasAppRole("Buyer")||userHasAppRole("Merchandising")||userHasAppRole("Admin");
+}
+
+function labelScopePayload(){
+  const filter=state.lineBatchFilter||"all";
+  if(filter==="unbatched")return {scopeType:"unbatched",batchId:""};
+  if(filter!=="all")return {scopeType:"batch",batchId:filter};
+  return {scopeType:"order",batchId:""};
+}
+
+function rememberLabelSettings(){
+  state.labelSettings={
+    sparePerSku:Math.max(0,Number(el("label-spares")?.value||0)),
+    placementInstructions:val("label-placement")
+  };
+}
+
+function labelValidationView(validation){
+  if(!validation)return "";
+  const errors=validation.errors||[];
+  const warnings=validation.warnings||[];
+  const totals=validation.totals||{};
+  const title=errors.length?"Not ready to generate":`Ready: ${Number(totals.skus||0).toLocaleString("en-GB")} SKUs / ${Number(totals.labelsRequired||0).toLocaleString("en-GB")} labels`;
+  return `<div class="label-validation"><strong>${escapeHtml(title)}</strong>
+    ${errors.length?`<div class="badge bad" style="margin-top:6px">${errors.length} blocking issue${errors.length===1?"":"s"}</div><ul>${errors.map(message=>`<li>${escapeHtml(message)}</li>`).join("")}</ul>`:""}
+    ${warnings.length?`<div class="badge warn" style="margin-top:6px">${warnings.length} warning${warnings.length===1?"":"s"}</div><ul>${warnings.map(message=>`<li>${escapeHtml(message)}</li>`).join("")}</ul>`:""}
+  </div>`;
+}
+
+function renderLabelJobGroup(){
+  const jobs=state.labelJobs||[];
+  const settings=state.labelSettings||{};
+  const canManage=canManageLabelJobs();
+  return `<section class="work-panel" style="margin-top:14px">
+    <div class="work-head"><h3>Barcode label jobs</h3><div class="actions"><span class="badge info">2 labels per unit</span><span class="badge info">SKU encoded as Code 128</span><span class="pill">${escapeHtml(warehouseReportScope())}</span></div></div>
+    <p class="muted" style="font-size:12px;line-height:1.5;margin-bottom:10px">Generate a frozen printer file and matching supplier allocation guide for the selected order-line scope.</p>
+    <div class="label-grid">
+      <div class="field"><label>Spare labels per SKU</label><input id="label-spares" type="number" min="0" max="100" step="1" value="${attr(settings.sparePerSku||0)}" ${canManage?"":"disabled"}></div>
+      <div class="field"><label>Label size</label><input value="60 x 40 mm" disabled></div>
+      <div class="field"><label>Placement instructions</label><input id="label-placement" placeholder="For example: attach to the care label" value="${attr(settings.placementInstructions||"")}" ${canManage?"":"disabled"}></div>
+    </div>
+    <div class="actions" style="justify-content:flex-start;margin-top:10px">
+      <button type="button" class="btn" onclick="runLabelJob(true)" ${canManage?"":"disabled"}>Check readiness</button>
+      <button type="button" class="btn primary" onclick="runLabelJob(false)" ${canManage?"":"disabled"}>Generate label job</button>
+    </div>
+    ${labelValidationView(state.labelValidation)}
+    <div class="label-history">${jobs.length?jobs.slice(0,8).map(job=>`<div class="label-job-row">
+      <div><strong>${escapeHtml(job.jobNumber)}</strong><span>${escapeHtml(job.scopeLabel||job.scopeType)} · ${Number(job.totals?.skus||0).toLocaleString("en-GB")} SKUs · ${Number(job.totals?.labelsRequired||0).toLocaleString("en-GB")} labels · ${escapeHtml(formatDate(job.createdAt))}</span></div>
+      <div class="actions"><button type="button" class="btn" onclick="exportLabelProof('${attr(job.id)}')">Label proof</button><button type="button" class="btn" onclick="exportPrinterLabelJob('${attr(job.id)}')">Printer XLSX</button><button type="button" class="btn" onclick="exportSupplierLabelGuide('${attr(job.id)}','en')">Supplier guide EN</button><button type="button" class="btn" onclick="exportSupplierLabelGuide('${attr(job.id)}','it')">Supplier guide IT</button></div>
+    </div>`).join(""):`<p class="empty">No label jobs generated yet.</p>`}</div>
+  </section>`;
+}
+
+async function runLabelJob(preview){
+  if(!state.selectedId)return;
+  rememberLabelSettings();
+  const response=await apiFetch("/api/orders/label-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,...labelScopePayload(),...state.labelSettings,preview:Boolean(preview)})});
+  const result=await response.json();
+  state.labelValidation=result.validation||result.job||null;
+  if(!response.ok||!result.ok){
+    renderDetail();
+    showStatus(result.error||"Could not generate label job","err");
+    return;
+  }
+  if(!preview){
+    state.labelJobs=result.labelJobs||state.labelJobs;
+    state.events=result.events||state.events;
+  }
+  renderDetail();
+  showStatus(preview?"Label data is ready to generate.":`Generated immutable label job ${result.job.jobNumber}.`,"ok");
+}
+
+function labelJobById(id){
+  return (state.labelJobs||[]).find(job=>job.id===id)||null;
+}
+
+function exportPrinterLabelJob(id){
+  const job=labelJobById(id);
+  if(!job)return;
+  if(!window.XLSX){showStatus("Excel export library could not be loaded. Check your internet connection and try again.","err");return;}
+  const headers=["Label job","Version","Order number","Supplier","Scope","SKU","Barcode value","Label size","Buying code","Style","Category","Colour","Size","Label match key","Ordered units","Labels per unit","Spare labels","Labels required"];
+  const rows=(job.rows||[]).map(row=>[
+    job.jobNumber,job.version,job.orderNumber,job.supplierName,job.scopeLabel,row.sku,row.barcodeValue,row.labelSize||job.labelSize||"60 x 40 mm",row.buyingCode,row.style,row.category,row.colour,row.size,row.matchKey,
+    Number(row.orderedQuantity||0),Number(row.labelsPerUnit||2),Number(row.spareQuantity||0),Number(row.labelsRequired||0)
+  ]);
+  const printSheet=XLSX.utils.aoa_to_sheet([headers,...rows]);
+  printSheet["!cols"]=[{wch:24},{wch:8},{wch:18},{wch:24},{wch:22},{wch:14},{wch:16},{wch:14},{wch:18},{wch:28},{wch:18},{wch:18},{wch:10},{wch:44},{wch:13},{wch:14},{wch:12},{wch:15}];
+  printSheet["!autofilter"]={ref:printSheet["!ref"]};
+  const info=[
+    ["Label job",job.jobNumber],["Generated",job.generatedAt||job.createdAt],["Generated by",job.generatedBy||job.createdBy],["Order",job.orderNumber],["Supplier",job.supplierName],["Supplier contact",job.supplierContact],["Supplier email",job.supplierEmail],["Supplier city",job.supplierCity],["Supplier country",job.supplierCountry],["Scope",job.scopeLabel],["Barcode policy","Barcode value is exactly the SKU, rendered as Code 128"],["Label size",job.labelSize||"60 x 40 mm"],["Application requirement",job.applicationRequirement||"Apply two identical barcode labels per product: one to the swing ticket and one to the outer packaging."],["Placement instructions",job.placementInstructions],["SKUs",job.totals?.skus||0],["Ordered units",job.totals?.orderedUnits||0],["Labels per unit",2],["Application labels",job.totals?.applicationLabels||Number(job.totals?.orderedUnits||0)*2],["Spare labels",job.totals?.spareLabels||0],["Total labels",job.totals?.labelsRequired||0]
+  ];
+  const infoSheet=XLSX.utils.aoa_to_sheet(info);
+  infoSheet["!cols"]=[{wch:24},{wch:70}];
+  const workbook=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook,printSheet,"Print file");
+  XLSX.utils.book_append_sheet(workbook,infoSheet,"Job instructions");
+  XLSX.writeFile(workbook,`${job.jobNumber}.xlsx`,{bookType:"xlsx",compression:true});
+}
+
+const code128Patterns=["212222","222122","222221","121223","121322","131222","122213","122312","132212","221213","221312","231212","112232","122132","122231","113222","123122","123221","223211","221132","221231","213212","223112","312131","311222","321122","321221","312212","322112","322211","212123","212321","232121","111323","131123","131321","112313","132113","132311","211313","231113","231311","112133","112331","132131","113123","113321","133121","313121","211331","231131","213113","213311","213131","311123","311321","331121","312113","312311","332111","314111","221411","431111","111224","111422","121124","121421","141122","141221","112214","112412","122114","122411","142112","142211","241211","221114","413111","241112","134111","111242","121142","121241","114212","124112","124211","411212","421112","421211","212141","214121","412121","111143","111341","131141","114113","114311","411113","411311","113141","114131","311141","411131","211412","211214","211232","2331112"];
+
+function code128Svg(value){
+  const input=String(value||"").toUpperCase();
+  if(!input||!/^[\x20-\x7e]+$/.test(input))return "";
+  const data=[...input].map(character=>character.charCodeAt(0)-32);
+  let checksum=104;
+  data.forEach((code,index)=>{checksum+=code*(index+1);});
+  const codes=[104,...data,checksum%103,106];
+  const quiet=10;
+  const moduleCount=codes.reduce((total,code)=>total+code128Patterns[code].split("").reduce((sum,width)=>sum+Number(width),0),quiet*2);
+  let x=quiet;
+  const bars=[];
+  for(const code of codes){
+    [...code128Patterns[code]].forEach((width,index)=>{
+      const modules=Number(width);
+      if(index%2===0)bars.push(`<rect x="${x}" y="0" width="${modules}" height="42"/>`);
+      x+=modules;
+    });
+  }
+  return `<svg class="barcode" viewBox="0 0 ${moduleCount} 42" role="img" aria-label="Code 128 barcode ${attr(input)}" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">${bars.join("")}</svg>`;
+}
+
+function exportLabelProof(id){
+  const job=labelJobById(id);
+  if(!job)return;
+  const reportWindow=window.open("","_blank");
+  if(!reportWindow){showStatus("Allow pop-ups to open the label proof.","err");return;}
+  const labels=(job.rows||[]).map(row=>`<article class="label">
+    <div class="style-name">${escapeHtml(row.style||"Style not supplied")}</div>
+    <div class="detail"><span>ART</span><strong>${escapeHtml(row.buyingCode||"Not supplied")}</strong></div>
+    <div class="detail"><span>SKU</span><strong>${escapeHtml(row.sku)}</strong></div>
+    <div class="detail"><span>Colour</span><strong>${escapeHtml(row.colour||"Not supplied")}</strong></div>
+    <div class="barcode-wrap">${code128Svg(row.barcodeValue)}<small>${escapeHtml(row.barcodeValue)}</small></div>
+  </article>`).join("");
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHtml(job.jobNumber)} label proof</title><style>
+    *{box-sizing:border-box}body{margin:0;background:#edf1f5;color:#111;font-family:Arial,sans-serif}.proof-head{padding:14px 18px;background:#fff;border-bottom:1px solid #ccd4dd}.proof-head h1{margin:0 0 4px;font-size:18px}.proof-head p{margin:0;color:#526176;font-size:11px;line-height:1.45}.sheet{display:grid;grid-template-columns:repeat(auto-fill,60mm);gap:7mm;padding:10mm;align-items:start}.label{width:60mm;height:40mm;padding:2.5mm 3mm;background:#fff;border:.25mm dashed #7c8796;overflow:hidden;display:flex;flex-direction:column}.style-name{height:6.8mm;overflow:hidden;font-size:8.5pt;font-weight:700;line-height:1.08;margin-bottom:.3mm}.detail{height:3.6mm;display:grid;grid-template-columns:12mm minmax(0,1fr);gap:1mm;align-items:baseline;white-space:nowrap}.detail span{font-size:6.2pt;color:#4d5867;text-transform:uppercase;letter-spacing:.04em}.detail strong{font-size:7.6pt;overflow:hidden;text-overflow:ellipsis}.barcode-wrap{height:16.3mm;margin-top:.3mm;text-align:center;display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden}.barcode{display:block;width:100%;height:12.5mm;fill:#000}.barcode-wrap small{display:block;font:6.5pt/1.1 "Courier New",monospace;letter-spacing:.08em;margin-top:.4mm}@page{size:A4 portrait;margin:8mm}@media print{body{background:#fff}.proof-head{display:none}.sheet{padding:0;gap:5mm}.label{break-inside:avoid;page-break-inside:avoid}}
+  </style></head><body><header class="proof-head"><h1>60 × 40 mm label proof</h1><p>${escapeHtml(job.jobNumber)} · Print or save as PDF at 100% / Actual size. Dashed lines show the finished label edge.</p></header><main class="sheet">${labels}</main></body></html>`;
+  reportWindow.document.open();reportWindow.document.write(html);reportWindow.document.close();
+}
+
+function exportSupplierLabelGuide(id,language="en"){
+  const job=labelJobById(id);
+  if(!job)return;
+  const italian=language==="it";
+  const copy=italian?{
+    documentTitle:"Guida alle etichette con codice a barre",
+    productImage:"Immagine prodotto",
+    buyingCode:"Codice articolo (ART.)",
+    ourSku:"Nostro SKU",
+    applyTo:"Applicare a",
+    labels:"etichette",
+    units:"capi",
+    noticeTitle:"Applicare due etichette con codice a barre a ogni prodotto",
+    noticeBody:"Applicare un'etichetta identica al cartellino e una all'esterno dell'imballaggio del prodotto. Utilizzare il codice articolo e il nostro SKU per abbinare le etichette al prodotto corretto.",
+    colourNote:"I nomi dei colori sono riportati in inglese esattamente come nell'ordine.",
+    applyInstruction:"Applicare 2 etichette a ogni capo: una al cartellino e una all'imballaggio esterno.",
+    supplied:"etichette fornite",
+    including:"incluse",
+    spares:"di scorta",
+    additional:"Ulteriori istruzioni di applicazione",
+    none:"Nessuna.",
+    exampleTitle:"Esempio corretto",
+    exampleBody:"Il prodotto finito deve avere un codice a barre sul cartellino e un secondo codice a barre identico chiaramente visibile sull'imballaggio esterno."
+  }:{
+    documentTitle:"Supplier barcode label guide",
+    productImage:"Product image",
+    buyingCode:"Buying code",
+    ourSku:"Our SKU",
+    applyTo:"Apply to",
+    labels:"labels",
+    units:"units",
+    noticeTitle:"Two barcode labels must be applied to every product",
+    noticeBody:"Apply one identical barcode label to the swing ticket and one to the outside of the product packaging. Use the buying code and our SKU below to match the labels to the correct product.",
+    colourNote:"Colour names are shown in English exactly as they appear on the order.",
+    applyInstruction:"Apply 2 labels to each unit: one to the swing ticket and one to the outer packaging.",
+    supplied:"labels supplied",
+    including:"including",
+    spares:"spare",
+    additional:"Additional placement instructions",
+    none:"None supplied.",
+    exampleTitle:"Good example",
+    exampleBody:"The finished product should have one barcode on the swing ticket and a second matching barcode clearly visible on the outer packaging."
+  };
+  const reportWindow=window.open("","_blank");
+  if(!reportWindow){showStatus("Allow pop-ups to open the supplier label guide.","err");return;}
+  const exampleUrl=new URL("assets/good-barcode-example.png",location.href).href;
+  const scopeLabel=italian?(job.scopeType==="order"?"Ordine completo":job.scopeType==="unbatched"?"Rimanente / non assegnato":job.scopeLabel):job.scopeLabel;
+  const groups=new Map();
+  for(const row of job.rows||[]){
+    const key=`${row.buyingCode||""}|${row.style||""}`;
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(row);
+  }
+  const sections=[...groups.values()].map(rows=>{
+    const first=rows[0];
+    return `<section class="style"><div class="style-head"><strong>${escapeHtml(first.style||(italian?"Modello non indicato":"Style not supplied"))}</strong><span>${rows.reduce((sum,row)=>sum+Number(row.labelsRequired||0),0).toLocaleString("en-GB")} ${copy.labels}</span></div>
+      <table><thead><tr><th>${copy.productImage}</th><th>${copy.buyingCode}</th><th>${copy.ourSku}</th><th>${copy.applyTo}</th></tr></thead><tbody>${rows.map(row=>{
+        const imageUrl=warehouseImageUrl(row.imageUrl);
+        const variation=[row.colour,row.size].filter(Boolean).join(" / ")||(italian?"prodotto":"product");
+        return `<tr><td>${imageUrl?`<img src="${attr(imageUrl)}" alt="${attr(row.sku)}">`:`<div class="missing">${italian?"Nessuna immagine":"No image"}</div>`}</td><td><strong>${escapeHtml(row.buyingCode||(italian?"Non indicato":"Not supplied"))}</strong></td><td><strong>${escapeHtml(row.sku)}</strong></td><td class="apply"><strong>${Number(row.orderedQuantity||0).toLocaleString("en-GB")} ${copy.units} · ${escapeHtml(variation)}</strong><small>${copy.applyInstruction}</small><small>${Number(row.labelsRequired||0).toLocaleString("en-GB")} ${copy.supplied}${Number(row.spareQuantity||0)?` — ${copy.including} ${Number(row.spareQuantity)} ${copy.spares}` : ""}.</small></td></tr>`;
+      }).join("")}</tbody></table></section>`;
+  }).join("");
+  const html=`<!DOCTYPE html><html lang="${italian?"it":"en"}"><head><meta charset="UTF-8"><title>${escapeHtml(job.jobNumber)} ${italian?"guida fornitore IT":"supplier guide EN"}</title><style>
+    *{box-sizing:border-box}body{margin:0;background:#fff;color:#172033;font-family:Arial,sans-serif}.page{padding:12mm}header{display:flex;justify-content:space-between;gap:20px;border-bottom:2px solid #172033;padding-bottom:9px;margin-bottom:10px}h1{font-size:22px;margin:0 0 4px}p{margin:0;color:#526176;font-size:11px;line-height:1.5}.meta{text-align:right;font-size:10px;color:#526176}.meta strong{display:block;color:#172033;font-size:14px}.notice{border:2px solid #172033;padding:9px 11px;margin:10px 0 13px;font-size:12px;line-height:1.5}.notice strong{display:block;margin-bottom:3px}.notice em{display:block;margin-top:5px;color:#526176}.style{margin:0 0 13px}.style-head{display:flex;justify-content:space-between;gap:12px;align-items:center;background:#172033;color:#fff;padding:8px 10px}.style-head strong{font-size:14px}.style-head span{font-size:10px;color:#cbd5e1}table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}th{background:#eef2f6;color:#526176;font-size:8px;text-transform:uppercase;text-align:left;padding:5px 7px;border:1px solid #cdd6e1}th:first-child{width:32mm}th:nth-child(2){width:22%}th:nth-child(3){width:18%}td{height:31mm;border:1px solid #cdd6e1;padding:5px 7px;vertical-align:middle;font-size:12px}td img,.missing{width:27mm;height:27mm;object-fit:contain;display:flex;align-items:center;justify-content:center;background:#f6f8fb;color:#8995a5;font-size:8px}td strong,td small{display:block}td small{color:#526176;margin-top:4px;line-height:1.35}.apply strong{font-size:13px}.placement{border-top:1px solid #cdd6e1;padding-top:8px;margin-top:8px;font-size:11px}.good-example{break-before:page;page-break-before:always;padding:12mm}.good-example h2{font-size:20px;margin:0 0 5px}.good-example p{margin-bottom:8px}.good-example img{display:block;max-width:100%;max-height:245mm;margin:0 auto;object-fit:contain}@page{size:A4 portrait;margin:0}@media print{.page,.good-example{padding:10mm}.style-head{break-after:avoid;page-break-after:avoid}tr{break-inside:avoid;page-break-inside:avoid}}
+  </style></head><body><main class="page"><header><div><h1>${copy.documentTitle}</h1><p>${escapeHtml(job.supplierName)} · ${escapeHtml(job.orderNumber)} · ${escapeHtml(scopeLabel)}</p></div><div class="meta"><strong>${escapeHtml(job.jobNumber)}</strong><div>${escapeHtml(formatDate(job.generatedAt||job.createdAt))}</div><div>${Number(job.totals?.labelsRequired||0).toLocaleString("en-GB")} ${copy.labels}</div></div></header><div class="notice"><strong>${copy.noticeTitle}</strong>${copy.noticeBody}<em>${copy.colourNote}</em></div>${sections}<div class="placement"><strong>${copy.additional}:</strong> ${escapeHtml(job.placementInstructions||copy.none)}</div></main><section class="good-example"><h2>${copy.exampleTitle}</h2><p>${copy.exampleBody}</p><img src="${attr(exampleUrl)}" alt="${attr(copy.exampleTitle)}"></section><script>const images=[...document.images];const loaded=Promise.all(images.map(image=>new Promise(resolve=>{if(image.complete)return resolve();image.onload=resolve;image.onerror=resolve;})));Promise.race([loaded,new Promise(resolve=>setTimeout(resolve,5000))]).then(()=>setTimeout(()=>window.print(),100));<\/script></body></html>`;
+  reportWindow.document.open();reportWindow.document.write(html);reportWindow.document.close();
 }
 
 function renderLineTable(order){
@@ -1144,6 +1357,7 @@ function renderDetail(){
       </div>
     </section>
     ${renderBatchGroup(order)}
+    ${renderLabelJobGroup()}
     ${renderLineTable(order)}`;
   el("actor-name").addEventListener("input",()=>localStorage.setItem("ordersActorName",val("actor-name")));
   ["approval-status","payment-status","intake-status"].forEach(id=>el(id)?.addEventListener("change",syncNextActionFromStatuses));
@@ -1552,6 +1766,7 @@ async function selectOrder(id){
   state.invoiceEditorOpen=false;
   state.editingBatchId="";
   state.batchEditorOpen=false;
+  state.labelValidation=null;
   renderOrders();
   el("detail").innerHTML=`<section class="panel"><p class="empty-state">Loading order...</p></section>`;
   const response=await apiFetch(`/api/orders/detail?id=${encodeURIComponent(id)}`);
@@ -1562,6 +1777,7 @@ async function selectOrder(id){
   state.invoices=result.invoices||[];
   state.batches=result.batches||[];
   state.batchLines=result.batchLines||[];
+  state.labelJobs=result.labelJobs||[];
   const index=state.orders.findIndex(order=>order.id===id);
   if(index!==-1)state.orders[index]=result.order;
   renderOrders();
