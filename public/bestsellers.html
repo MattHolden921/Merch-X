@@ -249,7 +249,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
         <p>Cached TY reports are built from Monday-Sunday weeks. Current week is shown live week-to-date and is not saved until it becomes a complete week.</p>
       </div>
       <div class="server-controls">
-        <div class="field"><label>Quick range</label><select class="server-period-select server-week-select" id="api-range-preset" onchange="applyTyRangePreset('api',this.value)"><option value="current">Current week to date</option><option value="latest">Latest saved week</option><option value="last4">Last 4 saved weeks</option><option value="last8">Last 8 saved weeks</option><option value="season">All saved weeks</option><option value="custom">Custom week range</option></select></div>
+        <div class="field"><label>Quick range</label><select class="server-period-select server-week-select" id="api-range-preset" onchange="applyTyRangePreset('api',this.value)"><option value="current">Current week to date</option><option value="lastWeek">Last completed week</option><option value="latest">Latest saved week</option><option value="last4">Last 4 saved weeks</option><option value="last8">Last 8 saved weeks</option><option value="season">All saved weeks</option><option value="custom">Custom week range</option></select></div>
         <div class="field"><label>From week</label><select class="server-period-select server-week-select" id="api-from-week" onchange="applyTyWeekRange('api')"></select></div>
         <div class="field"><label>To week</label><select class="server-period-select server-week-select" id="api-to-week" onchange="applyTyWeekRange('api')"></select></div>
         <input type="hidden" id="api-start-date">
@@ -409,7 +409,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
         <p>Load saved Monday-Sunday weeks, or show current week live to date.</p>
       </div>
       <div class="server-controls">
-        <div class="field"><label>Quick range</label><select class="server-period-select server-week-select" id="ty-report-api-range-preset" onchange="applyTyRangePreset('ty-report-api',this.value)"><option value="current">Current week to date</option><option value="latest">Latest saved week</option><option value="last4">Last 4 saved weeks</option><option value="last8">Last 8 saved weeks</option><option value="season">All saved weeks</option><option value="custom">Custom week range</option></select></div>
+        <div class="field"><label>Quick range</label><select class="server-period-select server-week-select" id="ty-report-api-range-preset" onchange="applyTyRangePreset('ty-report-api',this.value)"><option value="current">Current week to date</option><option value="lastWeek">Last completed week</option><option value="latest">Latest saved week</option><option value="last4">Last 4 saved weeks</option><option value="last8">Last 8 saved weeks</option><option value="season">All saved weeks</option><option value="custom">Custom week range</option></select></div>
         <div class="field"><label>From week</label><select class="server-period-select server-week-select" id="ty-report-api-from-week" onchange="applyTyWeekRange('ty-report-api')"></select></div>
         <div class="field"><label>To week</label><select class="server-period-select server-week-select" id="ty-report-api-to-week" onchange="applyTyWeekRange('ty-report-api')"></select></div>
         <input type="hidden" id="ty-report-api-start-date">
@@ -757,6 +757,15 @@ function currentWeekToDateRange(){
   start.setDate(start.getDate()-delta);
   return{startDate:localIsoDate(start),endDate:localIsoDate(end)};
 }
+function lastCompletedWeekRange(){
+  const current=currentWeekToDateRange();
+  const currentStart=new Date(`${current.startDate}T00:00:00`);
+  const end=new Date(currentStart);
+  end.setDate(end.getDate()-1);
+  const start=new Date(end);
+  start.setDate(start.getDate()-6);
+  return{startDate:localIsoDate(start),endDate:localIsoDate(end)};
+}
 function daysInclusive(startDate,endDate){
   const start=new Date(`${startDate}T00:00:00`);
   const end=new Date(`${endDate}T00:00:00`);
@@ -793,10 +802,13 @@ function setWeekSelectValues(prefix,startDate,endDate){
   const fromPeriod=periods.find(period=>period.startDate===startDate);
   const toPeriod=periods.find(period=>period.endDate===endDate);
   const current=currentWeekToDateRange();
+  const lastWeek=lastCompletedWeekRange();
   if(from&&startDate===current.startDate)from.value=`${current.startDate}|${current.endDate}`;
+  else if(from&&startDate===lastWeek.startDate)from.value=`${lastWeek.startDate}|${lastWeek.endDate}`;
   else
   if(from&&fromPeriod)from.value=`${fromPeriod.startDate}|${fromPeriod.endDate}`;
   if(to&&endDate===current.endDate&&startDate===current.startDate)to.value=`${current.startDate}|${current.endDate}`;
+  else if(to&&endDate===lastWeek.endDate)to.value=`${lastWeek.startDate}|${lastWeek.endDate}`;
   else
   if(to&&toPeriod)to.value=`${toPeriod.startDate}|${toPeriod.endDate}`;
 }
@@ -829,6 +841,14 @@ function applyTyRangePreset(prefix='api',preset='latest'){
     loadCachedBestsellers(prefix);
     return;
   }
+  if(preset==='lastWeek'){
+    const range=lastCompletedWeekRange();
+    setApiDateParams(prefix,range.startDate,range.endDate);
+    setWeekSelectValues(prefix,range.startDate,range.endDate);
+    setRangePresetValue(prefix,'lastWeek');
+    loadCachedBestsellers(prefix);
+    return;
+  }
   if(!periods.length)return;
   let chosen=[];
   if(preset==='last4')chosen=periods.slice(0,4);
@@ -848,15 +868,13 @@ function renderServerPeriods(){
     const from=document.getElementById(`${prefix}-from-week`);
     const to=document.getElementById(`${prefix}-to-week`);
     if(!from||!to)return;
-    if(!items.length){
-      from.innerHTML='<option value="">No saved weeks</option>';
-      to.innerHTML='<option value="">No saved weeks</option>';
-      return;
-    }
     const current=currentWeekToDateRange();
+    const lastWeek=lastCompletedWeekRange();
     const currentOption=`<option value="${current.startDate}|${current.endDate}">Current week to date (live)</option>`;
+    const hasLastWeek=items.some(period=>period.startDate===lastWeek.startDate&&period.endDate===lastWeek.endDate);
+    const lastWeekOption=hasLastWeek?'':`<option value="${lastWeek.startDate}|${lastWeek.endDate}">Last completed week (live if not saved)</option>`;
     const chronological=[...items].sort((a,b)=>a.startDate.localeCompare(b.startDate));
-    const options=currentOption+chronological.map(period=>`<option value="${period.startDate}|${period.endDate}">${period.label}</option>`).join('');
+    const options=currentOption+lastWeekOption+chronological.map(period=>`<option value="${period.startDate}|${period.endDate}">${period.label}</option>`).join('');
     from.innerHTML=options;
     to.innerHTML=options;
   };
@@ -987,8 +1005,10 @@ async function loadLyServerPeriod(startDate,endDate,prefix='ly-api'){
   await loadCachedLyBestsellers(prefix);
 }
 async function loadCachedBestsellers(prefix='api'){
+  let range=null;
   try{
     const {startDate,endDate}=apiDateParams(prefix);
+    range={startDate,endDate};
     if(isCurrentWeekToDateRange(startDate,endDate)||daysInclusive(startDate,endDate)<7){
       await syncBestsellersFromApi(prefix);
       return;
@@ -997,6 +1017,12 @@ async function loadCachedBestsellers(prefix='api'){
     const data=await apiJson(`/api/reports/bestsellers?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&sourceType=shopify_api`);
     applyServerBestsellers(data);
   }catch(error){
+    const lastWeek=lastCompletedWeekRange();
+    const isLastWeek=range&&range.startDate===lastWeek.startDate&&range.endDate===lastWeek.endDate;
+    if(isLastWeek&&/no cached|missing cached/i.test(error.message||'')){
+      await syncBestsellersFromApi(prefix);
+      return;
+    }
     st(error.message,'err');
   }
 }
