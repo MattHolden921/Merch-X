@@ -173,6 +173,7 @@ textarea{min-height:70px;resize:vertical}
   </section>
 </main>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"});
 const eurMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"EUR"});
@@ -696,6 +697,10 @@ function exportOrderLinesExcel(){
   const order=state.selected;
   const lines=order?.order?.lines||[];
   if(!order||!lines.length)return;
+  if(!window.XLSX){
+    showStatus("Excel export library could not be loaded. Check your internet connection and try again.","err");
+    return;
+  }
   const headers=["Order number","Supplier","Batch","Product status","Product source","SKU","Buying code","Style","Category","Colour","Size","Quantity","Unit cost GBP","Unit cost EUR","Line cost GBP","Line cost EUR","Season"];
   const rows=filteredOrderLines(lines).map(({line,index})=>{
     const productStatus=productLineStatus(order,index);
@@ -712,24 +717,33 @@ function exportOrderLinesExcel(){
     line.colour||line.color||"",
     line.size||"",
     Number(line.quantity||0),
-    lineUnitGbp(line).toFixed(2),
-    lineUnitEur(line,order).toFixed(2),
-    lineCostGbp(line).toFixed(2),
-    lineCostEur(line,order).toFixed(2),
+    Number(lineUnitGbp(line).toFixed(2)),
+    Number(lineUnitEur(line,order).toFixed(2)),
+    Number(lineCostGbp(line).toFixed(2)),
+    Number(lineCostEur(line,order).toFixed(2)),
     line.season||""
   ];
   });
-  const table=`<table><thead><tr>${headers.map(header=>`<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(cell=>`<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>${table}</body></html>`;
-  const blob=new Blob([html],{type:"application/vnd.ms-excel"});
-  const url=URL.createObjectURL(blob);
-  const link=document.createElement("a");
-  link.href=url;
-  link.download=`${(order.orderNumber||"order").replace(/[^a-z0-9-]+/gi,"-")}-lines.xls`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  const worksheet=XLSX.utils.aoa_to_sheet([headers,...rows]);
+  worksheet["!cols"]=[
+    {wch:16},{wch:24},{wch:24},{wch:16},{wch:20},{wch:18},{wch:18},{wch:28},{wch:18},
+    {wch:18},{wch:12},{wch:10},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14}
+  ];
+  worksheet["!autofilter"]={ref:worksheet["!ref"]};
+  for(let rowIndex=1;rowIndex<=rows.length;rowIndex++){
+    for(const columnIndex of [12,14]){
+      const cell=worksheet[XLSX.utils.encode_cell({r:rowIndex,c:columnIndex})];
+      if(cell)cell.z='£#,##0.00;[Red]-£#,##0.00';
+    }
+    for(const columnIndex of [13,15]){
+      const cell=worksheet[XLSX.utils.encode_cell({r:rowIndex,c:columnIndex})];
+      if(cell)cell.z='€#,##0.00;[Red]-€#,##0.00';
+    }
+  }
+  const workbook=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook,worksheet,"Order lines");
+  const filename=`${(order.orderNumber||"order").replace(/[^a-z0-9-]+/gi,"-")}-lines.xlsx`;
+  XLSX.writeFile(workbook,filename,{bookType:"xlsx",compression:true});
 }
 
 function batchDisplayName(batch){
