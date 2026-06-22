@@ -7832,12 +7832,12 @@ function normalizeProductInput(input = {}, existing = {}) {
     color: cleanText(rawColour),
     size: cleanText(merged.size || firstNonEmpty(merged, ["Option1 Value"])),
     optionName: "Size",
-    optionValue: cleanText(merged.optionValue || merged.size || firstNonEmpty(merged, ["Option1 Value"]) || "One Size Fits UK 8 to 18"),
+    optionValue: cleanText(merged.size || merged.optionValue || firstNonEmpty(merged, ["Option1 Value"]) || "One Size Fits UK 8 to 18"),
     unitCostGbp: numberOrZero(merged.unitCostGbp ?? merged.unitCost ?? firstNonEmpty(merged, ["Cost per item"])),
     unitCostEur: numberOrZero(merged.unitCostEur),
     rrp: numberOrZero(merged.rrp ?? firstNonEmpty(merged, ["Variant Price"])),
     compareAtPrice: numberOrZero(merged.compareAtPrice ?? firstNonEmpty(merged, ["Variant Compare At Price"])),
-    barcode: cleanShopifyExportValue(merged.barcode || firstNonEmpty(merged, ["Variant Barcode"])),
+    barcode: cleanShopifyExportValue(merged.barcode || firstNonEmpty(merged, ["Variant Barcode"]) || sku),
     tags: csvList(rawTags),
     collections: csvList(merged.collections),
     description: cleanText(merged.description || firstNonEmpty(merged, ["Body (HTML)"])),
@@ -8087,7 +8087,7 @@ function successfulShopifySyncEvent(product) {
 
 function productShopifyPayload(product, fileInput = null) {
   const optionName = "Size";
-  const optionValue = cleanText(product.optionValue || product.size || "One Size Fits UK 8 to 18") || "One Size Fits UK 8 to 18";
+  const optionValue = cleanText(product.size || product.optionValue || "One Size Fits UK 8 to 18") || "One Size Fits UK 8 to 18";
   const colour = cleanText(product.colour || product.color);
   const department = cleanText(product.department || product.category || product.productType);
   const supplier = cleanText(product.supplierName);
