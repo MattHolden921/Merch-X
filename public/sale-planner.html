@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sale Planner</title>
+<link rel="stylesheet" href="design-system.css">
+<style>
+.wrap{max-width:1540px}
+[hidden]{display:none!important}
+.topbar{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:12px;align-items:end}
+.metric-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:14px}
+.toolbar{display:grid;grid-template-columns:minmax(220px,1.4fr) 150px 150px 150px 150px auto;gap:10px;align-items:end}
+.toolbar .field,.topbar .field{margin-bottom:0}
+.map-grid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:12px;align-items:start}
+.mapping-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}
+.table-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
+.sale-table{width:100%;min-width:1430px;border-collapse:collapse;table-layout:fixed}
+.sale-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);white-space:nowrap}
+.sale-table td{font-size:11px;color:var(--ds-text-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+.sale-table tr:last-child td{border-bottom:0}
+.sale-table tr:hover td{background:var(--ds-bg-muted)}
+.product-cell{display:grid;grid-template-columns:42px minmax(0,1fr);gap:8px;align-items:center}
+.thumb{width:42px;height:56px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--ds-text-soft);font-size:10px}
+.thumb img{width:100%;height:100%;object-fit:contain;display:block}
+.product-title{display:block;color:var(--ds-text);font-weight:650;font-size:12px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.product-meta{display:block;color:var(--ds-text-soft);font-size:10px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.num{text-align:right;white-space:nowrap}
+.mini-input,.mini-select{width:100%;min-height:28px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);font-size:11px;padding:0 5px}
+.mini-input{text-align:right}
+.badge{display:inline-flex;align-items:center;min-height:20px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:2px 7px;font-size:10px;font-weight:650;color:var(--ds-text-muted);background:var(--ds-bg-muted);white-space:nowrap}
+.badge.planned{color:var(--ds-info);border-color:rgba(37,99,235,.35)}
+.badge.applied{color:var(--ds-good);border-color:rgba(21,128,61,.35)}
+.badge.removed{color:var(--ds-text-muted)}
+.badge.error,.warn{color:var(--ds-bad)}
+.warning-list{display:flex;flex-direction:column;gap:2px;font-size:10px;line-height:1.3;color:var(--ds-bad)}
+.activity{display:grid;gap:7px;max-height:220px;overflow:auto}
+.event{border-top:1px solid var(--ds-line);padding-top:7px;font-size:12px;color:var(--ds-text-muted);line-height:1.45}
+.event:first-child{border-top:0;padding-top:0}
+.event strong{display:block;color:var(--ds-text)}
+.empty-state{padding:34px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.55}
+@media(max-width:1180px){.metric-grid{grid-template-columns:repeat(2,1fr)}.toolbar,.topbar,.map-grid{grid-template-columns:1fr}}
+@media(max-width:720px){body{padding:18px 10px 36px}.metric-grid{grid-template-columns:1fr}.actions{justify-content:flex-start}.table-tools{display:block}.table-tools .actions{margin-top:10px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>Sale planner</h1>
+      <p class="sub">Plan markdowns, review sale prices, map Shopify sale collections, and apply or remove sale state with an audited Admin workflow.</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="weekly-actions.html">Weekly actions</a>
+      <a class="btn" href="merchandising.html">Merchandising</a>
+      <button class="btn primary" id="refresh-btn" type="button">Refresh</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="topbar">
+      <div class="field"><label>Sale plan</label><select class="select" id="plan-select"></select></div>
+      <p class="status" id="status-note">Loading sale planner.</p>
+    </div>
+  </section>
+
+  <section class="metric-grid" id="metrics"></section>
+
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label>Search</label><input id="search" placeholder="Product, SKU, type, warning"></div>
+      <div class="field"><label>Status</label><select class="select" id="status-filter"><option value="">All statuses</option><option>Planned</option><option>Applied</option><option>Removed</option><option>Error</option></select></div>
+      <div class="field"><label>Type</label><select class="select" id="type-filter"></select></div>
+      <div class="field"><label>Discount</label><select class="select" id="discount-filter"><option value="">All discounts</option><option value="10">10%+</option><option value="20">20%+</option><option value="30">30%+</option><option value="40">40%+</option><option value="50">50%</option></select></div>
+      <div class="field"><label>Warnings</label><select class="select" id="warning-filter"><option value="">All rows</option><option value="warnings">With warnings</option><option value="clean">No warnings</option></select></div>
+      <div class="field"><label>&nbsp;</label><button class="btn" type="button" id="clear-filters-btn">Clear filters</button></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <div>
+        <p class="section-title">Sale collection mapping</p>
+        <p class="status" id="mapping-note">Auto-matched Sale collections can be corrected here by Admin.</p>
+      </div>
+      <div class="actions">
+        <button class="btn" type="button" id="save-mapping-btn">Save mapping</button>
+      </div>
+    </div>
+    <div class="map-grid">
+      <div class="field"><label>Root Sale collection</label><select class="select" id="root-collection"></select></div>
+      <div class="mapping-list" id="type-mapping"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="table-tools">
+      <div>
+        <p class="section-title">Planned products</p>
+        <p class="status" id="table-note">Select rows to apply to Shopify or remove from sale. Price changes are checked against live Shopify state before writing.</p>
+      </div>
+      <div class="actions">
+        <span class="pill" id="selected-count">0 selected</span>
+        <button class="btn" type="button" id="select-all-btn">Select all filtered</button>
+        <button class="btn" type="button" id="clear-selected-btn">Clear</button>
+        <button class="btn" type="button" id="remove-plan-btn">Remove from planner</button>
+        <button class="btn primary" type="button" id="apply-btn">Apply to Shopify</button>
+        <button class="btn" type="button" id="remove-btn">Remove from sale</button>
+      </div>
+    </div>
+    <div class="table-wrap" id="table-wrap"></div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head"><p class="section-title">Activity</p><span class="pill" id="event-count">0 events</span></div>
+    <div class="activity" id="activity"></div>
+  </section>
+</main>
+
+<script>
+const LOCAL_API_ORIGINS=["","http://localhost:3016","http://localhost:3003","http://localhost:3001","http://localhost:3000"];
+const API_ORIGINS=location.protocol==="file:"?LOCAL_API_ORIGINS.slice(1):/^(localhost|127\.0\.0\.1)$/.test(location.hostname)?LOCAL_API_ORIGINS:[""];
+const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
+const exactMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",minimumFractionDigits:2,maximumFractionDigits:2});
+const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
+let state={plans:[],plan:null,items:[],events:[],metrics:{},collections:[],collectionConfig:{rootSaleCollectionId:"",childCollectionByType:{}},canApply:false,shopifyConfigured:false,shopifyMessage:""};
+let selectedRows=new Set();
+
+const el=id=>document.getElementById(id);
+const val=id=>el(id)?.value?.trim()||"";
+
+async function apiFetch(path,options){
+  let lastError;
+  for(const origin of API_ORIGINS){
+    try{
+      const response=await fetch(`${origin}${path}`,options);
+      if(response.ok||response.status>=400)return response;
+      lastError=new Error(`API returned ${response.status}`);
+    }catch(error){lastError=error;}
+  }
+  throw lastError||new Error("API unavailable");
+}
+
+async function apiJson(path,options){
+  const response=await apiFetch(path,options);
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.error||data.message||`Request failed (${response.status})`);
+  return data;
+}
+
+function escapeHtml(value){return String(value||"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));}
+function attr(value){return escapeHtml(value).replaceAll("`","&#96;");}
+function formatDate(value){if(!value)return"";const date=new Date(value);return Number.isNaN(date.getTime())?value:dateFmt.format(date);}
+function moneyText(value){return exactMoney.format(Number(value||0));}
+function gpText(item){
+  const value=Number(item?.metrics?.targetGpPct);
+  return Number.isFinite(value)?`${value.toFixed(1)}%`:"-";
+}
+function collectionOptions(value,blank="Unmapped"){
+  const rows=[`<option value="">${escapeHtml(blank)}</option>`].concat((state.collections||[]).map(collection=>`<option value="${attr(collection.id)}"${collection.id===value?" selected":""}>${escapeHtml(collection.title)}${collection.handle?` (${escapeHtml(collection.handle)})`:""}</option>`));
+  return rows.join("");
+}
+
+function metric(label,value,small){
+  return `<div class="metric"><label>${escapeHtml(label)}</label><span>${escapeHtml(value)}</span><small>${escapeHtml(small||"")}</small></div>`;
+}
+
+function renderMetrics(){
+  const m=state.metrics||{};
+  el("metrics").innerHTML=[
+    metric("Products",Number(m.total||0).toLocaleString("en-GB"),"in current plan"),
+    metric("Planned",Number(m.planned||0).toLocaleString("en-GB"),"ready to apply"),
+    metric("Applied",Number(m.applied||0).toLocaleString("en-GB"),"on sale"),
+    metric("Removed",Number(m.removed||0).toLocaleString("en-GB"),"restored"),
+    metric("Errors",Number(m.errors||0).toLocaleString("en-GB"),"need review"),
+    metric("Final",Number(m.finalClearance||0).toLocaleString("en-GB"),"50% rows"),
+    metric("Stock value",money.format(Number(m.stockValue||0)),`${Number(m.stockUnits||0).toLocaleString("en-GB")} units`)
+  ].join("");
+}
+
+function renderPlanSelect(){
+  el("plan-select").innerHTML=(state.plans||[]).length
+    ? state.plans.map(plan=>`<option value="${attr(plan.id)}"${state.plan?.id===plan.id?" selected":""}>${escapeHtml(plan.name)} - ${escapeHtml(plan.status)}</option>`).join("")
+    : '<option value="">No sale plans yet</option>';
+}
+
+function renderTypeFilter(){
+  const current=val("type-filter");
+  const types=[...new Set((state.items||[]).map(item=>item.productType).filter(Boolean))].sort();
+  el("type-filter").innerHTML=`<option value="">All types</option>${types.map(type=>`<option${type===current?" selected":""}>${escapeHtml(type)}</option>`).join("")}`;
+}
+
+function renderMapping(){
+  const config=state.collectionConfig||{childCollectionByType:{}};
+  const root=config.rootSaleCollectionId||autoRootSaleId();
+  el("root-collection").innerHTML=collectionOptions(root,"Choose Sale collection");
+  const types=[...new Set((state.items||[]).map(item=>item.productType).filter(Boolean))].sort();
+  el("type-mapping").innerHTML=types.length?types.map(type=>{
+    const existing=config.childCollectionByType?.[type]||autoChildSaleId(type);
+    return `<div class="field"><label>${escapeHtml(type)}</label><select class="select type-map" data-type="${attr(type)}">${collectionOptions(existing,"Choose child collection")}</select></div>`;
+  }).join(""):`<p class="empty-state">Import products to map sale child collections by product type.</p>`;
+  const msg=state.shopifyConfigured?`${state.collections.length.toLocaleString("en-GB")} Shopify collections available.`:state.shopifyMessage||"Shopify collections are unavailable.";
+  el("mapping-note").className=state.shopifyConfigured?"status ok":"status warn";
+  el("mapping-note").textContent=msg;
+}
+
+function autoRootSaleId(){
+  const match=(state.collections||[]).find(collection=>String(collection.handle||collection.title||"").toLowerCase()==="sale")
+    ||(state.collections||[]).find(collection=>/^sale$/i.test(collection.title||""));
+  return match?.id||"";
+}
+
+function normalizeKey(value){return String(value||"").toLowerCase().replace(/&/g,"and").replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").replace(/s$/,"");}
+function autoChildSaleId(type){
+  const key=normalizeKey(type);
+  const match=(state.collections||[]).find(collection=>{
+    const handle=normalizeKey(String(collection.handle||collection.title||"").replace(/^sale[- ]/i,""));
+    const title=normalizeKey(String(collection.title||"").replace(/^sale[- ]/i,""));
+    const full=normalizeKey(collection.handle||collection.title||"");
+    return full.startsWith("sale-")&&(handle===key||title===key||handle.includes(key)||key.includes(handle));
+  });
+  return match?.id||"";
+}
+
+function filteredItems(){
+  const q=val("search").toLowerCase();
+  const status=val("status-filter");
+  const type=val("type-filter");
+  const discount=Number(val("discount-filter")||0);
+  const warn=val("warning-filter");
+  return (state.items||[]).filter(item=>{
+    const haystack=[item.title,item.sku,item.productType,item.season,item.status,item.lastError,(item.warnings||[]).join(" ")].join(" ").toLowerCase();
+    return (!q||haystack.includes(q))
+      &&(!status||item.status===status)
+      &&(!type||item.productType===type)
+      &&(!discount||Number(item.discountPercent||0)>=discount)
+      &&(!warn||(warn==="warnings"?(item.warnings||[]).length:(item.warnings||[]).length===0));
+  });
+}
+
+function badgeClass(status){return String(status||"").toLowerCase();}
+
+function warningsHtml(item){
+  const warnings=[...(item.warnings||[])];
+  if(item.lastError)warnings.unshift(item.lastError);
+  return warnings.length?`<div class="warning-list">${warnings.slice(0,3).map(warning=>`<span>${escapeHtml(warning)}</span>`).join("")}</div>`:"-";
+}
+
+function rowHtml(item){
+  return `<tr>
+    <td><input type="checkbox" aria-label="Select ${attr(item.title)}" ${selectedRows.has(item.id)?"checked":""} onchange="toggleRow('${attr(item.id)}',this.checked)"></td>
+    <td><div class="product-cell"><div class="thumb">${item.imageUrl?`<img src="${attr(item.imageUrl)}" alt="${attr(item.title)}" loading="lazy">`:"No image"}</div><div><span class="product-title" title="${attr(item.title)}">${escapeHtml(item.title)}</span><span class="product-meta">${escapeHtml(item.sku||"-")} - ${escapeHtml(item.productType||"-")} - ${escapeHtml(item.season||"-")}</span></div></div></td>
+    <td><span class="badge ${badgeClass(item.status)}">${escapeHtml(item.status)}</span></td>
+    <td class="num">${Number(item.stock||0).toLocaleString("en-GB")}</td>
+    <td class="num">${Number(item.units||0).toLocaleString("en-GB")}</td>
+    <td class="num">${item.coverWks==null?"-":Number(item.coverWks||0).toFixed(1)}</td>
+    <td class="num">${Math.round(Number(item.riskScore||0))}</td>
+    <td class="num">${moneyText(item.originalPrice)}</td>
+    <td class="num">${moneyText(item.currentPrice)}</td>
+    <td><input class="mini-input" type="number" min="0" step="1" value="${attr(item.discountPercent)}" onchange="updateItem('${attr(item.id)}',{discountPercent:this.value})"></td>
+    <td><input class="mini-input" type="number" min="0" step="0.01" value="${attr(item.targetPrice)}" onchange="updateItem('${attr(item.id)}',{targetPrice:this.value})"></td>
+    <td class="num" title="GP% = (((retail price / 1.2) - cost price) / (retail price / 1.2))">${gpText(item)}</td>
+    <td><select class="mini-select" onchange="updateItem('${attr(item.id)}',{childSaleCollectionId:this.value})">${collectionOptions(item.childSaleCollectionId,"Child sale collection")}</select></td>
+    <td>${warningsHtml(item)}</td>
+    <td><button class="btn row-open" type="button" onclick="removePlanItems(['${attr(item.id)}'])">Remove</button></td>
+  </tr>`;
+}
+
+function renderTable(){
+  const rows=filteredItems();
+  const valid=new Set(rows.map(item=>item.id));
+  selectedRows=new Set([...selectedRows].filter(id=>valid.has(id)));
+  el("selected-count").textContent=`${selectedRows.size.toLocaleString("en-GB")} selected`;
+  el("table-wrap").innerHTML=rows.length?`<table class="sale-table">
+    <thead><tr>
+      <th style="width:34px"><input type="checkbox" aria-label="Select all visible" ${rows.length&&rows.every(item=>selectedRows.has(item.id))?"checked":""} onchange="setAllVisible(this.checked)"></th>
+      <th style="width:310px">Product</th><th style="width:80px">Status</th><th class="num">Stock</th><th class="num">Units</th><th class="num">Cover</th><th class="num">Risk</th><th class="num">Original</th><th class="num">Current</th><th>Disc %</th><th>Target</th><th class="num">GP %</th><th style="width:190px">Sale collection</th><th style="width:240px">Warnings</th><th style="width:90px">Plan</th>
+    </tr></thead>
+    <tbody>${rows.map(rowHtml).join("")}</tbody>
+  </table>`:`<p class="empty-state">No sale planner items match the current filters.</p>`;
+}
+
+function renderActivity(){
+  const events=state.events||[];
+  el("event-count").textContent=`${events.length} events`;
+  el("activity").innerHTML=events.length?events.map(event=>`<div class="event"><strong>${escapeHtml(event.message)}</strong><span>${escapeHtml(event.actorName||"Team")} - ${formatDate(event.createdAt)} - ${escapeHtml(event.eventType)}</span></div>`).join(""):`<p class="empty-state">No sale planner activity yet.</p>`;
+}
+
+function render(){
+  renderMetrics();
+  renderPlanSelect();
+  renderTypeFilter();
+  renderMapping();
+  renderTable();
+  renderActivity();
+  el("apply-btn").disabled=!state.canApply;
+  el("remove-btn").disabled=!state.canApply;
+}
+
+async function loadPlanner(planId=val("plan-select")){
+  try{
+    const query=planId?`?planId=${encodeURIComponent(planId)}`:"";
+    const data=await apiJson(`/api/sale-planner${query}`);
+    state={...state,...data};
+    el("status-note").className="status ok";
+    el("status-note").textContent=state.plan?`${state.plan.name} loaded.`:"Import products from Weekly Actions or Product Merchandising to start a sale plan.";
+    render();
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+  }
+}
+
+async function updateItem(itemId,patch){
+  try{
+    const data=await apiJson("/api/sale-planner/items/update",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({itemId,patch})});
+    state={...state,...data};
+    el("status-note").className="status ok";
+    el("status-note").textContent="Sale item updated.";
+    render();
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+    renderTable();
+  }
+}
+
+async function saveMapping(){
+  const childCollectionByType={};
+  document.querySelectorAll(".type-map").forEach(select=>{if(select.value)childCollectionByType[select.dataset.type]=select.value;});
+  try{
+    const data=await apiJson("/api/sale-planner/config",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id||"",config:{rootSaleCollectionId:val("root-collection"),childCollectionByType}})});
+    state={...state,...data};
+    el("status-note").className="status ok";
+    el("status-note").textContent="Sale collection mapping saved.";
+    render();
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+  }
+}
+
+function toggleRow(id,checked){if(checked)selectedRows.add(id);else selectedRows.delete(id);renderTable();}
+function setAllVisible(checked){for(const item of filteredItems()){if(checked)selectedRows.add(item.id);else selectedRows.delete(item.id);}renderTable();}
+function clearFilters(){["search","status-filter","type-filter","discount-filter","warning-filter"].forEach(id=>el(id).value="");selectedRows.clear();render();}
+
+async function removePlanItems(ids){
+  const itemIds=(ids&&ids.length?ids:[...selectedRows]).filter(Boolean);
+  if(!itemIds.length){
+    el("status-note").className="status warn";
+    el("status-note").textContent="Select at least one sale planner row first.";
+    return;
+  }
+  const count=itemIds.length.toLocaleString("en-GB");
+  const confirmed=confirm(`Remove ${count} product${itemIds.length===1?"":"s"} from this sale planner? Shopify will not be changed.`);
+  if(!confirmed)return;
+  el("remove-plan-btn").disabled=true;
+  try{
+    const data=await apiJson("/api/sale-planner/items/remove",{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({planId:state.plan?.id||"",itemIds})
+    });
+    selectedRows.clear();
+    state={...state,...data};
+    el("status-note").className="status ok";
+    el("status-note").textContent=`Removed ${Number(data.removed?.length||0).toLocaleString("en-GB")} product${data.removed?.length===1?"":"s"} from the planner.`;
+    render();
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+  }finally{
+    el("remove-plan-btn").disabled=false;
+  }
+}
+
+async function pollJob(jobId){
+  while(true){
+    await new Promise(resolve=>setTimeout(resolve,1800));
+    const data=await apiJson(`/api/sale-planner/apply/status?id=${encodeURIComponent(jobId)}`);
+    const job=data.job||{};
+    el("status-note").className=job.status==="error"?"status err":job.status==="complete"?"status ok":"status warn";
+    el("status-note").textContent=`${job.message||job.status} ${Number(job.processedItems||0)}/${Number(job.totalItems||0)} items.`;
+    if(job.status==="complete"||job.status==="error")return job;
+  }
+}
+
+async function startJob(mode){
+  const ids=[...selectedRows];
+  if(!ids.length){
+    el("status-note").className="status warn";
+    el("status-note").textContent="Select at least one sale planner row first.";
+    return;
+  }
+  const selected=state.items.filter(item=>selectedRows.has(item.id));
+  const hasFinal=selected.some(item=>Number(item.discountPercent||0)>=50);
+  const expected=mode==="remove"?"REMOVE":hasFinal?"FINAL SALE":"APPLY";
+  const confirmation=prompt(`This will ${mode==="remove"?"remove selected products from sale":"change Shopify prices and sale collections"} for ${ids.length.toLocaleString("en-GB")} product${ids.length===1?"":"s"}. Type ${expected} to continue.`);
+  if(String(confirmation||"").trim().toUpperCase()!==expected)return;
+  el(mode==="remove"?"remove-btn":"apply-btn").disabled=true;
+  el("status-note").className="status warn";
+  el("status-note").textContent=mode==="remove"?"Starting sale removal job.":"Starting Shopify sale apply job.";
+  try{
+    const path=mode==="remove"?"/api/sale-planner/remove/start":"/api/sale-planner/apply/start";
+    const data=await apiJson(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id,itemIds:ids,confirmText:confirmation})});
+    await pollJob(data.job.id);
+    selectedRows.clear();
+    await loadPlanner(state.plan?.id||"");
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+    await loadPlanner(state.plan?.id||"");
+  }
+}
+
+["search","status-filter","type-filter","discount-filter","warning-filter"].forEach(id=>el(id).addEventListener("input",renderTable));
+el("refresh-btn").addEventListener("click",()=>loadPlanner());
+el("plan-select").addEventListener("change",()=>loadPlanner(val("plan-select")));
+el("save-mapping-btn").addEventListener("click",saveMapping);
+el("select-all-btn").addEventListener("click",()=>setAllVisible(true));
+el("clear-selected-btn").addEventListener("click",()=>setAllVisible(false));
+el("clear-filters-btn").addEventListener("click",clearFilters);
+el("remove-plan-btn").addEventListener("click",()=>removePlanItems());
+el("apply-btn").addEventListener("click",()=>startJob("apply"));
+el("remove-btn").addEventListener("click",()=>startJob("remove"));
+loadPlanner(new URLSearchParams(location.search).get("planId")||"");
+</script>
+</body>
+</html>

@@ -44,6 +44,7 @@ The app favours simple operational tools over a large framework:
 - `public/products.html`: product and supplier master-data workspace, local SKU enrichment, readiness review, and Shopify draft push workflow.
 - `public/merchandising.html`: Shopify product merchandising view using product, order, and optional GA4 metrics.
 - `public/collection-planner.html`: Shopify collection reorder planning and apply-to-Shopify workflow.
+- `public/sale-planner.html`: markdown and sale planning workspace for importing products, reviewing markdown prices, mapping Sale collections, applying Shopify sale state, and removing sale state.
 - `public/weekly-actions.html`: action board generated from saved bestsellers periods.
 - `public/email-merchandising.html`: guided six-product email campaign builder, Klaviyo draft handoff, campaign history, and performance reporting.
 - `README.md`: setup and storage overview.
@@ -79,6 +80,7 @@ Primary table groups:
 - Collection reorder: `collection_reorder_audit`.
 - Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
 - Weekly actions: `weekly_actions`, `weekly_action_events`.
+- Sale planner: `sale_plans`, `sale_plan_items`, `sale_plan_events`, plus Sale collection mapping stored in `app_settings.salePlannerCollections`.
 - Email merchandising: `email_campaigns`, immutable product snapshots in `email_campaign_products`, and source-specific `email_campaign_metric_snapshots`.
 
 Legacy/prototype data:
@@ -112,6 +114,7 @@ Used for:
 - Product merchandising sync.
 - Collection planner product and collection sync.
 - Collection reorder apply jobs.
+- Sale planner price, compare-at price, and Sale collection apply/remove jobs.
 - Bestsellers sync from Shopify orders/products.
 
 When Shopify is not configured, tools should return a clear configured=false response and use samples or saved local data where appropriate.
@@ -214,6 +217,14 @@ Shopify and Google:
 - `GET /api/shopify-collection-planner`
 - `POST /api/shopify-collection-reorder/start`
 - `GET /api/shopify-collection-reorder/status`
+- `GET /api/sale-planner`
+- `POST /api/sale-planner/import`
+- `POST /api/sale-planner/items/update`
+- `POST /api/sale-planner/items/remove`
+- `POST /api/sale-planner/config`
+- `POST /api/sale-planner/apply/start`
+- `GET /api/sale-planner/apply/status`
+- `POST /api/sale-planner/remove/start`
 - `GET /api/google-auth/start`
 - `GET /api/google-auth/callback`
 
@@ -331,6 +342,23 @@ Weekly actions are generated from saved Shopify bestsellers periods. Candidate a
 
 Actions use a `dedupe_key` by type/product so unresolved existing actions are updated rather than duplicated. Statuses are `Open`, `In progress`, `Snoozed`, `Blocked`, and `Done`.
 Actions keep their role owner and can also be assigned to an active user. Owner/assignee changes create handoff records and notifications.
+
+### Sale Planner
+
+The Sale Planner is the operational markdown workflow for Shopify sale changes.
+
+Key principles:
+
+- Buyer, Merchandising, and Admin users can import products, review suggested markdowns, and edit sale-plan items. Only Admin users can apply or remove live Shopify sale state.
+- Products can be imported from Weekly Actions or Product Merchandising. Importing Weekly Action rows sets open markdown actions to `In progress` and records a weekly action event.
+- Non-applied rows can be removed from the planner without changing Shopify. Applied rows must use the remove-from-sale workflow first, preserving the audit trail and stored collection targets.
+- Suggested markdowns use a risk ladder of 10%, 20%, 30%, 40%, and 50%. The score considers stock, cover weeks, sell-through, weak sales, stock value, age, season, existing markdown state, and failed/deeper markdown signals.
+- Sale prices round to the nearest pound by default. Existing markdowns use `compareAtPrice` as the original price and only recommend the same or a deeper markdown step.
+- Multi-variant products receive the same discount percentage per variant, calculated from each variant's own original/current price. Manual target-price edits update every stored variant target so Shopify receives the visible plan price. The planner shows target GP% using `(((retail price / 1.2) - cost price) / (retail price / 1.2))`, with the row value using the lowest variant GP%. Warnings are shown for missing variants, missing prices, final-clearance markdowns, missing Sale collections, and target prices below cost.
+- Sale collection mapping auto-detects the root `Sale` collection and child collections such as `Sale Tops`; Admin users can save overrides in `app_settings.salePlannerCollections`.
+- Applying sale state preflights the live Shopify product and blocks stale plans when planned variant prices no longer match Shopify. Successful applies update variant `price` and `compareAtPrice`, then add the product to the root Sale collection and mapped child Sale collection.
+- Removing sale state restores each variant to its live `compareAtPrice`, clears `compareAtPrice`, and removes the product from the stored root/child Sale collections. If no live compare-at price exists, the current price is left unchanged and a warning is recorded.
+- Apply and remove jobs are kept in memory while running and write item-level results plus `sale_plan_events` audit rows. If the server restarts, users should refresh the planner and verify Shopify before retrying.
 
 ### Collection Reorder Planner
 

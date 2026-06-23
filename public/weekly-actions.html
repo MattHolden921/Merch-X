@@ -122,6 +122,7 @@
       </div>
       <div class="actions">
         <span class="pill" id="selected-count">0 selected</span>
+        <button class="btn primary" type="button" id="send-sale-planner-btn">Send selected to sale planner</button>
         <button class="btn" type="button" id="export-markdown-btn">Export markdown CSV</button>
         <button class="btn" type="button" id="export-filtered-btn">Export filtered CSV</button>
         <button class="btn" type="button" id="export-selected-btn">Export selected CSV</button>
@@ -936,6 +937,32 @@ async function exportSelectedAndMarkProgress(){
   }
 }
 
+async function sendSelectedToSalePlanner(){
+  const actions=actionRows().filter(action=>selectedRows.has(action.id));
+  if(!actions.length){
+    el("status-note").className="status warn";
+    el("status-note").textContent="Select at least one action first.";
+    return;
+  }
+  const markdownCount=actions.filter(action=>action.actionType==="markdown").length;
+  el("send-sale-planner-btn").disabled=true;
+  el("status-note").className="status";
+  el("status-note").textContent=`Sending ${actions.length.toLocaleString("en-GB")} selected action${actions.length===1?"":"s"} to the sale planner.`;
+  try{
+    const data=await apiJson("/api/sale-planner/import",{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({weeklyActionIds:actions.map(action=>action.id),sourceType:"weekly_actions",sourceLabel:markdownCount===actions.length?"Weekly markdown actions":"Weekly actions"})
+    });
+    const planId=data.plan?.id||"";
+    window.location.href=`sale-planner.html${planId?`?planId=${encodeURIComponent(planId)}`:""}`;
+  }catch(error){
+    el("status-note").className="status err";
+    el("status-note").textContent=error.message;
+    el("send-sale-planner-btn").disabled=false;
+  }
+}
+
 ["search","type-filter","owner-filter","status-filter","priority-filter","season-filter"].forEach(id=>{
   el(id).addEventListener("input",()=>{state.selectedId="";loadActions();});
 });
@@ -952,6 +979,7 @@ el("export-markdown-btn").addEventListener("click",exportMarkdownActions);
 el("export-filtered-btn").addEventListener("click",()=>exportActions("filtered"));
 el("export-selected-btn").addEventListener("click",()=>exportActions("selected"));
 el("export-progress-btn").addEventListener("click",exportSelectedAndMarkProgress);
+el("send-sale-planner-btn").addEventListener("click",sendSelectedToSalePlanner);
 el("actor-name").value=localStorage.getItem("weeklyActionsActorName")||"";
 loadActions();
 </script>
