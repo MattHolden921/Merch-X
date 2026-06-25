@@ -6,6 +6,12 @@ const {
   collectionMembershipForProduct,
   gpPercentFromRetail,
   matchSaleChildCollection,
+  markdownActionRecommendation,
+  markdownLearningStep,
+  markdownOutcome,
+  lowViewSignal,
+  nextMarkdownStep,
+  originalPrice,
   recommendMarkdown,
   removeSaleTargets,
   roundSalePrice,
@@ -47,6 +53,21 @@ test("deepens existing markdowns and uses compare-at as original price", () => {
   assert.equal(suggestion.targetPrice, 35);
 });
 
+test("explicit sale RRP overrides current markdown prices", () => {
+  assert.equal(originalPrice({ price: 35, compareAtPrice: 40, saleOriginalPrice: 50 }), 50);
+  const deeper = recommendMarkdown({
+    title: "Ledger RRP",
+    price: 40,
+    compareAtPrice: 40,
+    saleOriginalPrice: 50,
+    stock: 15,
+    units: 1,
+    coverWks: 8
+  }, { now: "2026-06-23" });
+  assert.equal(deeper.originalPrice, 50);
+  assert.equal(deeper.targetPrice, 35);
+});
+
 test("builds variant sale targets and warns below cost", () => {
   const targets = variantSaleTargets({
     variants: [
@@ -84,11 +105,89 @@ test("remove sale restores compare-at price or warns when none exists", () => {
   const targets = removeSaleTargets({
     variants: [
       { id: "v1", sku: "A", price: 35, compareAtPrice: 50 },
-      { id: "v2", sku: "B", price: 29, compareAtPrice: null }
+      { id: "v2", sku: "B", price: 29, compareAtPrice: null },
+      { id: "v3", sku: "C", price: 32, compareAtPrice: 40, saleOriginalPrice: 55 }
     ]
   });
   assert.equal(targets[0].restoredPrice, 50);
   assert.equal(targets[0].compareAtPrice, 50);
   assert.equal(targets[1].restoredPrice, 29);
   assert.ok(targets[1].warnings.some(message => message.includes("No compare-at")));
+  assert.equal(targets[2].restoredPrice, 55);
+});
+
+test("scores markdown outcomes from sell-through and GA CVR", () => {
+  const worked = markdownOutcome({
+    preUnits: 2,
+    preStock: 30,
+    preGaViews: 200,
+    preGaPurchases: 2,
+    postUnits: 10,
+    postStock: 20,
+    postGaViews: 220,
+    postGaPurchases: 10,
+    daysObserved: 21
+  });
+  assert.equal(worked.outcome, "worked");
+  assert.ok(worked.sellThroughLift > 0);
+  assert.ok(worked.cvrLift > 0);
+
+  const deepen = markdownOutcome({ preUnits: 2, preStock: 30, postUnits: 1, postStock: 29, daysObserved: 28 });
+  assert.equal(deepen.outcome, "deepen");
+
+  const early = markdownOutcome({ preUnits: 1, preStock: 20, postUnits: 1, postStock: 19, daysObserved: 7 });
+  assert.equal(early.outcome, "watch");
+
+  const remove = markdownOutcome({ preUnits: 1, preStock: 20, postUnits: 19, postStock: 0, daysObserved: 14 });
+  assert.equal(remove.outcome, "remove");
+});
+
+test("learning nudges future markdown steps from similar outcomes", () => {
+  const product = { productType: "Dresses", season: "SS26" };
+  assert.equal(markdownLearningStep(product, 20, [
+    { productType: "Dresses", season: "SS26", discountPercent: 20, outcome: "deepen" },
+    { productType: "Dresses", season: "SS26", discountPercent: 30, outcome: "worked" }
+  ]), 30);
+  assert.equal(markdownLearningStep(product, 30, [
+    { productType: "Dresses", season: "SS26", discountPercent: 10, outcome: "worked" },
+    { productType: "Dresses", season: "SS26", discountPercent: 20, outcome: "worked" }
+  ]), 20);
+});
+
+test("builds action recommendations and flags low views before deeper markdowns", () => {
+  assert.equal(nextMarkdownStep(20), 30);
+  assert.equal(nextMarkdownStep(50), 50);
+
+  const lowViews = lowViewSignal({ daysObserved: 14, postGaViews: 20, postStock: 18 });
+  assert.equal(lowViews.lowViews, true);
+
+  const exposure = markdownActionRecommendation({
+    outcome: "deepen",
+    reason: "Weak demand",
+    daysObserved: 14,
+    postGaViews: 20,
+    postStock: 18,
+    data: { originalPrice: 50, currentPrice: 40 }
+  }, { originalPrice: 50, currentPrice: 40, discountPercent: 20 });
+  assert.equal(exposure.actionType, "low_views");
+  assert.equal(exposure.recommendedDiscountPercent, 20);
+
+  const deepen = markdownActionRecommendation({
+    outcome: "deepen",
+    daysObserved: 28,
+    postGaViews: 400,
+    postStock: 18,
+    data: { originalPrice: 50, currentPrice: 40 }
+  }, { originalPrice: 50, currentPrice: 40, discountPercent: 20 });
+  assert.equal(deepen.actionType, "deepen");
+  assert.equal(deepen.recommendedDiscountPercent, 30);
+  assert.equal(deepen.recommendedTargetPrice, 35);
+
+  const remove = markdownActionRecommendation({
+    outcome: "remove",
+    postStock: 0,
+    data: { originalPrice: 50, currentPrice: 40 }
+  }, { originalPrice: 50, currentPrice: 40, discountPercent: 20 });
+  assert.equal(remove.actionType, "remove");
+  assert.equal(remove.recommendedTargetPrice, 50);
 });

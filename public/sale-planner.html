@@ -10,6 +10,30 @@
 [hidden]{display:none!important}
 .topbar{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:12px;align-items:end}
 .metric-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:14px}
+.analysis-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:12px}
+.analysis-exceptions{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.exception-list{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);min-height:120px;overflow:hidden}
+.exception-list h3{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);margin:0;padding:9px 10px;border-bottom:1px solid var(--ds-line);background:var(--ds-bg-muted)}
+.analysis-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:8px 10px;border-top:1px solid var(--ds-line);font-size:11px;color:var(--ds-text-muted);align-items:start}
+.analysis-row:first-of-type{border-top:0}
+.analysis-row strong{display:block;color:var(--ds-text);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.analysis-row span{display:block;color:var(--ds-text-soft);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.analysis-row b{font-weight:650;color:var(--ds-text)}
+.action-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) 150px 150px auto;gap:10px;align-items:end;margin-bottom:10px}
+.action-tools{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.action-table{width:100%;min-width:1180px;border-collapse:collapse;table-layout:fixed}
+.action-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);white-space:nowrap}
+.action-table td{font-size:11px;color:var(--ds-text-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+.action-table tr:hover td{background:var(--ds-bg-muted)}
+.action-main strong{display:block;color:var(--ds-text);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.action-main span,.price-pair span{display:block;color:var(--ds-text-soft);font-size:10px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.price-pair b{display:block;color:var(--ds-text);font-size:12px;font-weight:650;white-space:nowrap}
+.badge.deepen{color:var(--ds-info);border-color:rgba(37,99,235,.35)}
+.badge.remove{color:var(--ds-bad);border-color:rgba(185,28,28,.35)}
+.badge.low_views{color:var(--ds-warn);border-color:rgba(180,83,9,.35)}
+.badge.pending{color:var(--ds-info)}
+.badge.accepted{color:var(--ds-good)}
+.badge.ignored,.badge.snoozed{color:var(--ds-text-soft)}
 .toolbar{display:grid;grid-template-columns:minmax(220px,1.4fr) 150px 150px 150px 150px auto;gap:10px;align-items:end}
 .toolbar .field,.topbar .field{margin-bottom:0}
 .map-grid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:12px;align-items:start}
@@ -40,8 +64,9 @@
 .event:first-child{border-top:0;padding-top:0}
 .event strong{display:block;color:var(--ds-text)}
 .empty-state{padding:34px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.55}
-@media(max-width:1180px){.metric-grid{grid-template-columns:repeat(2,1fr)}.toolbar,.topbar,.map-grid{grid-template-columns:1fr}}
-@media(max-width:720px){body{padding:18px 10px 36px}.metric-grid{grid-template-columns:1fr}.actions{justify-content:flex-start}.table-tools{display:block}.table-tools .actions{margin-top:10px}}
+@media(max-width:1180px){.metric-grid,.analysis-grid{grid-template-columns:repeat(2,1fr)}.analysis-exceptions{grid-template-columns:repeat(2,1fr)}.toolbar,.topbar,.map-grid,.action-toolbar{grid-template-columns:1fr}.action-tools{justify-content:flex-start}}
+@media(max-width:860px){.analysis-exceptions{grid-template-columns:1fr}}
+@media(max-width:720px){body{padding:18px 10px 36px}.metric-grid,.analysis-grid{grid-template-columns:1fr}.actions{justify-content:flex-start}.table-tools{display:block}.table-tools .actions{margin-top:10px}}
 </style>
 </head>
 <body>
@@ -67,6 +92,45 @@
   </section>
 
   <section class="metric-grid" id="metrics"></section>
+
+  <section class="panel">
+    <div class="section-head">
+      <div>
+        <p class="section-title">Analysis</p>
+        <p class="status" id="analysis-note">Refresh analysis after saved bestsellers reports are up to date.</p>
+      </div>
+      <div class="actions">
+        <button class="btn" type="button" id="refresh-analysis-btn">Refresh analysis</button>
+      </div>
+    </div>
+    <div class="analysis-grid" id="analysis-metrics"></div>
+    <div class="analysis-exceptions" id="analysis-exceptions"></div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <div>
+        <p class="section-title">Action queue</p>
+        <p class="status" id="action-note">Refresh analysis to generate follow-up actions.</p>
+      </div>
+      <span class="pill" id="action-count">0 pending</span>
+    </div>
+    <div class="action-toolbar">
+      <div class="field"><label>Queue filter</label><input id="action-search" placeholder="Product, SKU, reason"></div>
+      <div class="field"><label>Action</label><select class="select" id="action-type-filter"><option value="">All actions</option><option value="deepen">Deepen markdown</option><option value="remove">Remove from sale</option><option value="low_views">Low views</option></select></div>
+      <div class="field"><label>Status</label><select class="select" id="action-status-filter"><option value="Pending">Pending</option><option value="">All statuses</option><option>Accepted</option><option>Ignored</option><option>Snoozed</option><option>Applied</option></select></div>
+      <div class="action-tools">
+        <span class="pill" id="selected-action-count">0 selected</span>
+        <button class="btn" type="button" id="select-actions-btn">Select all visible</button>
+        <button class="btn" type="button" id="clear-actions-btn">Clear</button>
+        <button class="btn primary" type="button" id="create-deepen-plan-btn">Create deeper plan</button>
+        <button class="btn" type="button" id="create-remove-plan-btn">Create removal plan</button>
+        <button class="btn" type="button" id="snooze-actions-btn">Snooze</button>
+        <button class="btn" type="button" id="ignore-actions-btn">Ignore</button>
+      </div>
+    </div>
+    <div class="table-wrap" id="action-wrap"></div>
+  </section>
 
   <section class="panel">
     <div class="toolbar">
@@ -125,8 +189,9 @@ const API_ORIGINS=location.protocol==="file:"?LOCAL_API_ORIGINS.slice(1):/^(loca
 const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
 const exactMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",minimumFractionDigits:2,maximumFractionDigits:2});
 const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
-let state={plans:[],plan:null,items:[],events:[],metrics:{},collections:[],collectionConfig:{rootSaleCollectionId:"",childCollectionByType:{}},canApply:false,shopifyConfigured:false,shopifyMessage:""};
+let state={plans:[],plan:null,items:[],events:[],metrics:{},analysis:{summary:{},actionSummary:{},exceptions:{worked:[],watch:[],deepen:[],remove:[]},actions:[]},collections:[],collectionConfig:{rootSaleCollectionId:"",childCollectionByType:{}},canApply:false,shopifyConfigured:false,shopifyMessage:""};
 let selectedRows=new Set();
+let selectedActions=new Set();
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
@@ -154,6 +219,8 @@ function escapeHtml(value){return String(value||"").replace(/[&<>"']/g,ch=>({"&"
 function attr(value){return escapeHtml(value).replaceAll("`","&#96;");}
 function formatDate(value){if(!value)return"";const date=new Date(value);return Number.isNaN(date.getTime())?value:dateFmt.format(date);}
 function moneyText(value){return exactMoney.format(Number(value||0));}
+function pctText(value){const numeric=Number(value||0)*100;return `${numeric>=0?"+":""}${numeric.toFixed(1)}%`;}
+function discountText(value){return `${Math.round(Number(value||0))}%`;}
 function gpText(item){
   const value=Number(item?.metrics?.targetGpPct);
   return Number.isFinite(value)?`${value.toFixed(1)}%`:"-";
@@ -178,6 +245,97 @@ function renderMetrics(){
     metric("Final",Number(m.finalClearance||0).toLocaleString("en-GB"),"50% rows"),
     metric("Stock value",money.format(Number(m.stockValue||0)),`${Number(m.stockUnits||0).toLocaleString("en-GB")} units`)
   ].join("");
+}
+
+function renderAnalysis(){
+  const analysis=state.analysis||{};
+  const s=analysis.summary||{};
+  const a=analysis.actionSummary||{};
+  el("analysis-metrics").innerHTML=[
+    metric("Analysed",Number(s.analysed||0).toLocaleString("en-GB"),`${Number(s.appliedItems||0).toLocaleString("en-GB")} applied`),
+    metric("Worked",Number(s.worked||0).toLocaleString("en-GB"),"positive read"),
+    metric("Watch",Number(s.watch||0).toLocaleString("en-GB"),`${Number(s.early||0).toLocaleString("en-GB")} early`),
+    metric("Deepen",Number(s.deepen||0).toLocaleString("en-GB"),"needs action"),
+    metric("Remove",Number(s.remove||0).toLocaleString("en-GB"),"objective met"),
+    metric("ST lift",pctText(s.avgSellThroughLift),"average"),
+    metric("CVR lift",pctText(s.avgCvrLift),"GA")
+  ].join("");
+  const groups=[
+    ["worked","Worked"],
+    ["watch","Watch"],
+    ["deepen","Deepen"],
+    ["remove","Remove"]
+  ];
+  const exceptions=analysis.exceptions||{};
+  el("analysis-exceptions").innerHTML=groups.map(([key,label])=>{
+    const rows=exceptions[key]||[];
+    const body=rows.length?rows.map(row=>`<div class="analysis-row"><div><strong title="${attr(row.title)}">${escapeHtml(row.title||"-")}</strong><span>${escapeHtml(row.sku||row.productType||"-")} - ${Number(row.daysObserved||0)}d - stock ${Number(row.postStock||0).toLocaleString("en-GB")}</span></div><b>${pctText(row.sellThroughLift)}</b></div>`).join(""):`<p class="empty-state">None</p>`;
+    return `<div class="exception-list"><h3>${escapeHtml(label)}</h3>${body}</div>`;
+  }).join("");
+  el("analysis-note").className=analysis.refreshedAt?"status ok":"status warn";
+  el("analysis-note").textContent=analysis.refreshedAt?`Refreshed ${formatDate(analysis.refreshedAt)}. ${Number(a.pending||0).toLocaleString("en-GB")} pending action${Number(a.pending||0)===1?"":"s"}.`:"Refresh analysis after saved bestsellers reports are up to date.";
+}
+
+function actionLabel(type){
+  return {deepen:"Deepen markdown",remove:"Remove from sale",low_views:"Low views"}[type]||type||"Action";
+}
+
+function actionRows(){
+  const q=val("action-search").toLowerCase();
+  const type=val("action-type-filter");
+  const status=val("action-status-filter");
+  return (state.analysis?.actions||[]).filter(action=>{
+    const haystack=[action.title,action.sku,action.productType,action.season,action.reason,action.actionType,action.status].join(" ").toLowerCase();
+    return (!q||haystack.includes(q))&&(!type||action.actionType===type)&&(!status||action.status===status);
+  });
+}
+
+function actionSignal(action){
+  if(action.actionType==="low_views")return `${Number(action.viewsPerWeek||0).toFixed(1)} views/wk`;
+  return `${pctText(action.sellThroughLift)} ST / ${pctText(action.cvrLift)} CVR`;
+}
+
+function actionRecommendedHtml(action){
+  if(action.actionType==="low_views"){
+    return `<div class="price-pair"><b>Review exposure</b><span>Keep ${moneyText(action.currentPrice)} / ${discountText(action.currentDiscountPercent)}</span></div>`;
+  }
+  if(action.actionType==="remove"){
+    return `<div class="price-pair"><b>${moneyText(action.recommendedTargetPrice)}</b><span>Restore to RRP</span></div>`;
+  }
+  return `<div class="price-pair"><b>${moneyText(action.recommendedTargetPrice)} / ${discountText(action.recommendedDiscountPercent)}</b><span>RRP ${moneyText(action.originalPrice)}</span></div>`;
+}
+
+function actionRowHtml(action){
+  return `<tr>
+    <td><input type="checkbox" aria-label="Select ${attr(action.title)} action" ${selectedActions.has(action.id)?"checked":""} onchange="toggleAction('${attr(action.id)}',this.checked)"></td>
+    <td><div class="action-main"><strong title="${attr(action.title)}">${escapeHtml(action.title||"-")}</strong><span>${escapeHtml(action.sku||"-")} - ${escapeHtml(action.productType||"-")} - ${escapeHtml(action.season||"-")}</span></div></td>
+    <td><span class="badge ${attr(action.actionType)}">${escapeHtml(actionLabel(action.actionType))}</span>${action.changed?` <span class="badge pending">Changed</span>`:""}</td>
+    <td><div class="price-pair"><b>${moneyText(action.currentPrice)} / ${discountText(action.currentDiscountPercent)}</b><span>RRP ${moneyText(action.originalPrice)}</span></div></td>
+    <td>${actionRecommendedHtml(action)}</td>
+    <td><div class="price-pair"><b>${actionSignal(action)}</b><span>${Number(action.daysObserved||0)}d - stock ${Number(action.postStock||0).toLocaleString("en-GB")} - views ${Number(action.postGaViews||0).toLocaleString("en-GB")}</span></div></td>
+    <td title="${attr(action.reason)}">${escapeHtml(action.reason||"-")}</td>
+    <td><span class="badge ${attr(String(action.status||'').toLowerCase())}">${escapeHtml(action.status||"Pending")}</span></td>
+  </tr>`;
+}
+
+function renderActions(){
+  const rows=actionRows();
+  const valid=new Set(rows.map(action=>action.id));
+  selectedActions=new Set([...selectedActions].filter(id=>valid.has(id)));
+  const summary=state.analysis?.actionSummary||{};
+  el("action-count").textContent=`${Number(summary.pending||0).toLocaleString("en-GB")} pending / ${Number(summary.changed||0).toLocaleString("en-GB")} changed`;
+  el("selected-action-count").textContent=`${selectedActions.size.toLocaleString("en-GB")} selected`;
+  el("action-note").className=Number(summary.pending||0)?"status warn":"status ok";
+  el("action-note").textContent=Number(summary.pending||0)
+    ? `${Number(summary.deepen||0).toLocaleString("en-GB")} deepen, ${Number(summary.remove||0).toLocaleString("en-GB")} remove, ${Number(summary.lowViews||0).toLocaleString("en-GB")} low views.`
+    : "No pending analysis actions.";
+  el("action-wrap").innerHTML=rows.length?`<table class="action-table">
+    <thead><tr>
+      <th style="width:34px"><input type="checkbox" aria-label="Select all visible actions" ${rows.length&&rows.every(action=>selectedActions.has(action.id))?"checked":""} onchange="setAllVisibleActions(this.checked)"></th>
+      <th style="width:230px">Product</th><th style="width:150px">Action</th><th style="width:150px">Current</th><th style="width:170px">Recommended</th><th style="width:190px">Signal</th><th>Why</th><th style="width:90px">Status</th>
+    </tr></thead>
+    <tbody>${rows.map(actionRowHtml).join("")}</tbody>
+  </table>`:`<p class="empty-state">No analysis actions match the current filters.</p>`;
 }
 
 function renderPlanSelect(){
@@ -290,6 +448,8 @@ function renderActivity(){
 
 function render(){
   renderMetrics();
+  renderAnalysis();
+  renderActions();
   renderPlanSelect();
   renderTypeFilter();
   renderMapping();
@@ -304,6 +464,7 @@ async function loadPlanner(planId=val("plan-select")){
     const query=planId?`?planId=${encodeURIComponent(planId)}`:"";
     const data=await apiJson(`/api/sale-planner${query}`);
     state={...state,...data};
+    selectedActions.clear();
     el("status-note").className="status ok";
     el("status-note").textContent=state.plan?`${state.plan.name} loaded.`:"Import products from Weekly Actions or Product Merchandising to start a sale plan.";
     render();
@@ -317,6 +478,7 @@ async function updateItem(itemId,patch){
   try{
     const data=await apiJson("/api/sale-planner/items/update",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({itemId,patch})});
     state={...state,...data};
+    selectedActions.clear();
     el("status-note").className="status ok";
     el("status-note").textContent="Sale item updated.";
     render();
@@ -342,9 +504,74 @@ async function saveMapping(){
   }
 }
 
+async function refreshAnalysis(){
+  if(!state.plan?.id){
+    el("analysis-note").className="status warn";
+    el("analysis-note").textContent="Choose a sale plan first.";
+    return;
+  }
+  el("refresh-analysis-btn").disabled=true;
+  el("analysis-note").className="status warn";
+  el("analysis-note").textContent="Refreshing analysis.";
+  try{
+    const data=await apiJson("/api/sale-planner/analysis/refresh",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan.id})});
+    state={...state,...data};
+    el("status-note").className="status ok";
+    el("status-note").textContent="Sale analysis refreshed.";
+    render();
+  }catch(error){
+    el("analysis-note").className="status err";
+    el("analysis-note").textContent=error.message;
+  }finally{
+    el("refresh-analysis-btn").disabled=false;
+  }
+}
+
 function toggleRow(id,checked){if(checked)selectedRows.add(id);else selectedRows.delete(id);renderTable();}
 function setAllVisible(checked){for(const item of filteredItems()){if(checked)selectedRows.add(item.id);else selectedRows.delete(item.id);}renderTable();}
+function toggleAction(id,checked){if(checked)selectedActions.add(id);else selectedActions.delete(id);renderActions();}
+function setAllVisibleActions(checked){for(const action of actionRows()){if(checked)selectedActions.add(action.id);else selectedActions.delete(action.id);}renderActions();}
 function clearFilters(){["search","status-filter","type-filter","discount-filter","warning-filter"].forEach(id=>el(id).value="");selectedRows.clear();render();}
+
+async function updateActions(status){
+  const actionIds=[...selectedActions];
+  if(!actionIds.length){
+    el("action-note").className="status warn";
+    el("action-note").textContent="Select at least one action first.";
+    return;
+  }
+  try{
+    const data=await apiJson("/api/sale-planner/analysis/actions/update",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id||"",actionIds,status})});
+    selectedActions.clear();
+    state={...state,...data};
+    el("status-note").className="status ok";
+    el("status-note").textContent=`Marked ${actionIds.length.toLocaleString("en-GB")} action${actionIds.length===1?"":"s"} ${status}.`;
+    render();
+  }catch(error){
+    el("action-note").className="status err";
+    el("action-note").textContent=error.message;
+  }
+}
+
+async function createActionPlan(actionType){
+  const selected=(state.analysis?.actions||[]).filter(action=>selectedActions.has(action.id)&&action.actionType===actionType);
+  if(!selected.length){
+    el("action-note").className="status warn";
+    el("action-note").textContent=`Select at least one ${actionLabel(actionType).toLowerCase()} action.`;
+    return;
+  }
+  try{
+    const data=await apiJson("/api/sale-planner/analysis/actions/create-plan",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id||"",actionType,actionIds:selected.map(action=>action.id)})});
+    selectedActions.clear();
+    const planId=data.plan?.id||"";
+    el("status-note").className="status ok";
+    el("status-note").textContent=`Created ${data.plan?.name||"follow-up plan"}.`;
+    await loadPlanner(planId||state.plan?.id||"");
+  }catch(error){
+    el("action-note").className="status err";
+    el("action-note").textContent=error.message;
+  }
+}
 
 async function removePlanItems(ids){
   const itemIds=(ids&&ids.length?ids:[...selectedRows]).filter(Boolean);
@@ -416,11 +643,19 @@ async function startJob(mode){
 }
 
 ["search","status-filter","type-filter","discount-filter","warning-filter"].forEach(id=>el(id).addEventListener("input",renderTable));
+["action-search","action-type-filter","action-status-filter"].forEach(id=>el(id).addEventListener("input",renderActions));
 el("refresh-btn").addEventListener("click",()=>loadPlanner());
 el("plan-select").addEventListener("change",()=>loadPlanner(val("plan-select")));
 el("save-mapping-btn").addEventListener("click",saveMapping);
+el("refresh-analysis-btn").addEventListener("click",refreshAnalysis);
 el("select-all-btn").addEventListener("click",()=>setAllVisible(true));
 el("clear-selected-btn").addEventListener("click",()=>setAllVisible(false));
+el("select-actions-btn").addEventListener("click",()=>setAllVisibleActions(true));
+el("clear-actions-btn").addEventListener("click",()=>setAllVisibleActions(false));
+el("create-deepen-plan-btn").addEventListener("click",()=>createActionPlan("deepen"));
+el("create-remove-plan-btn").addEventListener("click",()=>createActionPlan("remove"));
+el("snooze-actions-btn").addEventListener("click",()=>updateActions("Snoozed"));
+el("ignore-actions-btn").addEventListener("click",()=>updateActions("Ignored"));
 el("clear-filters-btn").addEventListener("click",clearFilters);
 el("remove-plan-btn").addEventListener("click",()=>removePlanItems());
 el("apply-btn").addEventListener("click",()=>startJob("apply"));

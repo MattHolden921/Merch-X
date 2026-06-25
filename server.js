@@ -525,6 +525,7 @@ function normalizeProduct(product, orderMetrics) {
   const metrics = orderMetrics.get(product.id) || { revenue: 0, units: 0 };
   const image = product.featuredImage || product.images.nodes[0] || null;
   const status = product.status || "";
+  const productStatusCode = String(product.productStatusMetafield?.value || product.productStatus?.value || "").trim();
   const normalizedVariants = variants.map((variant) => {
     const variantPrice = Number(variant.price || 0);
     const variantCompareAt = variant.compareAtPrice == null ? null : Number(variant.compareAtPrice || 0);
@@ -545,6 +546,7 @@ function normalizeProduct(product, orderMetrics) {
   return {
     id: product.id,
     status,
+    productStatusCode,
     title: product.title,
     handle: product.handle,
     onlineStoreUrl: product.onlineStoreUrl || "",
@@ -919,6 +921,7 @@ async function fetchShopifyMerchandising(req, res) {
           productType
           tags
           seasonMetafield: metafield(namespace: "custom", key: "season") { value }
+          productStatusMetafield: metafield(namespace: "custom", key: "product_status") { value }
           featuredImage { url altText }
           images(first: 1) { nodes { url altText } }
           variants(first: 100) {
@@ -1756,7 +1759,7 @@ function persistBestsellersProducts(range, source, products, meta = {}) {
         legacyResourceId: product.legacyResourceId || "",
         sku: (product.skus || [])[0] || "",
         title: product.title || "",
-        productStatus: product.status || "",
+        productStatus: product.productStatusCode || product.status || "",
         productType: product.productType || "",
         vendor: product.vendor || "",
         season: product.season || "",
@@ -1786,7 +1789,7 @@ function persistBestsellersProducts(range, source, products, meta = {}) {
           snapshotAt: now,
           shopifyProductId: product.id || "",
           legacyResourceId: product.legacyResourceId || "",
-          productStatus: product.status || "",
+          productStatus: product.productStatusCode || product.status || "",
           productTitle: product.title || "",
           productHandle: product.handle || "",
           productType: product.productType || "",
@@ -1853,6 +1856,7 @@ async function fetchShopifyBestsellersProducts(range) {
           publishedAt
           updatedAt
           seasonMetafield: metafield(namespace: "custom", key: "season") { value }
+          productStatusMetafield: metafield(namespace: "custom", key: "product_status") { value }
           featuredImage { url altText }
           images(first: 1) { nodes { url altText } }
           variants(first: 100) {
@@ -2212,6 +2216,7 @@ async function fetchCollectionPlanner(req, res) {
             productType
             tags
             seasonMetafield: metafield(namespace: "custom", key: "season") { value }
+            productStatusMetafield: metafield(namespace: "custom", key: "product_status") { value }
             createdAt
             publishedAt
             updatedAt
@@ -3608,6 +3613,97 @@ function openOrderSqliteDb() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS sale_state_ledger (
+      id TEXT PRIMARY KEY,
+      shopify_product_id TEXT NOT NULL,
+      variant_id TEXT NOT NULL,
+      sku TEXT,
+      product_key TEXT,
+      product_title TEXT,
+      product_type TEXT,
+      season TEXT,
+      original_price REAL NOT NULL DEFAULT 0,
+      first_sale_price REAL DEFAULT 0,
+      current_sale_price REAL DEFAULT 0,
+      discount_percent REAL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'Active',
+      first_plan_id TEXT,
+      first_item_id TEXT,
+      last_plan_id TEXT,
+      last_item_id TEXT,
+      applied_at TEXT,
+      removed_at TEXT,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sale_markdown_outcomes (
+      id TEXT PRIMARY KEY,
+      plan_id TEXT,
+      item_id TEXT,
+      shopify_product_id TEXT,
+      product_key TEXT,
+      title TEXT,
+      product_type TEXT,
+      season TEXT,
+      discount_percent REAL DEFAULT 0,
+      outcome TEXT NOT NULL,
+      reason TEXT,
+      applied_at TEXT,
+      analysis_start_date TEXT,
+      analysis_end_date TEXT,
+      days_observed REAL DEFAULT 0,
+      pre_units REAL DEFAULT 0,
+      post_units REAL DEFAULT 0,
+      pre_stock REAL DEFAULT 0,
+      post_stock REAL DEFAULT 0,
+      pre_ga_views REAL DEFAULT 0,
+      post_ga_views REAL DEFAULT 0,
+      pre_ga_purchases REAL DEFAULT 0,
+      post_ga_purchases REAL DEFAULT 0,
+      sell_through_lift REAL DEFAULT 0,
+      cvr_lift REAL DEFAULT 0,
+      stock_reduction REAL DEFAULT 0,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sale_analysis_actions (
+      id TEXT PRIMARY KEY,
+      plan_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      outcome_id TEXT,
+      action_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Pending',
+      priority TEXT NOT NULL DEFAULT 'Medium',
+      title TEXT,
+      sku TEXT,
+      product_type TEXT,
+      season TEXT,
+      current_price REAL DEFAULT 0,
+      original_price REAL DEFAULT 0,
+      current_discount_percent REAL DEFAULT 0,
+      recommended_discount_percent REAL DEFAULT 0,
+      recommended_target_price REAL DEFAULT 0,
+      post_stock REAL DEFAULT 0,
+      days_observed REAL DEFAULT 0,
+      post_ga_views REAL DEFAULT 0,
+      views_per_week REAL DEFAULT 0,
+      sell_through_lift REAL DEFAULT 0,
+      cvr_lift REAL DEFAULT 0,
+      reason TEXT,
+      source_signature TEXT,
+      changed INTEGER NOT NULL DEFAULT 1,
+      data TEXT,
+      follow_up_plan_id TEXT,
+      decided_by TEXT,
+      decided_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS email_campaigns (
       id TEXT PRIMARY KEY,
       campaign_code TEXT NOT NULL UNIQUE,
@@ -3689,6 +3785,14 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_sale_plan_items_product ON sale_plan_items(shopify_product_id, sku);
     CREATE INDEX IF NOT EXISTS idx_sale_plan_events_plan ON sale_plan_events(plan_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_sale_plan_events_item ON sale_plan_events(item_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_state_ledger_variant ON sale_state_ledger(shopify_product_id, variant_id);
+    CREATE INDEX IF NOT EXISTS idx_sale_state_ledger_product ON sale_state_ledger(shopify_product_id, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_sale_outcomes_plan ON sale_markdown_outcomes(plan_id, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_sale_outcomes_item ON sale_markdown_outcomes(item_id, discount_percent);
+    CREATE INDEX IF NOT EXISTS idx_sale_outcomes_learning ON sale_markdown_outcomes(product_type, season, discount_percent, outcome);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_actions_unique ON sale_analysis_actions(plan_id, item_id, action_type);
+    CREATE INDEX IF NOT EXISTS idx_sale_actions_plan_status ON sale_analysis_actions(plan_id, status, changed, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_sale_actions_type ON sale_analysis_actions(action_type, status, priority);
     CREATE INDEX IF NOT EXISTS idx_email_campaigns_status ON email_campaigns(status, sent_at, created_at);
     CREATE INDEX IF NOT EXISTS idx_email_campaign_products_campaign ON email_campaign_products(campaign_id, position);
     CREATE INDEX IF NOT EXISTS idx_email_campaign_products_key ON email_campaign_products(product_key, campaign_id);
@@ -6828,7 +6932,7 @@ function weeklyCandidate(type, product, period, priority, rationale, title) {
     data: {
       sourceUrl: `bestsellers.html?startDate=${encodeURIComponent(period.startDate)}&endDate=${encodeURIComponent(period.endDate)}`,
       imageUrl: product.img || product.imageUrl || "",
-      productStatus: product.status || "",
+      productStatus: product.productStatusCode || product.status || "",
       isMarkedDown: metrics.isMarkedDown,
       price: metrics.price,
       compareAtPrice: metrics.compareAtPrice,
@@ -7440,6 +7544,7 @@ async function fetchShopifyProductSaleState(productId) {
         publishedAt
         updatedAt
         seasonMetafield: metafield(namespace: "custom", key: "season") { value }
+        productStatusMetafield: metafield(namespace: "custom", key: "product_status") { value }
         featuredImage { url altText }
         images(first: 1) { nodes { url altText } }
         collections(first: 100) { nodes { id title handle } }
@@ -7585,8 +7690,131 @@ async function hydrateSaleItemVariantCosts(item, variants = []) {
   }
 }
 
+function saleLedgerRowFromDb(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    shopifyProductId: row.shopify_product_id || "",
+    variantId: row.variant_id || "",
+    sku: row.sku || "",
+    productKey: row.product_key || "",
+    productTitle: row.product_title || "",
+    productType: row.product_type || "",
+    season: row.season || "",
+    originalPrice: row.original_price == null ? 0 : Number(row.original_price || 0),
+    firstSalePrice: row.first_sale_price == null ? 0 : Number(row.first_sale_price || 0),
+    currentSalePrice: row.current_sale_price == null ? 0 : Number(row.current_sale_price || 0),
+    discountPercent: row.discount_percent == null ? 0 : Number(row.discount_percent || 0),
+    status: row.status || "Active",
+    firstPlanId: row.first_plan_id || "",
+    firstItemId: row.first_item_id || "",
+    lastPlanId: row.last_plan_id || "",
+    lastItemId: row.last_item_id || "",
+    appliedAt: row.applied_at || "",
+    removedAt: row.removed_at || "",
+    data: parseJson(row.data, {}),
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readSaleLedgerRowsForProduct(productId) {
+  const id = String(productId || "").trim();
+  if (!id) return [];
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM sale_state_ledger
+    WHERE shopify_product_id = ?
+    ORDER BY updated_at DESC
+  `).all(id).map(saleLedgerRowFromDb).filter(Boolean);
+}
+
+function saleLedgerLookup(rows = []) {
+  const byVariant = new Map();
+  const bySku = new Map();
+  for (const row of rows || []) {
+    if (row.variantId) byVariant.set(String(row.variantId), row);
+    if (row.sku) bySku.set(String(row.sku).toLowerCase(), row);
+  }
+  return { byVariant, bySku };
+}
+
+function ledgerRowForVariant(lookup, variant = {}) {
+  return lookup.byVariant.get(String(variant.id || "")) || lookup.bySku.get(String(variant.sku || "").toLowerCase()) || null;
+}
+
+function saleOriginalPriceFromSources(planned = {}, live = {}, ledger = null, item = {}) {
+  const liveCompare = Number(live.compareAtPrice || 0);
+  const livePrice = Number(live.price || live.currentPrice || 0);
+  const candidates = [
+    ledger?.originalPrice,
+    planned.saleOriginalPrice,
+    planned.originalRrp,
+    planned.rrpOriginal,
+    planned.originalPrice,
+    liveCompare > livePrice ? liveCompare : 0,
+    item.originalPrice,
+    livePrice,
+    planned.currentPrice,
+    planned.price
+  ];
+  const original = candidates.map(Number).find(value => Number.isFinite(value) && value > 0);
+  return salePlanner.money(original || 0);
+}
+
+function applySaleLedgerToProduct(product = {}) {
+  if (!String(product.id || "").startsWith("gid://shopify/Product/")) return product;
+  const ledgerRows = readSaleLedgerRowsForProduct(product.id);
+  if (!ledgerRows.length) return product;
+  const lookup = saleLedgerLookup(ledgerRows);
+  const variants = (product.variants || []).map(variant => {
+    const ledger = ledgerRowForVariant(lookup, variant);
+    if (!ledger?.originalPrice) return variant;
+    return {
+      ...variant,
+      saleOriginalPrice: ledger.originalPrice,
+      originalRrp: ledger.originalPrice,
+      originalPrice: ledger.originalPrice,
+      compareAtPrice: ledger.originalPrice
+    };
+  });
+  const originals = variants.map(variant => Number(variant.saleOriginalPrice || variant.originalPrice || 0)).filter(value => value > 0);
+  const original = originals.length ? Math.max(...originals) : Number(product.compareAtPrice || product.price || 0);
+  return {
+    ...product,
+    variants,
+    saleOriginalPrice: original,
+    originalRrp: original,
+    originalPrice: original,
+    compareAtPrice: original > Number(product.price || 0) ? original : product.compareAtPrice
+  };
+}
+
+function readMarkdownLearningOutcomes(limit = 250) {
+  return openOrderSqliteDb().prepare(`
+    SELECT product_type AS productType,
+           season,
+           discount_percent AS discountPercent,
+           outcome
+    FROM sale_markdown_outcomes
+    WHERE outcome IN ('worked', 'remove', 'deepen', 'failed')
+    ORDER BY updated_at DESC
+    LIMIT ?
+  `).all(limit).map(row => ({
+    productType: row.productType || "",
+    season: row.season || "",
+    discountPercent: Number(row.discountPercent || 0),
+    outcome: row.outcome || ""
+  }));
+}
+
 function salePlanItemParams(plan, product, collections, config, options = {}) {
-  const recommendation = salePlanner.recommendMarkdown(product, { now: new Date(), roundingRule: "nearest-pound" });
+  product = applySaleLedgerToProduct(product);
+  const recommendation = salePlanner.recommendMarkdown(product, {
+    now: new Date(),
+    roundingRule: "nearest-pound",
+    markdownOutcomes: options.markdownOutcomes || readMarkdownLearningOutcomes()
+  });
   const variants = salePlanner.variantSaleTargets(product, recommendation.discountPercent, { roundingRule: "nearest-pound" });
   const membership = salePlanner.collectionMembershipForProduct(product, collections, {
     ...config.childCollectionByType,
@@ -7597,7 +7825,8 @@ function salePlanItemParams(plan, product, collections, config, options = {}) {
   const warnings = [
     ...recommendation.warnings,
     ...variants.flatMap(variant => variant.warnings || []),
-    ...membership.missing
+    ...membership.missing,
+    product.productStatusCode && !["N", "S"].includes(String(product.productStatusCode).trim().toUpperCase()) ? `Unexpected Product Status metafield: ${product.productStatusCode}.` : ""
   ].filter(Boolean);
   const productKey = salePlanner.productKey(product);
   const firstVariant = variants[0] || {};
@@ -7784,6 +8013,511 @@ function readSalePlannerEvents(planId, limit = 100) {
   `).all(planId, limit).map(salePlanEventFromRow).filter(Boolean);
 }
 
+function dateDiffInclusive(startDate, endDate) {
+  const start = reportUtcDate(startDate);
+  const end = reportUtcDate(endDate);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start) return 0;
+  return Math.floor((end - start) / 864e5) + 1;
+}
+
+function metricRowsForSaleItem(item, appliedDate) {
+  const matches = [];
+  const params = { appliedDate };
+  if (item.shopifyProductId) {
+    matches.push("m.shopify_product_id = @shopifyProductId");
+    params.shopifyProductId = item.shopifyProductId;
+  }
+  if (item.productKey) {
+    matches.push("m.product_key = @productKey");
+    params.productKey = item.productKey;
+  }
+  if (item.sku) {
+    matches.push("m.sku = @sku");
+    params.sku = item.sku;
+  }
+  if (!matches.length && item.title) {
+    matches.push("m.title = @title");
+    params.title = item.title;
+  }
+  if (!matches.length) return [];
+  return openOrderSqliteDb().prepare(`
+    SELECT m.*, p.start_date, p.end_date
+    FROM report_product_metrics m
+    JOIN report_periods p ON p.id = m.period_id
+    WHERE p.report_type = 'bestsellers'
+      AND p.status = 'ready'
+      AND (${matches.join(" OR ")})
+      AND date(p.end_date) >= date(@appliedDate, '-35 day')
+      AND date(p.start_date) <= date(@appliedDate, '+35 day')
+    ORDER BY p.start_date ASC, p.end_date ASC
+  `).all(params);
+}
+
+function aggregateSaleMetricRows(rows = [], fallbackStock = 0) {
+  const latest = rows[rows.length - 1] || {};
+  return {
+    units: rows.reduce((sum, row) => sum + Number(row.units || 0), 0),
+    revenue: rows.reduce((sum, row) => sum + Number(row.net_sales || 0), 0),
+    stock: latest.stock == null ? Number(fallbackStock || 0) : Number(latest.stock || 0),
+    gaViews: rows.reduce((sum, row) => sum + Number(row.ga_views || 0), 0),
+    gaPurchases: rows.reduce((sum, row) => sum + Number(row.ga_purchases || 0), 0),
+    startDate: rows[0]?.start_date || "",
+    endDate: latest.end_date || ""
+  };
+}
+
+function analyseSalePlanItem(item, now = new Date()) {
+  const appliedDate = String(item.appliedAt || item.data?.appliedAt || "").slice(0, 10);
+  if (!appliedDate) return null;
+  const rows = metricRowsForSaleItem(item, appliedDate);
+  const preRows = rows.filter(row => row.end_date < appliedDate).slice(-4);
+  const postRows = rows.filter(row => row.start_date >= appliedDate).slice(0, 4);
+  const pre = aggregateSaleMetricRows(preRows, item.stock);
+  const post = aggregateSaleMetricRows(postRows, item.stock);
+  const latestEndDate = post.endDate || now.toISOString().slice(0, 10);
+  const daysObserved = postRows.length ? Math.min(28, Math.max(dateDiffInclusive(appliedDate, latestEndDate), 0)) : 0;
+  const outcome = salePlanner.markdownOutcome({
+    preUnits: pre.units,
+    preStock: pre.stock,
+    preGaViews: pre.gaViews,
+    preGaPurchases: pre.gaPurchases,
+    postUnits: post.units,
+    postStock: post.stock,
+    postGaViews: post.gaViews,
+    postGaPurchases: post.gaPurchases,
+    daysObserved,
+    startStock: Number(item.stock || 0) + Number(pre.units || 0)
+  });
+  if (!postRows.length) {
+    outcome.outcome = "watch";
+    outcome.reason = "No post-markdown report data yet.";
+    outcome.early = true;
+  }
+  return {
+    ...outcome,
+    planId: item.planId,
+    itemId: item.id,
+    shopifyProductId: item.shopifyProductId,
+    productKey: item.productKey,
+    title: item.title,
+    productType: item.productType,
+    season: item.season,
+    discountPercent: item.discountPercent,
+    appliedAt: item.appliedAt,
+    analysisStartDate: pre.startDate || appliedDate,
+    analysisEndDate: post.endDate || latestEndDate,
+    pre,
+    post,
+    data: {
+      sku: item.sku,
+      imageUrl: item.imageUrl,
+      originalPrice: item.originalPrice,
+      currentPrice: item.currentPrice,
+      targetPrice: item.targetPrice
+    }
+  };
+}
+
+function writeSaleMarkdownOutcomes(planId, outcomes = []) {
+  const db = openOrderSqliteDb();
+  const insert = db.prepare(`
+    INSERT INTO sale_markdown_outcomes (
+      id, plan_id, item_id, shopify_product_id, product_key, title, product_type, season,
+      discount_percent, outcome, reason, applied_at, analysis_start_date, analysis_end_date,
+      days_observed, pre_units, post_units, pre_stock, post_stock, pre_ga_views, post_ga_views,
+      pre_ga_purchases, post_ga_purchases, sell_through_lift, cvr_lift, stock_reduction,
+      data, created_at, updated_at
+    ) VALUES (
+      @id, @planId, @itemId, @shopifyProductId, @productKey, @title, @productType, @season,
+      @discountPercent, @outcome, @reason, @appliedAt, @analysisStartDate, @analysisEndDate,
+      @daysObserved, @preUnits, @postUnits, @preStock, @postStock, @preGaViews, @postGaViews,
+      @preGaPurchases, @postGaPurchases, @sellThroughLift, @cvrLift, @stockReduction,
+      @data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+  `);
+  const write = db.transaction(() => {
+    db.prepare("DELETE FROM sale_markdown_outcomes WHERE plan_id = ?").run(planId);
+    for (const outcome of outcomes) {
+      insert.run({
+        id: crypto.randomUUID(),
+        planId,
+        itemId: outcome.itemId,
+        shopifyProductId: outcome.shopifyProductId || "",
+        productKey: outcome.productKey || "",
+        title: outcome.title || "",
+        productType: outcome.productType || "",
+        season: outcome.season || "",
+        discountPercent: Number(outcome.discountPercent || 0),
+        outcome: outcome.outcome,
+        reason: outcome.reason || "",
+        appliedAt: outcome.appliedAt || "",
+        analysisStartDate: outcome.analysisStartDate || "",
+        analysisEndDate: outcome.analysisEndDate || "",
+        daysObserved: Number(outcome.daysObserved || 0),
+        preUnits: Number(outcome.pre.units || 0),
+        postUnits: Number(outcome.post.units || 0),
+        preStock: Number(outcome.pre.stock || 0),
+        postStock: Number(outcome.post.stock || 0),
+        preGaViews: Number(outcome.pre.gaViews || 0),
+        postGaViews: Number(outcome.post.gaViews || 0),
+        preGaPurchases: Number(outcome.pre.gaPurchases || 0),
+        postGaPurchases: Number(outcome.post.gaPurchases || 0),
+        sellThroughLift: Number(outcome.sellThroughLift || 0),
+        cvrLift: Number(outcome.cvrLift || 0),
+        stockReduction: Number(outcome.stockReduction || 0),
+        data: JSON.stringify(outcome.data || {})
+      });
+    }
+  });
+  write();
+}
+
+function saleOutcomeFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    planId: row.plan_id || "",
+    itemId: row.item_id || "",
+    shopifyProductId: row.shopify_product_id || "",
+    productKey: row.product_key || "",
+    title: row.title || "",
+    productType: row.product_type || "",
+    season: row.season || "",
+    discountPercent: Number(row.discount_percent || 0),
+    outcome: row.outcome || "watch",
+    reason: row.reason || "",
+    appliedAt: row.applied_at || "",
+    analysisStartDate: row.analysis_start_date || "",
+    analysisEndDate: row.analysis_end_date || "",
+    daysObserved: Number(row.days_observed || 0),
+    preUnits: Number(row.pre_units || 0),
+    postUnits: Number(row.post_units || 0),
+    preStock: Number(row.pre_stock || 0),
+    postStock: Number(row.post_stock || 0),
+    preGaViews: Number(row.pre_ga_views || 0),
+    postGaViews: Number(row.post_ga_views || 0),
+    preGaPurchases: Number(row.pre_ga_purchases || 0),
+    postGaPurchases: Number(row.post_ga_purchases || 0),
+    sellThroughLift: Number(row.sell_through_lift || 0),
+    cvrLift: Number(row.cvr_lift || 0),
+    stockReduction: Number(row.stock_reduction || 0),
+    data: parseJson(row.data, {}),
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function saleAnalysisSummary(outcomes = [], items = []) {
+  const summary = {
+    analysed: outcomes.length,
+    appliedItems: items.filter(item => item.appliedAt || item.status === "Applied" || item.status === "Removed").length,
+    worked: outcomes.filter(row => row.outcome === "worked").length,
+    watch: outcomes.filter(row => row.outcome === "watch").length,
+    deepen: outcomes.filter(row => row.outcome === "deepen").length,
+    remove: outcomes.filter(row => row.outcome === "remove").length,
+    early: outcomes.filter(row => Number(row.daysObserved || 0) < 14).length,
+    avgSellThroughLift: 0,
+    avgCvrLift: 0
+  };
+  if (outcomes.length) {
+    summary.avgSellThroughLift = Math.round((outcomes.reduce((sum, row) => sum + Number(row.sellThroughLift || 0), 0) / outcomes.length) * 1000) / 1000;
+    summary.avgCvrLift = Math.round((outcomes.reduce((sum, row) => sum + Number(row.cvrLift || 0), 0) / outcomes.length) * 1000) / 1000;
+  }
+  return summary;
+}
+
+function compactSaleOutcome(row) {
+  return {
+    itemId: row.itemId,
+    title: row.title,
+    sku: row.data?.sku || "",
+    imageUrl: row.data?.imageUrl || "",
+    productType: row.productType,
+    season: row.season,
+    discountPercent: row.discountPercent,
+    outcome: row.outcome,
+    reason: row.reason,
+    daysObserved: row.daysObserved,
+    postStock: row.postStock,
+    sellThroughLift: row.sellThroughLift,
+    cvrLift: row.cvrLift,
+    updatedAt: row.updatedAt
+  };
+}
+
+function actionSignature(action) {
+  return [
+    action.actionType,
+    Number(action.currentDiscountPercent || 0),
+    Number(action.recommendedDiscountPercent || 0),
+    Number(action.currentPrice || 0),
+    Number(action.recommendedTargetPrice || 0),
+    Number(action.postStock || 0),
+    Number(action.daysObserved || 0),
+    Number(action.postGaViews || 0),
+    Number(action.sellThroughLift || 0),
+    Number(action.cvrLift || 0)
+  ].join("|");
+}
+
+function saleAnalysisActionFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    planId: row.plan_id || "",
+    itemId: row.item_id || "",
+    outcomeId: row.outcome_id || "",
+    actionType: row.action_type || "",
+    status: row.status || "Pending",
+    priority: row.priority || "Medium",
+    title: row.title || "",
+    sku: row.sku || "",
+    productType: row.product_type || "",
+    season: row.season || "",
+    currentPrice: Number(row.current_price || 0),
+    originalPrice: Number(row.original_price || 0),
+    currentDiscountPercent: Number(row.current_discount_percent || 0),
+    recommendedDiscountPercent: Number(row.recommended_discount_percent || 0),
+    recommendedTargetPrice: Number(row.recommended_target_price || 0),
+    postStock: Number(row.post_stock || 0),
+    daysObserved: Number(row.days_observed || 0),
+    postGaViews: Number(row.post_ga_views || 0),
+    viewsPerWeek: Number(row.views_per_week || 0),
+    sellThroughLift: Number(row.sell_through_lift || 0),
+    cvrLift: Number(row.cvr_lift || 0),
+    reason: row.reason || "",
+    sourceSignature: row.source_signature || "",
+    changed: Boolean(row.changed),
+    data: parseJson(row.data, {}),
+    followUpPlanId: row.follow_up_plan_id || "",
+    decidedBy: row.decided_by || "",
+    decidedAt: row.decided_at || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function buildSaleAnalysisActions(planId, outcomes = [], items = []) {
+  const itemById = new Map((items || []).map(item => [item.id, item]));
+  return (outcomes || []).map(outcome => {
+    const item = itemById.get(outcome.itemId) || {};
+    const recommendation = salePlanner.markdownActionRecommendation(outcome, item, {
+      roundingRule: "nearest-pound",
+      minViewsPerWeek: 25,
+      minDays: 7
+    });
+    if (!recommendation) return null;
+    const lowViews = recommendation.data?.lowViews || {};
+    const action = {
+      id: crypto.randomUUID(),
+      planId,
+      itemId: outcome.itemId,
+      outcomeId: outcome.id || "",
+      actionType: recommendation.actionType,
+      status: "Pending",
+      priority: recommendation.priority || "Medium",
+      title: item.title || outcome.title || "",
+      sku: item.sku || outcome.data?.sku || "",
+      productType: item.productType || outcome.productType || "",
+      season: item.season || outcome.season || "",
+      currentPrice: recommendation.currentPrice,
+      originalPrice: recommendation.originalPrice,
+      currentDiscountPercent: recommendation.currentDiscountPercent,
+      recommendedDiscountPercent: recommendation.recommendedDiscountPercent,
+      recommendedTargetPrice: recommendation.recommendedTargetPrice,
+      postStock: Number(outcome.postStock || 0),
+      daysObserved: Number(outcome.daysObserved || 0),
+      postGaViews: Number(outcome.postGaViews || 0),
+      viewsPerWeek: Number(lowViews.viewsPerWeek || 0),
+      sellThroughLift: Number(outcome.sellThroughLift || 0),
+      cvrLift: Number(outcome.cvrLift || 0),
+      reason: recommendation.reason,
+      data: {
+        ...(recommendation.data || {}),
+        outcome: outcome.outcome,
+        sourcePlanId: planId,
+        sourceItemId: outcome.itemId,
+        sourceProductKey: outcome.productKey || item.productKey || "",
+        sourceShopifyProductId: outcome.shopifyProductId || item.shopifyProductId || ""
+      }
+    };
+    action.sourceSignature = actionSignature(action);
+    return action;
+  }).filter(Boolean);
+}
+
+function writeSaleAnalysisActions(planId, actions = []) {
+  const db = openOrderSqliteDb();
+  const currentRows = db.prepare("SELECT * FROM sale_analysis_actions WHERE plan_id = ?").all(planId).map(saleAnalysisActionFromRow);
+  const currentByKey = new Map(currentRows.map(action => [`${action.itemId}:${action.actionType}`, action]));
+  const nextKeys = new Set(actions.map(action => `${action.itemId}:${action.actionType}`));
+  const insert = db.prepare(`
+    INSERT INTO sale_analysis_actions (
+      id, plan_id, item_id, outcome_id, action_type, status, priority, title, sku, product_type, season,
+      current_price, original_price, current_discount_percent, recommended_discount_percent, recommended_target_price,
+      post_stock, days_observed, post_ga_views, views_per_week, sell_through_lift, cvr_lift,
+      reason, source_signature, changed, data, created_at, updated_at
+    ) VALUES (
+      @id, @planId, @itemId, @outcomeId, @actionType, @status, @priority, @title, @sku, @productType, @season,
+      @currentPrice, @originalPrice, @currentDiscountPercent, @recommendedDiscountPercent, @recommendedTargetPrice,
+      @postStock, @daysObserved, @postGaViews, @viewsPerWeek, @sellThroughLift, @cvrLift,
+      @reason, @sourceSignature, @changed, @data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+  `);
+  const update = db.prepare(`
+    UPDATE sale_analysis_actions
+    SET outcome_id = @outcomeId,
+        status = @status,
+        priority = @priority,
+        title = @title,
+        sku = @sku,
+        product_type = @productType,
+        season = @season,
+        current_price = @currentPrice,
+        original_price = @originalPrice,
+        current_discount_percent = @currentDiscountPercent,
+        recommended_discount_percent = @recommendedDiscountPercent,
+        recommended_target_price = @recommendedTargetPrice,
+        post_stock = @postStock,
+        days_observed = @daysObserved,
+        post_ga_views = @postGaViews,
+        views_per_week = @viewsPerWeek,
+        sell_through_lift = @sellThroughLift,
+        cvr_lift = @cvrLift,
+        reason = @reason,
+        source_signature = @sourceSignature,
+        changed = @changed,
+        data = @data,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `);
+  const write = db.transaction(() => {
+    for (const action of actions) {
+      const existing = currentByKey.get(`${action.itemId}:${action.actionType}`);
+      const changed = !existing || existing.sourceSignature !== action.sourceSignature;
+      const status = changed ? "Pending" : existing.status;
+      const payload = {
+        ...action,
+        id: existing?.id || action.id,
+        status,
+        changed: changed ? 1 : 0,
+        data: JSON.stringify(action.data || {})
+      };
+      if (existing) update.run(payload);
+      else insert.run(payload);
+    }
+    const stale = currentRows.filter(action => !nextKeys.has(`${action.itemId}:${action.actionType}`) && action.status === "Pending");
+    for (const action of stale) {
+      db.prepare(`
+        UPDATE sale_analysis_actions
+        SET status = 'Snoozed',
+            changed = 0,
+            decided_by = 'System',
+            decided_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(action.id);
+    }
+  });
+  write();
+}
+
+function readSaleAnalysisActions(planId) {
+  if (!planId) return [];
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM sale_analysis_actions
+    WHERE plan_id = ?
+    ORDER BY
+      CASE status WHEN 'Pending' THEN 0 WHEN 'Accepted' THEN 1 WHEN 'Snoozed' THEN 2 WHEN 'Ignored' THEN 3 WHEN 'Applied' THEN 4 ELSE 5 END,
+      changed DESC,
+      CASE priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END,
+      updated_at DESC,
+      title COLLATE NOCASE
+  `).all(planId).map(saleAnalysisActionFromRow).filter(Boolean);
+}
+
+function saleActionSummary(actions = []) {
+  return {
+    total: actions.length,
+    pending: actions.filter(action => action.status === "Pending").length,
+    changed: actions.filter(action => action.changed && action.status === "Pending").length,
+    deepen: actions.filter(action => action.actionType === "deepen" && action.status === "Pending").length,
+    remove: actions.filter(action => action.actionType === "remove" && action.status === "Pending").length,
+    lowViews: actions.filter(action => action.actionType === "low_views" && action.status === "Pending").length,
+    snoozed: actions.filter(action => action.status === "Snoozed").length,
+    ignored: actions.filter(action => action.status === "Ignored").length,
+    accepted: actions.filter(action => action.status === "Accepted").length
+  };
+}
+
+function compactSaleAction(action) {
+  return {
+    id: action.id,
+    itemId: action.itemId,
+    actionType: action.actionType,
+    status: action.status,
+    priority: action.priority,
+    changed: action.changed,
+    title: action.title,
+    sku: action.sku,
+    productType: action.productType,
+    season: action.season,
+    currentPrice: action.currentPrice,
+    originalPrice: action.originalPrice,
+    currentDiscountPercent: action.currentDiscountPercent,
+    recommendedDiscountPercent: action.recommendedDiscountPercent,
+    recommendedTargetPrice: action.recommendedTargetPrice,
+    postStock: action.postStock,
+    daysObserved: action.daysObserved,
+    postGaViews: action.postGaViews,
+    viewsPerWeek: action.viewsPerWeek,
+    sellThroughLift: action.sellThroughLift,
+    cvrLift: action.cvrLift,
+    reason: action.reason,
+    followUpPlanId: action.followUpPlanId,
+    updatedAt: action.updatedAt
+  };
+}
+
+function readSalePlannerAnalysis(planId, items = []) {
+  if (!planId) return { summary: saleAnalysisSummary([], items), actionSummary: saleActionSummary([]), exceptions: { worked: [], watch: [], deepen: [], remove: [] }, outcomes: [], actions: [], refreshedAt: "" };
+  const outcomes = openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM sale_markdown_outcomes
+    WHERE plan_id = ?
+    ORDER BY updated_at DESC, title COLLATE NOCASE
+  `).all(planId).map(saleOutcomeFromRow).filter(Boolean);
+  const exceptions = {};
+  for (const key of ["worked", "watch", "deepen", "remove"]) {
+    exceptions[key] = outcomes
+      .filter(row => row.outcome === key)
+      .sort((a, b) => Number(b.postStock || 0) - Number(a.postStock || 0))
+      .slice(0, 8)
+      .map(compactSaleOutcome);
+  }
+  const actions = readSaleAnalysisActions(planId);
+  return {
+    summary: saleAnalysisSummary(outcomes, items),
+    actionSummary: saleActionSummary(actions),
+    exceptions,
+    outcomes: outcomes.slice(0, 80).map(compactSaleOutcome),
+    actions: actions.slice(0, 1000).map(compactSaleAction),
+    refreshedAt: outcomes[0]?.updatedAt || ""
+  };
+}
+
+function refreshSalePlannerAnalysis(plan, items = []) {
+  const outcomes = items
+    .filter(item => item.appliedAt || item.status === "Applied" || item.status === "Removed")
+    .map(item => analyseSalePlanItem(item))
+    .filter(Boolean);
+  writeSaleMarkdownOutcomes(plan.id, outcomes);
+  const storedOutcomes = openOrderSqliteDb().prepare("SELECT * FROM sale_markdown_outcomes WHERE plan_id = ?").all(plan.id).map(saleOutcomeFromRow).filter(Boolean);
+  writeSaleAnalysisActions(plan.id, buildSaleAnalysisActions(plan.id, storedOutcomes, items));
+  return readSalePlannerAnalysis(plan.id, items);
+}
+
 async function readSalePlannerResponse(req, selectedPlanId = "") {
   const db = openOrderSqliteDb();
   const plans = db.prepare("SELECT * FROM sale_plans ORDER BY updated_at DESC LIMIT 25").all().map(salePlanFromRow);
@@ -7803,6 +8537,7 @@ async function readSalePlannerResponse(req, selectedPlanId = "") {
     items,
     events: plan ? readSalePlannerEvents(plan.id) : [],
     metrics: salePlannerMetrics(items),
+    analysis: plan ? readSalePlannerAnalysis(plan.id, items) : readSalePlannerAnalysis("", []),
     collectionConfig: config,
     collections: collectionResult.collections || [],
     shopifyConfigured: collectionResult.configured,
@@ -7823,14 +8558,215 @@ async function handleSalePlannerConfig(req, res) {
   sendJson(res, 200, { ok: true, config, ...(await readSalePlannerResponse(req, body.planId || "")) });
 }
 
+async function handleSalePlannerAnalysisRefresh(req, res) {
+  const body = await readJsonBody(req);
+  const planId = String(body.planId || "").trim();
+  if (!planId) throw new Error("Missing sale plan.");
+  const db = openOrderSqliteDb();
+  const plan = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(planId));
+  if (!plan) throw new Error("Sale plan not found.");
+  const items = readSalePlannerItems(planId);
+  const analysis = refreshSalePlannerAnalysis(plan, items);
+  recordSalePlanEvent(planId, "", "analysis_refresh", actorName(req), "Sale markdown analysis refreshed", {
+    summary: analysis.summary,
+    ...actorData(req)
+  });
+  sendJson(res, 200, { ok: true, analysis, ...(await readSalePlannerResponse(req, planId)) });
+}
+
+async function handleSalePlannerActionsUpdate(req, res) {
+  const body = await readJsonBody(req);
+  const ids = (body.actionIds || (body.actionId ? [body.actionId] : [])).map(String).filter(Boolean);
+  if (!ids.length) throw new Error("Choose at least one analysis action.");
+  const status = String(body.status || "").trim();
+  const allowed = new Set(["Pending", "Accepted", "Ignored", "Snoozed", "Applied"]);
+  if (!allowed.has(status)) throw new Error("Choose a valid action status.");
+  const db = openOrderSqliteDb();
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = db.prepare(`SELECT * FROM sale_analysis_actions WHERE id IN (${placeholders})`).all(...ids).map(saleAnalysisActionFromRow);
+  if (!rows.length) throw new Error("Analysis actions were not found.");
+  db.prepare(`
+    UPDATE sale_analysis_actions
+    SET status = ?,
+        changed = CASE WHEN ? = 'Pending' THEN changed ELSE 0 END,
+        decided_by = ?,
+        decided_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id IN (${placeholders})
+  `).run(status, status, actorName(req), ...ids);
+  const planId = rows[0].planId;
+  recordSalePlanEvent(planId, "", "analysis_actions", actorName(req), `${rows.length} analysis action${rows.length === 1 ? "" : "s"} marked ${status}`, {
+    actionIds: rows.map(row => row.id),
+    status,
+    ...actorData(req)
+  });
+  sendJson(res, 200, { ok: true, updated: rows.map(row => row.id), ...(await readSalePlannerResponse(req, planId)) });
+}
+
+function createSalePlanRecord(input = {}, req = {}) {
+  const id = crypto.randomUUID();
+  const db = openOrderSqliteDb();
+  db.prepare(`
+    INSERT INTO sale_plans (id, name, status, source_type, source_label, created_by, data, created_at, updated_at, applied_at, removed_at)
+    VALUES (@id, @name, @status, @sourceType, @sourceLabel, @createdBy, @data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, @appliedAt, @removedAt)
+  `).run({
+    id,
+    name: input.name || `Sale plan ${todayIsoDate()}`,
+    status: input.status || "Draft",
+    sourceType: input.sourceType || "sale_analysis",
+    sourceLabel: input.sourceLabel || "Sale analysis",
+    createdBy: actorName(req),
+    data: JSON.stringify(input.data || { roundingRule: "nearest-pound" }),
+    appliedAt: input.appliedAt || "",
+    removedAt: input.removedAt || ""
+  });
+  recordSalePlanEvent(id, "", "created", actorName(req), "Sale plan created from analysis actions", actorData(req));
+  return salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(id));
+}
+
+function actionVariantTargets(item, action) {
+  const discount = Number(action.recommendedDiscountPercent || item.discountPercent || 0);
+  return (item.variants || []).map(variant => {
+    const original = Number(variant.saleOriginalPrice || variant.originalRrp || variant.originalPrice || item.originalPrice || 0);
+    const targetPrice = action.actionType === "remove"
+      ? original
+      : salePlanner.targetPriceForDiscount(original, discount, "nearest-pound");
+    return saleItemVariantWithTarget({
+      ...variant,
+      saleOriginalPrice: original,
+      originalRrp: original,
+      originalPrice: original,
+      compareAtPrice: action.actionType === "remove" ? null : original,
+      currentPrice: variant.currentPrice || item.currentPrice
+    }, targetPrice, discount);
+  });
+}
+
+function insertSaleItemFromAction(plan, sourceItem, action) {
+  const variants = actionVariantTargets(sourceItem, action);
+  const targetPrice = minPositive(variants.map(variant => variant.targetPrice), action.recommendedTargetPrice || sourceItem.targetPrice);
+  const originalPrice = maxPositive(variants.map(variant => variant.saleOriginalPrice || variant.originalPrice), sourceItem.originalPrice);
+  const status = action.actionType === "remove" ? "Applied" : "Planned";
+  const warnings = [...new Set([
+    ...(sourceItem.warnings || []),
+    `Created from analysis action: ${action.reason}`
+  ])];
+  const metrics = {
+    ...(sourceItem.metrics || {}),
+    targetGpPct: saleItemTargetGpPct(variants),
+    sourceActionId: action.id,
+    analysisReason: action.reason
+  };
+  const data = {
+    ...(sourceItem.data || {}),
+    sourcePlanId: sourceItem.planId,
+    sourceItemId: sourceItem.id,
+    sourceActionId: action.id,
+    analysisActionType: action.actionType
+  };
+  const params = {
+    id: crypto.randomUUID(),
+    planId: plan.id,
+    productKey: sourceItem.productKey,
+    shopifyProductId: sourceItem.shopifyProductId,
+    legacyResourceId: sourceItem.legacyResourceId,
+    title: sourceItem.title,
+    handle: sourceItem.handle,
+    sku: sourceItem.sku,
+    productType: sourceItem.productType,
+    season: sourceItem.season,
+    imageUrl: sourceItem.imageUrl,
+    currentPrice: sourceItem.currentPrice,
+    originalPrice,
+    compareAtPrice: action.actionType === "remove" ? sourceItem.compareAtPrice : originalPrice,
+    targetPrice,
+    discountPercent: action.actionType === "remove" ? sourceItem.discountPercent : action.recommendedDiscountPercent,
+    stock: sourceItem.stock,
+    units: sourceItem.units,
+    revenue: sourceItem.revenue,
+    coverWks: sourceItem.coverWks,
+    riskScore: sourceItem.riskScore,
+    rootSaleCollectionId: sourceItem.rootSaleCollectionId,
+    childSaleCollectionId: sourceItem.childSaleCollectionId,
+    status,
+    warningsJson: JSON.stringify(warnings),
+    variantsJson: JSON.stringify(variants),
+    metricsJson: JSON.stringify(metrics),
+    data: JSON.stringify(data),
+    sourceType: "sale_analysis",
+    sourceId: action.id,
+    lastError: ""
+  };
+  return upsertSalePlanItem(params, "Sale analysis");
+}
+
+async function handleSalePlannerActionsCreatePlan(req, res) {
+  const body = await readJsonBody(req);
+  const sourcePlanId = String(body.planId || "").trim();
+  const actionType = String(body.actionType || body.mode || "").trim();
+  const ids = (body.actionIds || []).map(String).filter(Boolean);
+  if (!sourcePlanId) throw new Error("Missing source sale plan.");
+  if (!["deepen", "remove"].includes(actionType)) throw new Error("Choose deepen or remove actions.");
+  if (!ids.length) throw new Error("Choose at least one analysis action.");
+  const db = openOrderSqliteDb();
+  const sourcePlan = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(sourcePlanId));
+  if (!sourcePlan) throw new Error("Source sale plan not found.");
+  const placeholders = ids.map(() => "?").join(",");
+  const actions = db.prepare(`
+    SELECT *
+    FROM sale_analysis_actions
+    WHERE id IN (${placeholders})
+      AND plan_id = ?
+      AND action_type = ?
+      AND status IN ('Pending', 'Accepted')
+  `).all(...ids, sourcePlanId, actionType).map(saleAnalysisActionFromRow);
+  if (!actions.length) throw new Error(`No ${actionType} actions are ready to plan.`);
+  const sourceItems = new Map(readSalePlannerItems(sourcePlanId).map(item => [item.id, item]));
+  const namePrefix = actionType === "remove" ? "Sale removals" : "Deeper markdowns";
+  const plan = createSalePlanRecord({
+    name: `${namePrefix} from ${sourcePlan.name} - ${todayIsoDate()}`,
+    status: actionType === "remove" ? "Applied" : "Ready",
+    sourceType: "sale_analysis",
+    sourceLabel: sourcePlan.name,
+    data: { roundingRule: "nearest-pound", sourcePlanId, actionType },
+    appliedAt: actionType === "remove" ? new Date().toISOString() : ""
+  }, req);
+  const inserted = [];
+  for (const action of actions) {
+    const sourceItem = sourceItems.get(action.itemId);
+    if (!sourceItem) continue;
+    inserted.push(insertSaleItemFromAction(plan, sourceItem, action));
+  }
+  if (!inserted.length) throw new Error("No source sale items were available for those actions.");
+  db.prepare(`
+    UPDATE sale_analysis_actions
+    SET status = 'Accepted',
+        changed = 0,
+        follow_up_plan_id = ?,
+        decided_by = ?,
+        decided_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id IN (${placeholders})
+  `).run(plan.id, actorName(req), ...actions.map(action => action.id));
+  recordSalePlanEvent(sourcePlanId, "", "analysis_follow_up", actorName(req), `${inserted.length} action${inserted.length === 1 ? "" : "s"} moved into ${plan.name}`, {
+    followUpPlanId: plan.id,
+    actionType,
+    actionIds: actions.map(action => action.id),
+    ...actorData(req)
+  });
+  sendJson(res, 200, { ok: true, plan, inserted, ...(await readSalePlannerResponse(req, plan.id)) });
+}
+
 function recomputeSaleItemVariants(item, discountPercent) {
+  const ledgerLookup = saleLedgerLookup(readSaleLedgerRowsForProduct(item.shopifyProductId));
   const product = {
     price: item.currentPrice || item.originalPrice,
     compareAtPrice: item.compareAtPrice || item.originalPrice,
     variants: (item.variants || []).map(variant => ({
       ...variant,
+      saleOriginalPrice: ledgerRowForVariant(ledgerLookup, variant)?.originalPrice || variant.saleOriginalPrice || variant.originalPrice || item.originalPrice,
       price: variant.currentPrice || variant.originalPrice || item.currentPrice,
-      compareAtPrice: variant.compareAtPrice || variant.originalPrice || item.originalPrice
+      compareAtPrice: ledgerRowForVariant(ledgerLookup, variant)?.originalPrice || variant.compareAtPrice || variant.originalPrice || item.originalPrice
     }))
   };
   return salePlanner.variantSaleTargets(product, discountPercent, { roundingRule: "nearest-pound" });
@@ -7992,17 +8928,20 @@ function validateLiveVariantState(item, liveProduct) {
   if (!liveProduct) return ["Product was not found in Shopify."];
   const errors = [];
   const liveById = variantsById(liveProduct.variants || []);
+  const ledgerLookup = saleLedgerLookup(readSaleLedgerRowsForProduct(item.shopifyProductId));
   for (const planned of item.variants || []) {
     const live = liveById.get(String(planned.id || ""));
     if (!live) {
       errors.push(`Variant ${planned.sku || planned.id} was not found in Shopify.`);
       continue;
     }
-    if (!priceClose(live.price, planned.currentPrice)) {
+    const alreadyOnSale = Number(live.compareAtPrice || 0) > Number(live.price || 0);
+    if (!priceClose(live.price, planned.currentPrice) && !(item.status === "Applied" && alreadyOnSale)) {
       errors.push(`Variant ${planned.sku || planned.id} price changed from ${planned.currentPrice} to ${live.price}.`);
     }
-    const plannedCompare = Number(planned.currentPrice || 0) < Number(planned.originalPrice || 0) ? Number(planned.originalPrice || 0) : Number(item.compareAtPrice || 0);
-    if (plannedCompare > 0 && live.compareAtPrice != null && !priceClose(live.compareAtPrice, plannedCompare)) {
+    const ledger = ledgerRowForVariant(ledgerLookup, planned);
+    const plannedCompare = Number(ledger?.originalPrice || 0) || (Number(planned.currentPrice || 0) < Number(planned.originalPrice || 0) ? Number(planned.originalPrice || 0) : Number(item.compareAtPrice || 0));
+    if (!ledger && plannedCompare > 0 && live.compareAtPrice != null && !priceClose(live.compareAtPrice, plannedCompare)) {
       errors.push(`Variant ${planned.sku || planned.id} compare-at price changed.`);
     }
   }
@@ -8058,6 +8997,226 @@ async function submitCollectionRemoveProducts(collectionId, productIds) {
   return payload.job || null;
 }
 
+async function submitProductStatusMetafield(productId, value) {
+  if (!productId) return null;
+  const data = await shopifyGraphql(`
+    mutation SalePlannerProductStatus($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields { id namespace key value }
+        userErrors { field message }
+      }
+    }
+  `, {
+    metafields: [{
+      ownerId: productId,
+      namespace: "custom",
+      key: "product_status",
+      type: "single_line_text_field",
+      value
+    }]
+  });
+  const payload = data.metafieldsSet || {};
+  const errors = payload.userErrors || [];
+  if (errors.length) throw new Error(errors.map(error => error.message).join("; "));
+  return payload.metafields?.[0] || null;
+}
+
+function validateLiveProductStatus(liveProduct) {
+  const status = String(liveProduct?.productStatusCode || "").trim().toUpperCase();
+  if (status && !["N", "S"].includes(status)) return [`Product Status metafield is ${status}; expected N or S.`];
+  return [];
+}
+
+function prepareSaleVariantsWithLedger(item, liveProduct, plannedVariants) {
+  const liveById = variantsById(liveProduct?.variants || []);
+  const lookup = saleLedgerLookup(readSaleLedgerRowsForProduct(item.shopifyProductId));
+  return (plannedVariants || []).map(planned => {
+    const live = liveById.get(String(planned.id || "")) || {};
+    const ledger = ledgerRowForVariant(lookup, planned);
+    const originalPrice = saleOriginalPriceFromSources(planned, live, ledger, item);
+    const discountPercent = Number(planned.discountPercent || item.discountPercent || 0);
+    const oldAlgorithmTarget = salePlanner.targetPriceForDiscount(planned.originalPrice || item.originalPrice, discountPercent, "nearest-pound");
+    const rebasedTarget = salePlanner.targetPriceForDiscount(originalPrice, discountPercent, "nearest-pound");
+    const targetPrice = !priceClose(originalPrice, planned.originalPrice) && priceClose(planned.targetPrice, oldAlgorithmTarget)
+      ? rebasedTarget
+      : Number(planned.targetPrice || item.targetPrice || rebasedTarget);
+    return {
+      ...planned,
+      saleOriginalPrice: originalPrice,
+      originalRrp: originalPrice,
+      originalPrice,
+      compareAtPrice: originalPrice,
+      currentPrice: Number(live.price || planned.currentPrice || item.currentPrice || 0),
+      targetPrice: salePlanner.money(targetPrice),
+      discountPercent,
+      targetGpPct: salePlanner.gpPercentFromRetail(targetPrice, planned.cost)
+    };
+  });
+}
+
+function persistSaleLedgerApply(item, variants) {
+  const db = openOrderSqliteDb();
+  const insert = db.prepare(`
+    INSERT INTO sale_state_ledger (
+      id, shopify_product_id, variant_id, sku, product_key, product_title, product_type, season,
+      original_price, first_sale_price, current_sale_price, discount_percent, status,
+      first_plan_id, first_item_id, last_plan_id, last_item_id, applied_at, removed_at, data,
+      created_at, updated_at
+    ) VALUES (
+      @id, @shopifyProductId, @variantId, @sku, @productKey, @productTitle, @productType, @season,
+      @originalPrice, @firstSalePrice, @currentSalePrice, @discountPercent, 'Active',
+      @planId, @itemId, @planId, @itemId, CURRENT_TIMESTAMP, NULL, @data,
+      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(shopify_product_id, variant_id) DO UPDATE SET
+      sku = excluded.sku,
+      product_key = excluded.product_key,
+      product_title = excluded.product_title,
+      product_type = excluded.product_type,
+      season = excluded.season,
+      original_price = CASE
+        WHEN sale_state_ledger.original_price > 0 THEN sale_state_ledger.original_price
+        ELSE excluded.original_price
+      END,
+      first_sale_price = CASE
+        WHEN sale_state_ledger.first_sale_price > 0 THEN sale_state_ledger.first_sale_price
+        ELSE excluded.first_sale_price
+      END,
+      current_sale_price = excluded.current_sale_price,
+      discount_percent = excluded.discount_percent,
+      status = 'Active',
+      last_plan_id = excluded.last_plan_id,
+      last_item_id = excluded.last_item_id,
+      applied_at = CURRENT_TIMESTAMP,
+      removed_at = NULL,
+      data = excluded.data,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  for (const variant of variants || []) {
+    if (!variant.id) continue;
+    insert.run({
+      id: crypto.randomUUID(),
+      shopifyProductId: item.shopifyProductId,
+      variantId: variant.id,
+      sku: variant.sku || item.sku || "",
+      productKey: item.productKey || "",
+      productTitle: item.title || "",
+      productType: item.productType || "",
+      season: item.season || "",
+      originalPrice: Number(variant.saleOriginalPrice || variant.originalPrice || item.originalPrice || 0),
+      firstSalePrice: Number(variant.targetPrice || item.targetPrice || 0),
+      currentSalePrice: Number(variant.targetPrice || item.targetPrice || 0),
+      discountPercent: Number(variant.discountPercent || item.discountPercent || 0),
+      planId: item.planId,
+      itemId: item.id,
+      data: JSON.stringify({ source: "sale_planner_apply" })
+    });
+  }
+}
+
+function markSaleLedgerRemoved(item, variantIds = []) {
+  const db = openOrderSqliteDb();
+  if (!item.shopifyProductId) return;
+  if (variantIds.length) {
+    const placeholders = variantIds.map(() => "?").join(",");
+    db.prepare(`
+      UPDATE sale_state_ledger
+      SET status = 'Removed',
+          current_sale_price = 0,
+          last_plan_id = ?,
+          last_item_id = ?,
+          removed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE shopify_product_id = ?
+        AND variant_id IN (${placeholders})
+    `).run(item.planId, item.id, item.shopifyProductId, ...variantIds);
+    return;
+  }
+  db.prepare(`
+    UPDATE sale_state_ledger
+    SET status = 'Removed',
+        current_sale_price = 0,
+        last_plan_id = ?,
+        last_item_id = ?,
+        removed_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE shopify_product_id = ?
+  `).run(item.planId, item.id, item.shopifyProductId);
+}
+
+function minPositive(values = [], fallback = 0) {
+  const positives = values.map(Number).filter(value => Number.isFinite(value) && value > 0);
+  return positives.length ? Math.min(...positives) : fallback;
+}
+
+function maxPositive(values = [], fallback = 0) {
+  const positives = values.map(Number).filter(value => Number.isFinite(value) && value > 0);
+  return positives.length ? Math.max(...positives) : fallback;
+}
+
+function persistSaleItemAppliedPricing(item, variants = []) {
+  const currentPrice = minPositive(variants.map(variant => variant.targetPrice), item.targetPrice);
+  const originalPrice = maxPositive(variants.map(variant => variant.saleOriginalPrice || variant.originalPrice), item.originalPrice);
+  openOrderSqliteDb().prepare(`
+    UPDATE sale_plan_items
+    SET current_price = @currentPrice,
+        original_price = @originalPrice,
+        compare_at_price = @originalPrice,
+        target_price = @currentPrice,
+        variants_json = @variantsJson,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `).run({
+    id: item.id,
+    currentPrice,
+    originalPrice,
+    variantsJson: JSON.stringify(variants)
+  });
+}
+
+function persistSaleItemRemovedPricing(item, targets = []) {
+  const restoredPrice = minPositive(targets.map(target => target.restoredPrice), item.originalPrice || item.currentPrice);
+  openOrderSqliteDb().prepare(`
+    UPDATE sale_plan_items
+    SET current_price = @restoredPrice,
+        compare_at_price = 0,
+        target_price = @restoredPrice,
+        variants_json = @variantsJson,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `).run({
+    id: item.id,
+    restoredPrice,
+    variantsJson: JSON.stringify((targets || []).map(target => ({
+      id: target.id,
+      sku: target.sku,
+      title: target.title,
+      currentPrice: target.restoredPrice,
+      originalPrice: target.restoredPrice,
+      targetPrice: target.restoredPrice,
+      compareAtPrice: null,
+      warnings: target.warnings || []
+    })))
+  });
+}
+
+function saleRemoveTargetsWithLedger(item, liveProduct) {
+  const lookup = saleLedgerLookup(readSaleLedgerRowsForProduct(item.shopifyProductId));
+  const product = {
+    ...liveProduct,
+    variants: (liveProduct?.variants || []).map(variant => {
+      const ledger = ledgerRowForVariant(lookup, variant);
+      return ledger?.originalPrice ? {
+        ...variant,
+        saleOriginalPrice: ledger.originalPrice,
+        originalRrp: ledger.originalPrice,
+        originalPrice: ledger.originalPrice
+      } : variant;
+    })
+  };
+  return salePlanner.removeSaleTargets(product);
+}
+
 function markSaleItemResult(item, status, result = {}) {
   const db = openOrderSqliteDb();
   db.prepare(`
@@ -8081,22 +9240,27 @@ async function applySalePlanItem(job, item) {
     item = { ...item, variants: plannedVariants, metrics: { ...(item.metrics || {}), targetGpPct: saleItemTargetGpPct(plannedVariants) } };
   }
   const live = await fetchShopifyProductSaleState(item.shopifyProductId);
-  const staleErrors = validateLiveVariantState(item, live);
+  const staleErrors = [...validateLiveVariantState(item, live), ...validateLiveProductStatus(live)];
   if (staleErrors.length) throw new Error(`Plan is stale: ${staleErrors.join(" ")}`);
+  plannedVariants = prepareSaleVariantsWithLedger(item, live, plannedVariants);
+  persistSaleItemVariantPlan(item, plannedVariants);
   const variantInputs = plannedVariants.map(variant => ({
     id: variant.id,
     price: String(Number(variant.targetPrice || 0).toFixed(2)),
-    compareAtPrice: String(Number(variant.originalPrice || item.originalPrice || 0).toFixed(2))
+    compareAtPrice: String(Number(variant.saleOriginalPrice || variant.originalPrice || item.originalPrice || 0).toFixed(2))
   }));
   await submitProductVariantPriceUpdate(item.shopifyProductId, variantInputs, false);
+  persistSaleLedgerApply(item, plannedVariants);
+  persistSaleItemAppliedPricing(item, plannedVariants);
   const collectionIds = [...new Set([item.rootSaleCollectionId, item.childSaleCollectionId].filter(Boolean))];
   for (const collectionId of collectionIds) {
     await submitCollectionAddProducts(collectionId, [item.shopifyProductId]);
   }
+  await submitProductStatusMetafield(item.shopifyProductId, "S");
   markSaleItemResult(item, "Applied", {
     actor: job.actor,
     message: "Sale prices applied to Shopify",
-    data: { collections: collectionIds, variants: variantInputs.map(variant => variant.id) }
+    data: { collections: collectionIds, variants: variantInputs.map(variant => variant.id), productStatus: "S" }
   });
 }
 
@@ -8104,7 +9268,9 @@ async function removeSalePlanItem(job, item) {
   if (!item.shopifyProductId) throw new Error("Shopify product ID is missing.");
   const live = await fetchShopifyProductSaleState(item.shopifyProductId);
   if (!live) throw new Error("Product was not found in Shopify.");
-  const targets = salePlanner.removeSaleTargets(live);
+  const statusErrors = validateLiveProductStatus(live);
+  if (statusErrors.length) throw new Error(`Plan is stale: ${statusErrors.join(" ")}`);
+  const targets = saleRemoveTargetsWithLedger(item, live);
   const variantInputs = targets.map(target => ({
     id: target.id,
     price: String(Number(target.restoredPrice || 0).toFixed(2)),
@@ -8115,10 +9281,13 @@ async function removeSalePlanItem(job, item) {
   for (const collectionId of collectionIds) {
     await submitCollectionRemoveProducts(collectionId, [item.shopifyProductId]);
   }
+  await submitProductStatusMetafield(item.shopifyProductId, "N");
+  markSaleLedgerRemoved(item, variantInputs.map(variant => variant.id).filter(Boolean));
+  persistSaleItemRemovedPricing(item, targets);
   markSaleItemResult(item, "Removed", {
     actor: job.actor,
     message: "Product removed from sale",
-    data: { collections: collectionIds, variants: variantInputs.map(variant => variant.id), warnings: targets.flatMap(target => target.warnings || []) }
+    data: { collections: collectionIds, variants: variantInputs.map(variant => variant.id), productStatus: "N", warnings: targets.flatMap(target => target.warnings || []) }
   });
 }
 
@@ -9913,6 +11082,36 @@ async function handleApi(req, res) {
       await handleSalePlannerConfig(req, res);
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not save sale planner collection mapping" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-planner/analysis/refresh") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      await handleSalePlannerAnalysisRefresh(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not refresh sale planner analysis" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-planner/analysis/actions/update") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      await handleSalePlannerActionsUpdate(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not update sale analysis actions" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-planner/analysis/actions/create-plan") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      await handleSalePlannerActionsCreatePlan(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not create sale analysis follow-up plan" });
     }
     return true;
   }
