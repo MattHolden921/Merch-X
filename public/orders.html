@@ -1211,6 +1211,9 @@ function renderInvoiceGroup(order){
   const formOpen=state.invoiceEditorOpen||Boolean(editing);
   const canManagePayment=canManageInvoicePayment();
   const toleranceGbp=invoiceBalanceToleranceGbp(order);
+  const hasVariance=Math.abs(Number(totals.invoiceVarianceGbp||0))>=0.01;
+  const varianceLabel=totals.varianceIgnored?"ignored":Math.abs(Number(totals.invoiceVarianceGbp||0))<=toleranceGbp?"within tolerance":Number(totals.invoiceVarianceGbp||0)>0?"over PO":"under PO";
+  const varianceButton=canManagePayment&&hasVariance?`<button type="button" class="mini-btn" onclick="markInvoiceVarianceIgnored(${totals.varianceIgnored?"false":"true"})">${totals.varianceIgnored?"Restore variance":"Ignore variance"}</button>`:"";
   return `<div class="invoice-group">
     <div class="work-head"><h3>Invoices</h3><div class="actions"><span class="pill">${invoices.length} invoice${invoices.length===1?"":"s"}</span><button type="button" class="btn" onclick="toggleCreateInvoice()">${editing?"Edit invoice":"Create invoice"}</button></div></div>
     <div class="invoice-totals">
@@ -1219,7 +1222,7 @@ function renderInvoiceGroup(order){
       <div class="invoice-total"><label>Paid</label><strong>${money.format(totals.paidGbp)}</strong><span class="money-sub">${eurMoney.format(totals.paidEur)}</span></div>
       <div class="invoice-total"><label>Outstanding invoiced</label><strong>${money.format(totals.outstandingInvoicedGbp)}</strong><span class="money-sub">${eurMoney.format(totals.outstandingInvoicedEur)}</span></div>
       <div class="invoice-total"><label>Uninvoiced balance</label><strong>${money.format(totals.uninvoicedBalanceGbp)}</strong><span class="money-sub">${eurMoney.format(totals.uninvoicedBalanceEur)}</span></div>
-      <div class="invoice-total"><label>Variance</label><strong>${money.format(totals.invoiceVarianceGbp)}</strong><span class="money-sub">within ${money.format(toleranceGbp)} ignored</span></div>
+      <div class="invoice-total"><label>Variance</label><strong>${money.format(totals.invoiceVarianceGbp)}</strong><span class="money-sub">${escapeHtml(varianceLabel)} · within ${money.format(toleranceGbp)} ignored</span>${varianceButton}</div>
     </div>
     <div class="invoice-table-wrap">${renderInvoiceTable(order,invoices)}</div>
     <div class="invoice-create ${formOpen?"open":""}" id="invoice-create">
@@ -1251,15 +1254,16 @@ function invoiceTotals(order,invoices){
   const paidEur=paidInvoices.reduce((total,invoice)=>total+invoiceAmountEur(invoice,order),0);
   const toleranceGbp=invoiceBalanceToleranceGbp(order);
   const toleranceEur=gbpToEur(toleranceGbp,order);
+  const varianceIgnored=Boolean(order?.invoices?.varianceIgnored);
   const outstandingInvoicedGbp=Math.max(0,invoicedGbp-paidGbp);
   const outstandingInvoicedEur=Math.max(0,invoicedEur-paidEur);
-  const uninvoicedBalanceGbp=balanceAfterTolerance(Math.max(0,orderGbp-invoicedGbp),toleranceGbp);
-  const uninvoicedBalanceEur=balanceAfterTolerance(Math.max(0,orderEur-invoicedEur),toleranceEur);
+  const uninvoicedBalanceGbp=varianceIgnored?0:balanceAfterTolerance(Math.max(0,orderGbp-invoicedGbp),toleranceGbp);
+  const uninvoicedBalanceEur=varianceIgnored?0:balanceAfterTolerance(Math.max(0,orderEur-invoicedEur),toleranceEur);
   const outstandingGbp=outstandingInvoicedGbp+uninvoicedBalanceGbp;
   const outstandingEur=outstandingInvoicedEur+uninvoicedBalanceEur;
   const invoiceVarianceGbp=invoicedGbp-orderGbp;
   const invoiceVarianceEur=invoicedEur-orderEur;
-  return {orderGbp,orderEur,invoicedGbp,invoicedEur,paidGbp,paidEur,outstandingInvoicedGbp,outstandingInvoicedEur,uninvoicedBalanceGbp,uninvoicedBalanceEur,outstandingGbp,outstandingEur,invoiceVarianceGbp,invoiceVarianceEur};
+  return {orderGbp,orderEur,invoicedGbp,invoicedEur,paidGbp,paidEur,outstandingInvoicedGbp,outstandingInvoicedEur,uninvoicedBalanceGbp,uninvoicedBalanceEur,outstandingGbp,outstandingEur,invoiceVarianceGbp,invoiceVarianceEur,varianceIgnored};
 }
 
 function renderInvoiceTable(order,invoices){
@@ -1541,6 +1545,21 @@ async function savePayment(){
       paymentNotes:val("payment-notes")
     });
     showStatus("Payment saved.");
+  }catch(error){
+    showError(error);
+  }
+}
+
+async function markInvoiceVarianceIgnored(ignored){
+  try{
+    await saveWorkflow("payment",{
+      data:{
+        invoiceVarianceIgnored:Boolean(ignored),
+        invoiceVarianceIgnoredAt:ignored?new Date().toISOString():"",
+        invoiceVarianceIgnoredBy:ignored?val("actor-name"):""
+      }
+    });
+    showStatus(ignored?"Invoice variance ignored.":"Invoice variance restored.");
   }catch(error){
     showError(error);
   }

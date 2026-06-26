@@ -169,7 +169,7 @@ function financeBalanceCell(row){
 function varianceCell(row){
   const variance=Number(row.invoices?.invoiceVariance||0);
   const tolerance=Number(row.invoices?.balanceToleranceGbp||0);
-  const label=Math.abs(variance)<=tolerance?"within tolerance":variance>0?"over PO":"under PO";
+  const label=row.invoices?.varianceIgnored?"ignored":Math.abs(variance)<=tolerance?"within tolerance":variance>0?"over PO":"under PO";
   return `${formatMoney(variance)}<span class="subline">${escapeHtml(label)}</span>`;
 }
 function pahCell(row){
@@ -353,8 +353,7 @@ function renderMetrics(){
     ["Orders",numberFmt.format(totals.orderIds.size),allActions?"complete action queue":`${rows.length} ${missing?rows.length===1?"undated balance":"undated balances":rows.length===1?"due line":"due lines"}`],
     [allActions?"Units":missing?"Units without date":"Units due",numberFmt.format(totals.units),period],
     ["Exceptions",numberFmt.format(exceptions.length),"orders"],
-    ["Outstanding invoiced",formatMoney(financeTotals.outstandingInvoiced),`${finance.length} finance rows`],
-    ["Uninvoiced balance",formatMoney(financeTotals.uninvoicedBalance),`total ${formatMoney(financeTotals.outstanding)}`],
+    ["Finance balance",formatMoney(financeTotals.outstanding),`${formatMoney(financeTotals.outstandingInvoiced)} invoiced / ${formatMoney(financeTotals.uninvoicedBalance)} uninvoiced`],
     ["Data issues",numberFmt.format(dataQuality.length),"orders"]
   ];
   el("metrics").innerHTML=items.map(item=>`<div class="metric"><label>${escapeHtml(item[0])}</label><span>${escapeHtml(item[1])}</span><small>${escapeHtml(item[2])}</small></div>`).join("");

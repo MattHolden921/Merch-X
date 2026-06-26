@@ -4424,6 +4424,11 @@ function workflowBindParams(orderId, workflow) {
   return params;
 }
 
+function workflowDataForOrder(orderId) {
+  const row = openOrderSqliteDb().prepare("SELECT data FROM order_workflows WHERE order_id = ?").get(String(orderId || ""));
+  return parseJson(row?.data, {});
+}
+
 function workflowPatchForOrderStatus(status, currentWorkflow = {}) {
   const normalized = String(status || "").trim().toLowerCase();
   if (normalized === "pending approval" || normalized === "submitted") {
@@ -5299,6 +5304,9 @@ function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") 
   for (const key of Object.keys(workflowFields)) {
     if (Object.prototype.hasOwnProperty.call(patch || {}, key)) clean[key] = normalizeWorkflowValue(key, patch[key]);
   }
+  if (patch && typeof patch.data === "object" && patch.data) {
+    clean.data = { ...(current.data || {}), ...patch.data };
+  }
   if (section === "intake" && !orderProductCompletion(order).complete) {
     const bookingKeys = ["intakeEtaDate", "intakeConfirmedDate", "intakeActualDate", "intakeReference"];
     const hasBookingDateOrReference = bookingKeys.some(key => Object.prototype.hasOwnProperty.call(clean, key) && clean[key]);
@@ -5809,10 +5817,12 @@ function invoiceSummary(orderOrId) {
   const orderTotalEur = amountToEur(orderTotal, "GBP", order);
   const toleranceGbp = invoiceBalanceToleranceGbp;
   const toleranceEur = amountToEur(toleranceGbp, "GBP", order);
+  const workflowData = workflowDataForOrder(orderId);
+  const varianceIgnored = Boolean(workflowData.invoiceVarianceIgnored);
   const outstandingInvoiced = Math.max(0, totalDue - totalPaid);
   const outstandingInvoicedEur = Math.max(0, totalDueEur - totalPaidEur);
-  const uninvoicedBalance = balanceAfterTolerance(Math.max(0, orderTotal - totalDue), toleranceGbp);
-  const uninvoicedBalanceEur = balanceAfterTolerance(Math.max(0, orderTotalEur - totalDueEur), toleranceEur);
+  const uninvoicedBalance = varianceIgnored ? 0 : balanceAfterTolerance(Math.max(0, orderTotal - totalDue), toleranceGbp);
+  const uninvoicedBalanceEur = varianceIgnored ? 0 : balanceAfterTolerance(Math.max(0, orderTotalEur - totalDueEur), toleranceEur);
   const outstanding = outstandingInvoiced + uninvoicedBalance;
   const outstandingEur = outstandingInvoicedEur + uninvoicedBalanceEur;
   const invoiceVariance = totalDue - orderTotal;
@@ -5839,7 +5849,10 @@ function invoiceSummary(orderOrId) {
     invoiceVarianceEur,
     balanceToleranceGbp: toleranceGbp,
     balanceToleranceEur: toleranceEur,
-    withinTolerance: Math.abs(invoiceVariance) <= toleranceGbp
+    withinTolerance: Math.abs(invoiceVariance) <= toleranceGbp,
+    varianceIgnored,
+    varianceIgnoredAt: workflowData.invoiceVarianceIgnoredAt || "",
+    varianceIgnoredBy: workflowData.invoiceVarianceIgnoredBy || ""
   };
 }
 
@@ -11531,9 +11544,8 @@ async function handleApi(req, res) {
       const status = orderStatusForWorkflowPatch(section || "", workflow);
       const updatedOrder = status ? updateStoredOrderStatus(order.id, status) || order : order;
       await notifyOrderHandoffIfChanged(req, order, updatedOrder, previousWorkflow, workflow);
-      const publicOrder = publicManagedOrder(updatedOrder, null);
-      publicOrder.workflow = workflowWithProductCompletionGate(updatedOrder, workflow, publicOrder.productCompletion);
-      publicOrder.compositeStatus = orderCompositeStatus(updatedOrder, publicOrder.workflow, publicOrder.productCompletion);
+      const workflowRow = readOrderWorkflowMap().get(orderId);
+      const publicOrder = publicManagedOrder(updatedOrder, workflowRow);
       sendJson(res, 200, {
         ok: true,
         order: publicOrder,
