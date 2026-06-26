@@ -68,6 +68,7 @@ const oauthNextCookieName = "mx_oauth_next";
 const csrfHeaderName = "x-csrf-token";
 const sessionDurationMs = 14 * 24 * 60 * 60 * 1000;
 const authRoles = ["Admin", "Buyer", "Buying Director", "Finance", "Merchandising", "Marketing"];
+const invoiceBalanceToleranceGbp = Math.max(0, Number(process.env.ORDER_INVOICE_TOLERANCE_GBP || 10));
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -5238,12 +5239,14 @@ function buildOrderReports(params = {}) {
     total.orderValueGbp += Number(order.totalGbp || 0);
     total.invoicedGbp += Number(order.invoices.totalDue || 0);
     total.paidGbp += Number(order.invoices.totalPaid || 0);
+    total.outstandingInvoicedGbp += Number(order.invoices.outstandingInvoiced || 0);
+    total.uninvoicedBalanceGbp += Number(order.invoices.uninvoicedBalance || 0);
     total.outstandingGbp += Number(order.invoices.outstanding || 0);
     total.exceptionOrders = exceptions.length;
     total.nextActionOrders = nextActions.length;
     total.dataQualityOrders = dataQuality.length;
     return total;
-  }, { orders: 0, units: 0, arrivalUnits: 0, orderValueGbp: 0, invoicedGbp: 0, paidGbp: 0, outstandingGbp: 0, exceptionOrders: 0, nextActionOrders: 0, dataQualityOrders: 0 });
+  }, { orders: 0, units: 0, arrivalUnits: 0, orderValueGbp: 0, invoicedGbp: 0, paidGbp: 0, outstandingInvoicedGbp: 0, uninvoicedBalanceGbp: 0, outstandingGbp: 0, exceptionOrders: 0, nextActionOrders: 0, dataQualityOrders: 0 });
   metrics.arrivalUnits = arrivals.reduce((sum, portion) => sum + Number(portion.units || 0), 0);
 
   return {
@@ -5777,6 +5780,11 @@ function amountToEur(amount, currency, order) {
   return rate ? value / rate : 0;
 }
 
+function balanceAfterTolerance(value, tolerance) {
+  const amount = Math.max(0, Number(value || 0));
+  return amount <= Number(tolerance || 0) ? 0 : amount;
+}
+
 function resolveOrderForInvoiceSummary(orderOrId) {
   if (orderOrId && typeof orderOrId === "object") return orderOrId;
   const orderId = String(orderOrId || "");
@@ -5799,8 +5807,16 @@ function invoiceSummary(orderOrId) {
     .reduce((total, invoice) => total + amountToEur(invoice.amount, invoice.currency, order), 0);
   const orderTotal = orderTotalGbp(order);
   const orderTotalEur = amountToEur(orderTotal, "GBP", order);
-  const outstanding = Math.max(0, (orderTotal || totalDue) - totalPaid);
-  const outstandingEur = Math.max(0, (orderTotalEur || totalDueEur) - totalPaidEur);
+  const toleranceGbp = invoiceBalanceToleranceGbp;
+  const toleranceEur = amountToEur(toleranceGbp, "GBP", order);
+  const outstandingInvoiced = Math.max(0, totalDue - totalPaid);
+  const outstandingInvoicedEur = Math.max(0, totalDueEur - totalPaidEur);
+  const uninvoicedBalance = balanceAfterTolerance(Math.max(0, orderTotal - totalDue), toleranceGbp);
+  const uninvoicedBalanceEur = balanceAfterTolerance(Math.max(0, orderTotalEur - totalDueEur), toleranceEur);
+  const outstanding = outstandingInvoiced + uninvoicedBalance;
+  const outstandingEur = outstandingInvoicedEur + uninvoicedBalanceEur;
+  const invoiceVariance = totalDue - orderTotal;
+  const invoiceVarianceEur = totalDueEur - orderTotalEur;
   return {
     count: invoices.length,
     sentToFd: invoices.filter(invoice => invoice.sentToFd).length,
@@ -5813,14 +5829,23 @@ function invoiceSummary(orderOrId) {
     totalDueEur,
     totalPaid,
     totalPaidEur,
+    outstandingInvoiced,
+    outstandingInvoicedEur,
+    uninvoicedBalance,
+    uninvoicedBalanceEur,
     outstanding,
-    outstandingEur
+    outstandingEur,
+    invoiceVariance,
+    invoiceVarianceEur,
+    balanceToleranceGbp: toleranceGbp,
+    balanceToleranceEur: toleranceEur,
+    withinTolerance: Math.abs(invoiceVariance) <= toleranceGbp
   };
 }
 
 function invoiceSummaryIsFullyPaid(totals) {
   const orderTotal = Number(totals?.orderTotal || 0);
-  return Number(totals?.totalPaid || 0) >= Math.max(0, orderTotal - 0.01) && orderTotal > 0;
+  return orderTotal > 0 && Number(totals?.totalPaid || 0) > 0 && Number(totals?.outstanding || 0) <= 0;
 }
 
 function paymentStatusForBatchInvoices(invoices) {

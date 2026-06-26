@@ -160,6 +160,18 @@ function orderCell(row){
 function statusBadge(value){
   return `<span class="badge ${badgeClass(value)}">${escapeHtml(value||"-")}</span>`;
 }
+function financeBalanceCell(row){
+  const total=Number(row.invoices?.outstanding||0);
+  const invoiced=Number(row.invoices?.outstandingInvoiced||0);
+  const uninvoiced=Number(row.invoices?.uninvoicedBalance||0);
+  return `${formatMoney(total)}<span class="subline">${formatMoney(invoiced)} invoiced / ${formatMoney(uninvoiced)} uninvoiced</span>`;
+}
+function varianceCell(row){
+  const variance=Number(row.invoices?.invoiceVariance||0);
+  const tolerance=Number(row.invoices?.balanceToleranceGbp||0);
+  const label=Math.abs(variance)<=tolerance?"within tolerance":variance>0?"over PO":"under PO";
+  return `${formatMoney(variance)}<span class="subline">${escapeHtml(label)}</span>`;
+}
 function pahCell(row){
   const checked=Boolean(row.workflow?.pahUploaded);
   return `<input class="report-check" type="checkbox" ${checked?"checked":""} disabled aria-label="PAH ${checked?"uploaded":"not uploaded"}">`;
@@ -247,7 +259,10 @@ function columnsFor(tab){
     {key:"orderValue",label:"Order value",className:"num",render:row=>formatMoney(row.invoices?.orderTotal||row.totalGbp),sort:row=>Number(row.invoices?.orderTotal||row.totalGbp||0)},
     {key:"invoiced",label:"Invoiced",className:"num",render:row=>formatMoney(row.invoices?.totalDue),sort:row=>Number(row.invoices?.totalDue||0)},
     {key:"paid",label:"Paid",className:"num",render:row=>formatMoney(row.invoices?.totalPaid),sort:row=>Number(row.invoices?.totalPaid||0)},
-    {key:"outstanding",label:"Outstanding",className:"num",render:row=>formatMoney(row.invoices?.outstanding),sort:row=>Number(row.invoices?.outstanding||0)},
+    {key:"outstanding",label:"Outstanding",className:"num",render:financeBalanceCell,sort:row=>Number(row.invoices?.outstanding||0)},
+    {key:"outstandingInvoiced",label:"Outstanding invoiced",className:"num",render:row=>formatMoney(row.invoices?.outstandingInvoiced),sort:row=>Number(row.invoices?.outstandingInvoiced||0)},
+    {key:"uninvoicedBalance",label:"Uninvoiced balance",className:"num",render:row=>formatMoney(row.invoices?.uninvoicedBalance),sort:row=>Number(row.invoices?.uninvoicedBalance||0)},
+    {key:"variance",label:"Variance",className:"num",render:varianceCell,sort:row=>Number(row.invoices?.invoiceVariance||0)},
     {key:"invoices",label:"Invoices",className:"num",render:row=>numberFmt.format(Number(row.invoices?.count||0)),sort:row=>Number(row.invoices?.count||0)},
     base[11]
   ];
@@ -314,18 +329,22 @@ function renderMetrics(){
   const exceptions=reportRows("exceptions");
   const finance=reportRows("finance");
   const dataQuality=reportRows("dataQuality");
+  const financeTotals=finance.reduce((acc,row)=>{
+    if(acc.ids.has(String(row.id||"")))return acc;
+    acc.ids.add(String(row.id||""));
+    acc.outstanding+=Number(row.invoices?.outstanding||0);
+    acc.outstandingInvoiced+=Number(row.invoices?.outstandingInvoiced||0);
+    acc.uninvoicedBalance+=Number(row.invoices?.uninvoicedBalance||0);
+    return acc;
+  },{ids:new Set(),outstanding:0,outstandingInvoiced:0,uninvoicedBalance:0});
   const totals=rows.reduce((acc,row)=>{
     acc.orderIds.add(String(row.id||row.orderNumber||""));
     acc.units+=Number(row.units||0);
     acc.cost+=Number(row.costValueGbp||0);
     acc.retail+=Number(row.retailValueGbp||0);
-    if(!acc.outstandingOrderIds.has(String(row.id||""))){
-      acc.outstanding+=Number(row.invoices?.outstanding||0);
-      acc.outstandingOrderIds.add(String(row.id||""));
-    }
     (row.styles||[]).forEach(style=>acc.styles.add(String(style).toLowerCase()));
     return acc;
-  },{orderIds:new Set(),outstandingOrderIds:new Set(),units:0,cost:0,retail:0,outstanding:0,styles:new Set()});
+  },{orderIds:new Set(),units:0,cost:0,retail:0,styles:new Set()});
   const period=allActions?"all orders":missing?"without a due date":`${formatDate(val("date-from"))} to ${formatDate(val("date-to"))}`;
   const items=[
     [allActions?"Styles":missing?"Styles without date":"Styles due",numberFmt.format(totals.styles.size),period],
@@ -334,7 +353,8 @@ function renderMetrics(){
     ["Orders",numberFmt.format(totals.orderIds.size),allActions?"complete action queue":`${rows.length} ${missing?rows.length===1?"undated balance":"undated balances":rows.length===1?"due line":"due lines"}`],
     [allActions?"Units":missing?"Units without date":"Units due",numberFmt.format(totals.units),period],
     ["Exceptions",numberFmt.format(exceptions.length),"orders"],
-    ["Outstanding",formatMoney(totals.outstanding),`${finance.length} finance rows`],
+    ["Outstanding invoiced",formatMoney(financeTotals.outstandingInvoiced),`${finance.length} finance rows`],
+    ["Uninvoiced balance",formatMoney(financeTotals.uninvoicedBalance),`total ${formatMoney(financeTotals.outstanding)}`],
     ["Data issues",numberFmt.format(dataQuality.length),"orders"]
   ];
   el("metrics").innerHTML=items.map(item=>`<div class="metric"><label>${escapeHtml(item[0])}</label><span>${escapeHtml(item[1])}</span><small>${escapeHtml(item[2])}</small></div>`).join("");
@@ -351,7 +371,7 @@ function setTab(tab){
     el("date-to").disabled=true;
   }
   state.tab=tab;
-  const defaults={arrivals:"arrivalDate",withoutDates:"order",exceptions:"reason",nextActions:"owner",finance:"outstanding",buyingMix:"valueGbp",dataQuality:"reason"};
+  const defaults={arrivals:"arrivalDate",withoutDates:"order",exceptions:"reason",nextActions:"owner",finance:"outstandingInvoiced",buyingMix:"valueGbp",dataQuality:"reason"};
   state.sort={key:defaults[tab]||"order",dir:tab==="finance"||tab==="buyingMix"?"desc":"asc"};
   render();
 }

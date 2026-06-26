@@ -54,7 +54,7 @@ textarea{min-height:70px;resize:vertical}
 .invoice-create{display:none;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px;margin-bottom:12px}
 .invoice-create.open{display:block}
 .invoice-form{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end}
-.invoice-totals{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+.invoice-totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:10px}
 .invoice-total{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:8px 9px}
 .invoice-total label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);margin-bottom:3px}
 .invoice-total strong{font-size:14px}
@@ -192,6 +192,7 @@ const invoiceTypes=["Deposit invoice","Balance invoice","Full invoice","Credit n
 const invoiceStatuses=["Awaiting FD","Sent to FD","Paid","Query"];
 const currencyOptions=["EUR","GBP","USD","Other"];
 const owners=["Buyer","Buying Director","FD / Finance","Merchandising","Supplier"];
+const INVOICE_BALANCE_TOLERANCE_GBP=10;
 let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],labelJobs:[],labelValidation:null,labelSettings:{sparePerSku:0,placementInstructions:""},pahSettings:{},metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,lineBatchFilter:"all",authMode:"none",currentUser:null};
 
 const el=id=>document.getElementById(id);
@@ -255,6 +256,15 @@ function gbpToEur(value,order){
 function eurToGbp(value,order){
   const rate=orderFxRate(order);
   return rate?Number(value||0)*rate:Number(value||0);
+}
+
+function balanceAfterTolerance(value,tolerance){
+  const amount=Math.max(0,Number(value||0));
+  return amount<=Number(tolerance||0)?0:amount;
+}
+
+function invoiceBalanceToleranceGbp(order){
+  return Number(order?.invoices?.balanceToleranceGbp||INVOICE_BALANCE_TOLERANCE_GBP);
 }
 
 function moneyPairFromGbp(value,order){
@@ -433,10 +443,14 @@ function financeSummary(orders){
     total.invoicedEur+=Number(invoices.totalDueEur||gbpToEur(invoices.totalDue||0,order));
     total.paid+=Number(invoices.totalPaid||0);
     total.paidEur+=Number(invoices.totalPaidEur||gbpToEur(invoices.totalPaid||0,order));
+    total.outstandingInvoiced+=Number(invoices.outstandingInvoiced||0);
+    total.outstandingInvoicedEur+=Number(invoices.outstandingInvoicedEur||gbpToEur(invoices.outstandingInvoiced||0,order));
+    total.uninvoicedBalance+=Number(invoices.uninvoicedBalance||0);
+    total.uninvoicedBalanceEur+=Number(invoices.uninvoicedBalanceEur||gbpToEur(invoices.uninvoicedBalance||0,order));
     total.awaitingPayment+=Number(invoices.outstanding||0);
     total.awaitingPaymentEur+=Number(invoices.outstandingEur||gbpToEur(invoices.outstanding||0,order));
     return total;
-  },{orders:0,orderValue:0,orderValueEur:0,invoices:0,invoiced:0,invoicedEur:0,paid:0,paidEur:0,awaitingPayment:0,awaitingPaymentEur:0});
+  },{orders:0,orderValue:0,orderValueEur:0,invoices:0,invoiced:0,invoicedEur:0,paid:0,paidEur:0,outstandingInvoiced:0,outstandingInvoicedEur:0,uninvoicedBalance:0,uninvoicedBalanceEur:0,awaitingPayment:0,awaitingPaymentEur:0});
 }
 
 function showingFinanceSummary(){
@@ -469,7 +483,8 @@ function renderFilterSummary(orders){
       summaryItem("Invoices",finance.invoices.toLocaleString("en-GB")),
       summaryItem("Invoiced",`${money.format(finance.invoiced)} / ${eurMoney.format(finance.invoicedEur)}`),
       summaryItem("Paid",`${money.format(finance.paid)} / ${eurMoney.format(finance.paidEur)}`),
-      summaryItem("Awaiting payment",`${money.format(finance.awaitingPayment)} / ${eurMoney.format(finance.awaitingPaymentEur)}`),
+      summaryItem("Outstanding invoiced",`${money.format(finance.outstandingInvoiced)} / ${eurMoney.format(finance.outstandingInvoicedEur)}`),
+      summaryItem("Uninvoiced balance",`${money.format(finance.uninvoicedBalance)} / ${eurMoney.format(finance.uninvoicedBalanceEur)}`),
       summaryItem("Order value",`${money.format(finance.orderValue)} / ${eurMoney.format(finance.orderValueEur)}`)
     ].join("");
     return;
@@ -1195,13 +1210,16 @@ function renderInvoiceGroup(order){
   const formAmount=formInvoice.id?formInvoice.amount:invoiceDefaultAmount(order,formCurrency);
   const formOpen=state.invoiceEditorOpen||Boolean(editing);
   const canManagePayment=canManageInvoicePayment();
+  const toleranceGbp=invoiceBalanceToleranceGbp(order);
   return `<div class="invoice-group">
     <div class="work-head"><h3>Invoices</h3><div class="actions"><span class="pill">${invoices.length} invoice${invoices.length===1?"":"s"}</span><button type="button" class="btn" onclick="toggleCreateInvoice()">${editing?"Edit invoice":"Create invoice"}</button></div></div>
     <div class="invoice-totals">
       <div class="invoice-total"><label>Order total</label><strong>${money.format(totals.orderGbp)}</strong><span class="money-sub">${eurMoney.format(totals.orderEur)}</span></div>
       <div class="invoice-total"><label>Invoiced</label><strong>${money.format(totals.invoicedGbp)}</strong><span class="money-sub">${eurMoney.format(totals.invoicedEur)}</span></div>
       <div class="invoice-total"><label>Paid</label><strong>${money.format(totals.paidGbp)}</strong><span class="money-sub">${eurMoney.format(totals.paidEur)}</span></div>
-      <div class="invoice-total"><label>Outstanding</label><strong>${money.format(totals.outstandingGbp)}</strong><span class="money-sub">${eurMoney.format(totals.outstandingEur)}</span></div>
+      <div class="invoice-total"><label>Outstanding invoiced</label><strong>${money.format(totals.outstandingInvoicedGbp)}</strong><span class="money-sub">${eurMoney.format(totals.outstandingInvoicedEur)}</span></div>
+      <div class="invoice-total"><label>Uninvoiced balance</label><strong>${money.format(totals.uninvoicedBalanceGbp)}</strong><span class="money-sub">${eurMoney.format(totals.uninvoicedBalanceEur)}</span></div>
+      <div class="invoice-total"><label>Variance</label><strong>${money.format(totals.invoiceVarianceGbp)}</strong><span class="money-sub">within ${money.format(toleranceGbp)} ignored</span></div>
     </div>
     <div class="invoice-table-wrap">${renderInvoiceTable(order,invoices)}</div>
     <div class="invoice-create ${formOpen?"open":""}" id="invoice-create">
@@ -1231,9 +1249,17 @@ function invoiceTotals(order,invoices){
   const paidInvoices=invoices.filter(invoice=>invoice.status==="Paid");
   const paidGbp=paidInvoices.reduce((total,invoice)=>total+invoiceAmountGbp(invoice,order),0);
   const paidEur=paidInvoices.reduce((total,invoice)=>total+invoiceAmountEur(invoice,order),0);
-  const outstandingGbp=Math.max(0,orderGbp-paidGbp);
-  const outstandingEur=Math.max(0,orderEur-paidEur);
-  return {orderGbp,orderEur,invoicedGbp,invoicedEur,paidGbp,paidEur,outstandingGbp,outstandingEur};
+  const toleranceGbp=invoiceBalanceToleranceGbp(order);
+  const toleranceEur=gbpToEur(toleranceGbp,order);
+  const outstandingInvoicedGbp=Math.max(0,invoicedGbp-paidGbp);
+  const outstandingInvoicedEur=Math.max(0,invoicedEur-paidEur);
+  const uninvoicedBalanceGbp=balanceAfterTolerance(Math.max(0,orderGbp-invoicedGbp),toleranceGbp);
+  const uninvoicedBalanceEur=balanceAfterTolerance(Math.max(0,orderEur-invoicedEur),toleranceEur);
+  const outstandingGbp=outstandingInvoicedGbp+uninvoicedBalanceGbp;
+  const outstandingEur=outstandingInvoicedEur+uninvoicedBalanceEur;
+  const invoiceVarianceGbp=invoicedGbp-orderGbp;
+  const invoiceVarianceEur=invoicedEur-orderEur;
+  return {orderGbp,orderEur,invoicedGbp,invoicedEur,paidGbp,paidEur,outstandingInvoicedGbp,outstandingInvoicedEur,uninvoicedBalanceGbp,uninvoicedBalanceEur,outstandingGbp,outstandingEur,invoiceVarianceGbp,invoiceVarianceEur};
 }
 
 function renderInvoiceTable(order,invoices){
