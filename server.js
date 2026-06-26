@@ -4534,7 +4534,7 @@ function defaultWorkflowForOrder(order) {
   const isApproved = status === "approved";
   const isPending = status.includes("approval") || status === "submitted";
   const paymentType = order?.terms?.payment || order?.supplier?.paymentType || "";
-  const paymentAmount = Number(order?.totals?.grand || order?.totals?.subtotal || 0);
+  const paymentAmount = orderTotalGbp(order);
   const requiredDate = order?.delivery?.requiredDate || "";
   return {
     approvalStatus: isApproved ? "Approved" : isPending ? "Pending director approval" : "Not requested",
@@ -4726,15 +4726,29 @@ function workflowWithProductCompletionGate(order, workflow, completion) {
   return workflow;
 }
 
+function workflowWithInvoicePaymentState(order, workflow, totals) {
+  if (!totals?.count || !invoiceSummaryIsFullyPaid(totals) || workflow.paymentStatus === "Paid") return workflow;
+  const next = nextActionForWorkflow(order, { ...workflow, paymentStatus: "Paid" });
+  return {
+    ...workflow,
+    paymentStatus: "Paid",
+    paymentAmount: totals.orderTotal || totals.totalDue,
+    nextActionOwner: next.nextActionOwner,
+    nextAction: next.nextAction
+  };
+}
+
 function publicManagedOrder(order, workflowRow, productMap = null) {
   const baseWorkflow = workflowFromRow(workflowRow, order);
   const lines = order.lines || [];
   const units = lines.reduce((total, line) => total + Number(line.quantity || 0), 0);
   const categories = [...new Set(lines.map(line => line.category).filter(Boolean))];
   const fxRate = Number(order.fxRate || order.totals?.fxRate || 0);
-  const total = Number(order.totals?.grand || 0);
+  const total = orderTotalGbp(order);
   const productCompletion = orderProductCompletion(order, productMap);
-  const workflow = workflowWithProductCompletionGate(order, baseWorkflow, productCompletion);
+  const invoices = invoiceSummary(order);
+  const paymentWorkflow = workflowWithInvoicePaymentState(order, baseWorkflow, invoices);
+  const workflow = workflowWithProductCompletionGate(order, paymentWorkflow, productCompletion);
   return {
     id: String(order.id || ""),
     orderNumber: order.orderNumber || "",
@@ -4762,7 +4776,7 @@ function publicManagedOrder(order, workflowRow, productMap = null) {
     units,
     categories,
     productCompletion,
-    invoices: invoiceSummary(order),
+    invoices,
     batchSummary: batchSummary(order),
     canDelete: canDeleteOrder(order),
     canArchive: canArchiveOrder(order),
@@ -5738,7 +5752,9 @@ function readOrderInvoices(orderId, includeFiles = true) {
 }
 
 function orderTotalGbp(order) {
-  return Number(order?.totals?.grand || 0);
+  const lines = order?.lines || order?.order?.lines || [];
+  const lineTotal = lines.reduce((total, line) => total + reportLineValueGbp(line), 0);
+  return Number(lineTotal || order?.totals?.subtotal || order?.subtotal || order?.totalGbp || order?.totals?.grand || 0);
 }
 
 function orderFxRate(order) {
@@ -5929,7 +5945,7 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
     if (["Paid", "Part paid", "Ready to pay", "Overdue"].includes(current.paymentStatus)) {
       writeOrderWorkflow(order, {
         paymentStatus: "Awaiting invoice",
-        paymentAmount: Number(order.totals?.grand || 0),
+        paymentAmount: orderTotalGbp(order),
         paymentPaidDate: "",
         nextActionOwner: "Buyer",
         nextAction: "Awaiting supplier invoice"

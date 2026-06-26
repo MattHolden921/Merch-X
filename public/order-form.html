@@ -147,15 +147,15 @@ textarea{min-height:72px;resize:vertical}
           <div>
             <p class="section-title" style="margin-bottom:8px">Spend by category</p>
             <table class="cat-table">
-              <thead><tr><th>Category</th><th>Units</th><th>Cost GBP</th><th>5x RRP</th><th>Exit retail</th><th>Share</th></tr></thead>
+              <thead><tr><th>Category</th><th>Units</th><th>Cost GBP</th><th>5x RRP inc VAT</th><th>Exit retail</th><th>Share</th></tr></thead>
               <tbody id="cat-body"><tr><td colspan="6" class="empty">Add lines to see category spend.</td></tr></tbody>
             </table>
           </div>
           <div class="total-box">
-            <div class="total-row"><span>Subtotal cost GBP</span><strong id="subtotal">&pound;0.00</strong></div>
-            <div class="total-row"><span>VAT (20%)</span><strong id="vat">&pound;0.00</strong></div>
-            <div class="grand"><span>Total</span><span id="grand">&pound;0.00</span></div>
-            <div class="total-row"><span>5x total RRP</span><strong id="rrp-total">&pound;0.00</strong></div>
+            <div class="total-row"><span>Supplier cost GBP</span><strong id="subtotal">&pound;0.00</strong></div>
+            <div class="total-row"><span>VAT for retail pricing (20%)</span><strong id="vat">&pound;0.00</strong></div>
+            <div class="grand"><span>Supplier total</span><span id="grand">&pound;0.00</span></div>
+            <div class="total-row"><span>5x total RRP inc VAT</span><strong id="rrp-total">&pound;0.00</strong></div>
             <div class="total-row"><span>65% exit retail inc VAT</span><strong id="exit-total">&pound;0.00</strong></div>
           </div>
         </div>
@@ -266,6 +266,15 @@ function notice(text,type="ok"){
   notice.timer=window.setTimeout(()=>box.className="notice",4200);
 }
 
+function savedOrderSupplierTotal(order){
+  const lines=order?.lines||[];
+  const lineTotal=lines.reduce((sum,line)=>{
+    const quantity=Number(line.quantity||0);
+    return sum+Number(line.lineCost||(quantity*Number(line.unitCostGbp||line.unitCost||0))||0);
+  },0);
+  return Number(lineTotal||order?.totals?.subtotal||order?.totals?.grand||0);
+}
+
 async function loadBootstrap(){
   const response=await apiFetch("/api/order-form/bootstrap");
   bootstrap=await response.json();
@@ -283,7 +292,7 @@ function renderReferenceData(){
     <button type="button" class="saved-item" onclick="loadSavedOrder('${escapeHtml(order.id)}')">
       <strong>${escapeHtml(order.orderNumber)}</strong>
       <span>${escapeHtml(order.supplier?.name||"No supplier")} · ${escapeHtml(order.status||"Draft")}</span>
-      <span>${escapeHtml((order.lines||[]).length)} lines · ${money.format(Number(order.totals?.grand||0))}</span>
+      <span>${escapeHtml((order.lines||[]).length)} lines · ${money.format(savedOrderSupplierTotal(order))}</span>
     </button>`).join(""):'<p class="empty">No saved orders yet.</p>';
   if(!el("saved-products"))return;
   el("saved-products").innerHTML=bootstrap.products.length?bootstrap.products.slice(-8).reverse().map(product=>`
@@ -411,7 +420,7 @@ function addLine(data={},afterId=null){
           ${field("quantity",id,"Qty","number","0",data.quantity)}
           ${field("unitCostEur",id,"Unit cost EUR","number","0.00",data.unitCostEur??data.unitCost)}
           ${field("unitCostGbp",id,"Cost GBP","number","0.00",data.unitCostGbp)}
-          ${field("rrp",id,"5x RRP GBP","text","0.00",data.rrp)}
+          ${field("rrp",id,"5x RRP inc VAT GBP","text","0.00",data.rrp)}
         </div>
         <div class="line-row second">
           ${skuField(id,data.sku)}
@@ -620,7 +629,7 @@ function lineCostValues(id){
   }else{
     unitCostGbp=unitCostEur*fx;
   }
-  const rrp=unitCostGbp*5;
+  const rrp=unitCostGbp*5*1.2;
   const exitRetail=(unitCostGbp/.35)*1.2;
   return { mode, unitCostEur, unitCostGbp, rrp, exitRetail };
 }
@@ -779,7 +788,7 @@ function calc(){
   });
   el("subtotal").textContent=money.format(subtotal);
   el("vat").textContent=money.format(subtotal*.2);
-  el("grand").textContent=money.format(subtotal*1.2);
+  el("grand").textContent=money.format(subtotal);
   el("rrp-total").textContent=money.format(totalRrp);
   el("exit-total").textContent=money.format(totalExitRetail);
   const names=Object.keys(cats).sort((a,b)=>cats[b].spend-cats[a].spend);
@@ -788,7 +797,7 @@ function calc(){
     const share=subtotal?`${((cat.spend/subtotal)*100).toFixed(1)}%`:"0.0%";
     return `<tr><td>${escapeHtml(name)}</td><td>${cat.units.toLocaleString()}</td><td>${money.format(cat.spend)}</td><td>${money.format(cat.rrp)}</td><td>${money.format(cat.exitRetail)}</td><td>${share}</td></tr>`;
   }).join(""):'<tr><td colspan="6" class="empty">Add lines to see category spend.</td></tr>';
-  return {subtotal,vat:subtotal*.2,grand:subtotal*1.2,totalRrp,totalExitRetail,fxRate:Number(val("fx-rate"))||0};
+  return {subtotal,vat:subtotal*.2,grand:subtotal,totalRrp,totalExitRetail,fxRate:Number(val("fx-rate"))||0};
 }
 
 function collectOrder(){
@@ -872,13 +881,13 @@ function exportCleanPdf(){
       </section>
       <section class="grid"><div class="box"><h2>Supplier</h2><table>${supplierRows}</table></div><div class="box"><h2>Buyer</h2><table>${buyerRows}</table></div></section>
       <section class="grid"><div class="box"><h2>Delivery</h2><table>${deliveryRows}</table></div><div class="box"><h2>Payment and bank details</h2><table>${paymentRows}</table></div></section>
-      <table class="lines"><thead><tr><th>#</th><th>Style</th><th>SKU</th><th>Category</th><th class="num">Qty</th><th class="num">Cost EUR</th><th class="num">Cost GBP</th><th class="num">5x RRP</th><th class="num">65% Exit</th><th class="num">Line cost</th></tr></thead><tbody>${lines}</tbody></table>
+      <table class="lines"><thead><tr><th>#</th><th>Style</th><th>SKU</th><th>Category</th><th class="num">Qty</th><th class="num">Cost EUR</th><th class="num">Cost GBP</th><th class="num">5x RRP inc VAT</th><th class="num">65% Exit</th><th class="num">Line cost</th></tr></thead><tbody>${lines}</tbody></table>
       <table class="totals">
-        <tr><td>Subtotal cost GBP</td><td class="num">${money.format(order.totals.subtotal||0)}</td></tr>
-        <tr><td>VAT on order cost</td><td class="num">${money.format(order.totals.vat||0)}</td></tr>
-        <tr><td>5x total RRP</td><td class="num">${money.format(order.totals.totalRrp||0)}</td></tr>
+        <tr><td>Supplier cost GBP</td><td class="num">${money.format(order.totals.subtotal||0)}</td></tr>
+        <tr><td>VAT for retail pricing</td><td class="num">${money.format(order.totals.vat||0)}</td></tr>
+        <tr><td>5x total RRP inc VAT</td><td class="num">${money.format(order.totals.totalRrp||0)}</td></tr>
         <tr><td>65% exit retail inc VAT</td><td class="num">${money.format(order.totals.totalExitRetail||0)}</td></tr>
-        <tr><td>Total cost inc VAT</td><td class="num">${money.format(order.totals.grand||0)}</td></tr>
+        <tr><td>Supplier total</td><td class="num">${money.format(order.totals.grand||0)}</td></tr>
       </table>
       <section class="notes"><div class="box"><h2>Quality requirements</h2>${checks?`<ul>${checks}</ul>`:"<p>No checks selected.</p>"}<p>${escapeHtml(order.qualityNotes||"")}</p></div><div class="box"><h2>Special conditions / notes</h2><p>${escapeHtml(order.notes||"")}</p></div></section>
     </main><script>window.onload=()=>setTimeout(()=>window.print(),150)<\/script></body></html>`;

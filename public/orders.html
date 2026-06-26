@@ -242,7 +242,9 @@ function orderFxRate(order){
 }
 
 function orderTotalGbp(order){
-  return Number(order?.totalGbp||order?.total||order?.order?.totals?.grand||0);
+  const lines=order?.order?.lines||order?.lines||[];
+  const lineTotal=lines.reduce((sum,line)=>sum+lineCostGbp(line),0);
+  return Number(lineTotal||order?.subtotal||order?.order?.totals?.subtotal||order?.totalGbp||order?.total||order?.order?.totals?.grand||0);
 }
 
 function gbpToEur(value,order){
@@ -286,7 +288,8 @@ function lineUnitEur(line,order){
 }
 
 function lineCostGbp(line){
-  return Number(line?.lineCost||0);
+  const quantity=Number(line?.quantity||0);
+  return Number(line?.lineCost||(quantity*Number(line?.unitCostGbp||line?.unitCost||0))||0);
 }
 
 function lineCostEur(line,order){
@@ -476,7 +479,7 @@ function renderFilterSummary(orders){
     summaryItem("Orders",`${summary.orders.toLocaleString("en-GB")} order${summary.orders===1?"":"s"}`),
     summaryItem("Units",summary.units.toLocaleString("en-GB")),
     summaryItem("Styles",summary.styles.toLocaleString("en-GB")),
-    summaryItem("Cost inc VAT",`${money.format(summary.cost)} / ${eurMoney.format(summary.costEur)}`),
+    summaryItem("Supplier cost",`${money.format(summary.cost)} / ${eurMoney.format(summary.costEur)}`),
     summaryItem("Retail",money.format(summary.retail))
   ].join("");
 }
