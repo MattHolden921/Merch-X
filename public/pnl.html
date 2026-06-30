@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P&amp;L Planner</title>
+<link rel="stylesheet" href="design-system.css">
+<style>
+.wrap{max-width:1680px}
+[hidden]{display:none!important}
+.head{align-items:start}
+.toolbar{display:grid;grid-template-columns:170px 150px 150px auto minmax(220px,1fr);gap:10px;align-items:end}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+.settings-grid>.panel,.scenario-layout>*{min-width:0}
+.form-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:10px}
+.form-grid .wide{grid-column:span 2}
+.form-grid .full{grid-column:1/-1}
+.scenario-panel{margin-bottom:14px}
+.scenario-layout{display:grid;grid-template-columns:minmax(360px,.92fr) minmax(0,1.08fr);gap:14px;align-items:start}
+.scaler-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.slider-field{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px}
+.slider-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px}
+.slider-head label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft)}
+.slider-head output{font-size:13px;font-weight:650;color:var(--ds-text);font-variant-numeric:tabular-nums;white-space:nowrap}
+.range-control{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px;align-items:center}
+.range-control input[type=range]{width:100%}
+.scaler-number{min-height:34px;padding:0 8px;font-size:12px}
+.scenario-actions{display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap}
+.scenario-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:10px}
+.checkline{display:flex;align-items:center;gap:8px;min-height:38px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:0 10px;background:var(--ds-bg-surface);font-size:12px;color:var(--ds-text-muted)}
+.checkline input{width:16px;height:16px}
+.table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
+table{width:100%;border-collapse:collapse;font-size:12px;min-width:560px}
+th{background:var(--ds-bg-muted);color:var(--ds-text-soft);font-size:10px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:8px;border-bottom:1px solid var(--ds-line);white-space:nowrap}
+td{padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:middle;color:var(--ds-text-muted)}
+tr:last-child td{border-bottom:0}
+.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.strong-row td{background:var(--ds-bg-muted);font-weight:650;color:var(--ds-text)}
+.good{color:var(--ds-good)!important}.bad{color:var(--ds-bad)!important}.warn{color:var(--ds-warn)!important}
+.section-row td{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);background:var(--ds-bg-page);font-weight:650}
+.badge{display:inline-flex;align-items:center;min-height:20px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:2px 7px;font-size:10px;font-weight:650;color:var(--ds-text-muted);background:var(--ds-bg-muted);white-space:nowrap}
+.badge.active{color:var(--ds-good);border-color:rgba(21,128,61,.35)}
+.badge.inactive{color:var(--ds-text-soft)}
+.empty-state{padding:28px 14px;text-align:center;color:var(--ds-text-muted);font-size:13px}
+.notice-list{display:grid;gap:8px;margin-bottom:14px}
+.notice{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px 12px;font-size:12px;line-height:1.5;color:var(--ds-text-muted)}
+.notice.warn{border-color:rgba(180,83,9,.35);background:rgba(180,83,9,.08)}
+.sales-bridge{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px;margin-bottom:12px}
+.bridge-step{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:9px 10px;min-height:76px}
+.bridge-step label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);margin-bottom:8px}
+.bridge-step strong{display:block;font-size:15px;color:var(--ds-text);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bridge-step small{display:block;margin-top:4px;color:var(--ds-text-soft);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mini-actions{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.btn.small{min-height:28px;padding:0 8px;font-size:11px}
+.muted{color:var(--ds-text-soft)}
+.sensitivity{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:14px}
+.sensitivity>section{min-width:0}
+.sensitivity table{min-width:0}
+.panel-title{font-size:13px;font-weight:650;margin-bottom:10px}
+.delta{font-size:11px;display:block;margin-top:2px}
+.chart{display:grid;gap:7px;margin-bottom:10px}
+.chart-row{display:grid;grid-template-columns:76px minmax(0,1fr) 82px;gap:8px;align-items:center;font-size:11px;color:var(--ds-text-muted)}
+.chart-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chart-track{display:block;height:20px;background:var(--ds-bg-muted);border:1px solid var(--ds-line);border-radius:var(--ds-radius);overflow:hidden}
+.chart-bar{display:block;height:100%;min-width:2px;background:var(--ds-good)}
+.chart-bar.bad{background:var(--ds-bad)}
+.chart-value{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+@media(max-width:1080px){.scenario-layout,.settings-grid,.sensitivity{grid-template-columns:1fr}.toolbar{grid-template-columns:repeat(3,1fr)}.toolbar .status{grid-column:1/-1}}
+@media(max-width:720px){body{padding:18px 10px 36px}.toolbar,.metric-grid,.form-grid,.scaler-grid,.scenario-kpis{grid-template-columns:1fr}.form-grid .wide{grid-column:auto}.actions,.scenario-actions{justify-content:flex-start}.range-control{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>P&amp;L planner</h1>
+      <p class="sub">Live Shopify actuals, reusable cost rules, manual marketing spend, and driver-based profit scenarios.</p>
+    </div>
+    <div class="actions">
+      <button class="btn" type="button" id="settings-btn">Refresh settings</button>
+      <button class="btn primary" type="button" id="load-btn">Load actuals</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label>Quick period</label><select class="select" id="quick-period"><option value="completed-week" selected>Last completed week</option><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option><option value="60">Last 60 days</option><option value="92">Last 92 days</option><option value="custom">Custom</option></select></div>
+      <div class="field"><label>From</label><input id="date-from" type="date"></div>
+      <div class="field"><label>To</label><input id="date-to" type="date"></div>
+      <div class="field"><label>&nbsp;</label><button class="btn" type="button" id="apply-quick-btn">Apply quick period</button></div>
+      <p class="status" id="status-note">Ready.</p>
+    </div>
+  </section>
+
+  <section class="metric-grid" id="metrics"></section>
+  <section class="notice-list" id="warnings"></section>
+
+  <section class="panel scenario-panel">
+    <div class="section-head">
+      <p class="section-title">Scenario scaler</p>
+      <span class="pill" id="scenario-pill">Not run</span>
+    </div>
+    <div class="scenario-layout">
+      <div class="scaler-grid">
+        <div class="slider-field">
+          <div class="slider-head"><label>Daily despatch</label><output id="sc-daily-sales-output">-</output></div>
+          <div class="range-control"><input id="sc-daily-sales" type="range" min="0" max="10000" step="0.01"><input class="scaler-number" id="sc-daily-sales-number" type="number" min="0" step="100"></div>
+        </div>
+        <div class="slider-field">
+          <div class="slider-head"><label>AOV change</label><output id="sc-aov-delta-output">-</output></div>
+          <div class="range-control"><input id="sc-aov-delta" type="range" min="-20" max="30" step="0.5" value="0"><input class="scaler-number" id="sc-aov-delta-number" type="number" step="0.5" value="0"></div>
+        </div>
+        <div class="slider-field">
+          <div class="slider-head"><label>Marketing spend</label><output id="sc-marketing-output">-</output></div>
+          <div class="range-control"><input id="sc-marketing" type="range" min="0" max="10000" step="0.01"><input class="scaler-number" id="sc-marketing-number" type="number" min="0" step="50"></div>
+        </div>
+        <div class="slider-field">
+          <div class="slider-head"><label>Marketing return</label><output id="sc-marketing-return-output">-</output></div>
+          <div class="range-control"><input id="sc-marketing-return" type="range" min="0" max="10" step="0.01"><input class="scaler-number" id="sc-marketing-return-number" type="number" min="0" step="0.1" placeholder="Despatch / GBP"></div>
+        </div>
+        <div class="slider-field">
+          <div class="slider-head"><label>Gross margin</label><output id="sc-margin-output">-</output></div>
+          <div class="range-control"><input id="sc-margin" type="range" min="0" max="95" step="0.1"><input class="scaler-number" id="sc-margin-number" type="number" min="0" max="100" step="0.1"></div>
+        </div>
+        <div class="slider-field">
+          <div class="slider-head"><label>Items / order</label><output id="sc-items-order-output">-</output></div>
+          <div class="range-control"><input id="sc-items-order" type="range" min="0" max="5" step="0.05"><input class="scaler-number" id="sc-items-order-number" type="number" min="0" step="0.05"></div>
+        </div>
+        <label class="checkline"><input id="sc-marketing-drives" type="checkbox"> Marketing drives sales</label>
+      </div>
+      <div class="scenario-results">
+        <div class="scenario-kpis" id="scenario-summary"></div>
+        <div class="table-wrap" id="scenario-table"></div>
+      </div>
+    </div>
+    <div class="scenario-actions">
+      <p class="status" id="scenario-note">Load actuals first.</p>
+      <button class="btn" type="button" id="scenario-btn">Recalculate</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <p class="section-title">Sensitivity</p>
+      <span class="pill" id="sensitivity-pill">Scenario required</span>
+    </div>
+    <div class="sensitivity" id="sensitivity"></div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <div>
+        <p class="section-title">Actual P&amp;L</p>
+        <p class="status" id="source-note">Load actuals to view the statement.</p>
+      </div>
+      <span class="pill" id="range-pill">No range</span>
+    </div>
+    <div class="sales-bridge" id="sales-bridge"></div>
+    <div class="table-wrap" id="pnl-table"></div>
+  </section>
+
+  <section class="settings-grid">
+    <section class="panel">
+      <div class="section-head">
+        <p class="section-title">Cost rules</p>
+        <span class="pill" id="rule-count">0 rules</span>
+      </div>
+      <div class="form-grid" id="rule-form">
+        <input id="rule-id" type="hidden">
+        <div class="field wide"><label>Name</label><input id="rule-name"></div>
+        <div class="field"><label>Category</label><input id="rule-category" list="cost-cats" value="Fulfilment"><datalist id="cost-cats"><option>Fulfilment</option><option>Postage</option><option>Payment</option><option>Overheads</option><option>Software</option><option>Warehouse</option><option>Other</option></datalist></div>
+        <div class="field"><label>Status</label><select class="select" id="rule-status"><option>Active</option><option>Inactive</option></select></div>
+        <div class="field"><label>Type</label><select class="select" id="rule-type"><option value="fixed_monthly">Fixed monthly</option><option value="per_order">Per order</option><option value="per_item">Per item</option><option value="pick_pack">Pick and pack</option><option value="percent_revenue">Percent despatch</option><option value="percent_revenue_plus_per_order">Percent + per order</option></select></div>
+        <div class="field"><label>Amount</label><input id="rule-amount" type="number" min="0" step="0.01"></div>
+        <div class="field"><label>Rate %</label><input id="rule-rate" type="number" min="0" step="0.01"></div>
+        <div class="field"><label>First item</label><input id="rule-first" type="number" min="0" step="0.01"></div>
+        <div class="field"><label>Additional item</label><input id="rule-additional" type="number" min="0" step="0.01"></div>
+        <div class="field"><label>Effective from</label><input id="rule-start" type="date"></div>
+        <div class="field"><label>Effective to</label><input id="rule-end" type="date"></div>
+        <div class="field wide"><label>Notes</label><input id="rule-notes"></div>
+        <div class="field"><label>&nbsp;</label><button class="btn primary" type="button" id="save-rule-btn">Save rule</button></div>
+        <div class="field"><label>&nbsp;</label><button class="btn" type="button" id="clear-rule-btn">Clear</button></div>
+      </div>
+      <div class="table-wrap" id="rules-table"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <p class="section-title">Marketing spend</p>
+        <span class="pill" id="spend-count">0 entries</span>
+      </div>
+      <div class="form-grid" id="spend-form">
+        <input id="spend-id" type="hidden">
+        <div class="field"><label>Channel</label><input id="spend-channel" list="channels" value="Google"><datalist id="channels"><option>Google</option><option>Meta</option><option>Klaviyo</option><option>TikTok</option><option>Affiliate</option><option>Other</option></datalist></div>
+        <div class="field"><label>From</label><input id="spend-start" type="date"></div>
+        <div class="field"><label>To</label><input id="spend-end" type="date"></div>
+        <div class="field"><label>Amount</label><input id="spend-amount" type="number" min="0" step="0.01"></div>
+        <div class="field wide"><label>Notes</label><input id="spend-notes"></div>
+        <div class="field"><label>&nbsp;</label><button class="btn primary" type="button" id="save-spend-btn">Save spend</button></div>
+        <div class="field"><label>&nbsp;</label><button class="btn" type="button" id="clear-spend-btn">Clear</button></div>
+      </div>
+      <div class="table-wrap" id="spend-table"></div>
+    </section>
+  </section>
+</main>
+
+<script>
+const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
+const exactMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",minimumFractionDigits:2,maximumFractionDigits:2});
+const numberFmt=new Intl.NumberFormat("en-GB",{maximumFractionDigits:1});
+const pctFmt=new Intl.NumberFormat("en-GB",{style:"percent",minimumFractionDigits:1,maximumFractionDigits:1});
+const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
+let state={settings:{costRules:[],marketingSpend:[],canWrite:false},statement:null,scenario:null,sensitivity:null};
+const el=id=>document.getElementById(id);
+const val=id=>el(id)?.value?.trim()||"";
+const SCALERS=["sc-daily-sales","sc-aov-delta","sc-marketing","sc-marketing-return","sc-margin","sc-items-order"];
+let scenarioTimer=null;
+let scenarioRequestId=0;
+
+async function apiFetch(path,options){
+  let lastError;
+  for(const origin of API_ORIGINS){
+    try{
+      const response=await fetch(`${origin}${path}`,options);
+      if(response.ok||response.status>=400)return response;
+      lastError=new Error(`API returned ${response.status}`);
+    }catch(error){lastError=error;}
+  }
+  throw lastError||new Error("API unavailable");
+}
+async function apiJson(path,options){
+  const response=await apiFetch(path,options);
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.error||data.message||`Request failed (${response.status})`);
+  return data;
+}
+function esc(value){return String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));}
+function attr(value){return esc(value).replace(/`/g,"&#096;");}
+function gbp(value,exact=false){return exact?exactMoney.format(Number(value||0)):money.format(Number(value||0));}
+function signedGbp(value,exact=true){const n=Number(value||0);return `${n<0?"-":n>0?"+":""}${gbp(Math.abs(n),exact)}`;}
+function pct(value){return Number.isFinite(Number(value))?pctFmt.format(Number(value||0)):"-";}
+function localIso(date){const copy=new Date(date.getTime()-date.getTimezoneOffset()*60000);return copy.toISOString().slice(0,10);}
+function setStatus(message,type=""){el("status-note").className=`status ${type}`;el("status-note").textContent=message;}
+function controlPair(id){return {range:el(id),number:el(`${id}-number`),output:el(`${id}-output`)};}
+function setScaler(id,{min,max,step,value}={}){
+  const pair=controlPair(id);
+  for(const node of [pair.range,pair.number]){
+    if(!node)continue;
+    if(min!=null)node.min=String(min);
+    if(max!=null)node.max=String(max);
+    if(step!=null)node.step=String(step);
+    if(value!=null)node.value=String(value);
+  }
+}
+function syncScaler(id,source){
+  const pair=controlPair(id);
+  const sourceNode=source==="number"?pair.number:pair.range;
+  const targetNode=source==="number"?pair.range:pair.number;
+  if(!sourceNode||!targetNode)return;
+  const numeric=Number(sourceNode.value);
+  if(Number.isFinite(numeric))targetNode.value=String(numeric);
+  updateScalerOutputs();
+  queueScenario();
+}
+function setScenarioControlsEnabled(enabled){
+  for(const id of SCALERS){
+    const pair=controlPair(id);
+    if(pair.range)pair.range.disabled=!enabled;
+    if(pair.number)pair.number.disabled=!enabled;
+  }
+  if(el("sc-marketing-drives"))el("sc-marketing-drives").disabled=!enabled;
+  if(el("scenario-btn"))el("scenario-btn").disabled=!enabled;
+}
+function updateScalerOutputs(){
+  const daily=Number(val("sc-daily-sales")||0);
+  const aovDelta=Number(val("sc-aov-delta")||0);
+  const marketing=Number(val("sc-marketing")||0);
+  const marketingReturn=Number(val("sc-marketing-return")||0);
+  const margin=Number(val("sc-margin")||0);
+  const items=Number(val("sc-items-order")||0);
+  if(el("sc-daily-sales-output"))el("sc-daily-sales-output").textContent=state.statement?gbp(daily):"-";
+  if(el("sc-aov-delta-output"))el("sc-aov-delta-output").textContent=state.statement?signedGbp(aovDelta,true):"-";
+  if(el("sc-marketing-output"))el("sc-marketing-output").textContent=state.statement?gbp(marketing):"-";
+  if(el("sc-marketing-return-output"))el("sc-marketing-return-output").textContent=state.statement?`${marketingReturn.toFixed(2)}x`:"-";
+  if(el("sc-margin-output"))el("sc-margin-output").textContent=state.statement?`${margin.toFixed(1)}%`:"-";
+  if(el("sc-items-order-output"))el("sc-items-order-output").textContent=state.statement?items.toFixed(2):"-";
+}
+function queueScenario(){
+  updateScalerOutputs();
+  if(!state.statement)return;
+  clearTimeout(scenarioTimer);
+  scenarioTimer=setTimeout(()=>runScenario({auto:true}),220);
+}
+function completedWeekRange(){
+  const end=new Date();
+  const day=end.getDay()||7;
+  end.setDate(end.getDate()-day);
+  const start=new Date(end);
+  start.setDate(end.getDate()-6);
+  return {start,end};
+}
+function setQuick(period=val("quick-period")||"completed-week"){
+  if(period==="custom")return;
+  let start,end;
+  if(period==="completed-week"){
+    ({start,end}=completedWeekRange());
+  }else{
+    end=new Date();
+    start=new Date(end);
+    start.setDate(start.getDate()-Number(period||30)+1);
+  }
+  el("quick-period").value=period;
+  el("date-from").value=localIso(start);
+  el("date-to").value=localIso(end);
+}
+function markCustomPeriod(){el("quick-period").value="custom";clearSpend();setStatus("Custom period selected. Click Load actuals to fetch this exact range.","");}
+function query(){return `?startDate=${encodeURIComponent(val("date-from"))}&endDate=${encodeURIComponent(val("date-to"))}`;}
+function metric(label,value,small="",className=""){return `<div class="metric"><label>${esc(label)}</label><span class="${className}">${esc(value)}</span>${small?`<small>${esc(small)}</small>`:""}</div>`;}
+function deltaText(value,isPct=false){
+  const numeric=Number(value||0);
+  if(!numeric)return "";
+  const formatted=isPct?`${numeric>0?"+":""}${(numeric*100).toFixed(1)}pp`:`${numeric>0?"+":""}${gbp(numeric)}`;
+  return `<span class="delta ${numeric>=0?"good":"bad"}">${formatted}</span>`;
+}
+function renderMetrics(){
+  const s=state.statement;
+  if(!s){el("metrics").innerHTML=[
+    metric("Despatch","-"),metric("Demand","-"),metric("Discounts","-"),metric("Returns","-"),metric("Shipping","-"),metric("Net sales","-"),metric("Net profit","-"),metric("Orders","-"),metric("AOV","-"),metric("Variable costs","-"),metric("Variable cost / order","-"),metric("Marketing","-")
+  ].join("");return;}
+  const days=Math.max(s.range.days,1);
+  el("metrics").innerHTML=[
+    metric("Despatch",gbp(s.despatchRevenue),`${gbp(s.despatchRevenue/days)} / day`),
+    metric("Demand",gbp(s.demandRevenue),`${gbp(s.demandRevenue/days)} / day`),
+    metric("Discounts",signedGbp(-Math.abs(s.discounts)),`${pct(s.despatchRevenue?Math.abs(s.discounts)/s.despatchRevenue:0)} of despatch`,"bad"),
+    metric("Returns",signedGbp(-Math.abs(s.returns)),`${pct(s.despatchRevenue?Math.abs(s.returns)/s.despatchRevenue:0)} of despatch`,"bad"),
+    metric("Shipping",gbp(s.shippingRevenue),`${gbp(s.shippingRevenue/days)} / day`),
+    metric("Net sales",gbp(s.netRevenue),"Ex VAT product"),
+    metric("Net profit",gbp(s.operatingProfit),pct(s.operatingMargin),s.operatingProfit>=0?"good":"bad"),
+    metric("Orders",numberFmt.format(s.orders),`${numberFmt.format(s.units)} units`),
+    metric("AOV",gbp(s.aov,true),"Despatch / order"),
+    metric("Variable costs",gbp(s.variableCostTotal),`${gbp(s.variableCostPerOrder,true)} / order`),
+    metric("Variable cost / order",gbp(s.variableCostPerOrder,true),"Fulfilment, postage, card etc"),
+    metric("Marketing",gbp(s.marketingSpend),`${gbp(s.costRuleTotal)} other costs`)
+  ].join("");
+}
+function bridgeStep(label,value,note="",className=""){return `<div class="bridge-step"><label>${esc(label)}</label><strong class="${className}">${esc(value)}</strong>${note?`<small>${esc(note)}</small>`:""}</div>`;}
+function renderSalesBridge(){
+  const box=el("sales-bridge");
+  if(!box)return;
+  const s=state.statement;
+  if(!s){box.innerHTML="";return;}
+  box.innerHTML=[
+    bridgeStep("Demand",gbp(s.demandRevenue,true),"Inc VAT, after discounts"),
+    bridgeStep("Discounts",signedGbp(-Math.abs(s.discounts)),"Report value","bad"),
+    bridgeStep("Returns",signedGbp(-Math.abs(s.returns)),"Report value","bad"),
+    bridgeStep("Net sales",gbp(s.netRevenue,true),"Ex VAT product"),
+    bridgeStep("Shipping",gbp(s.shippingRevenue,true),"Charges"),
+    bridgeStep("Taxes",gbp(s.tax,true),"VAT"),
+    bridgeStep("Despatch",gbp(s.despatchRevenue,true),"Total sales","good")
+  ].join("");
+}
+function row(label,value,note="",cls=""){return `<tr><td>${esc(label)}${note?`<span class="delta muted">${esc(note)}</span>`:""}</td><td class="num ${cls}">${value}</td></tr>`;}
+function section(label){return `<tr class="section-row"><td colspan="2">${esc(label)}</td></tr>`;}
+function renderPnl(){
+  const s=state.statement;
+  if(!s){el("range-pill").textContent="No range";el("sales-bridge").innerHTML="";el("pnl-table").innerHTML='<div class="empty-state">No P&amp;L actuals loaded.</div>';return;}
+  el("range-pill").textContent=`${s.range.startDate} to ${s.range.endDate}`;
+  const rows=[
+    section("Revenue"),
+    row("Demand",gbp(s.demandRevenue,true),"Inc VAT, after discounts, before returns"),
+    row("Gross sales ex VAT",gbp(s.grossRevenue,true),"Before discounts and returns"),
+    row("Discounts",signedGbp(-Math.abs(Number(s.discounts||0))),"",Number(s.discounts||0)>0?"bad":""),
+    row("Returns",signedGbp(-Math.abs(Number(s.returns||0))),"",Number(s.returns||0)>0?"bad":""),
+    row("Net sales",gbp(s.netRevenue,true)),
+    row("Shipping charges",gbp(s.shippingRevenue,true)),
+    row("Return fees",gbp(s.returnFees,true)),
+    row("Taxes",gbp(s.tax,true)),
+    row("Despatch",gbp(s.despatchRevenue,true),"Total sales"),
+    section("Product profit"),
+    row("COGS",gbp(s.cogs,true),"Current Shopify unit cost", "bad"),
+    row("Gross profit",gbp(s.grossProfit,true),pct(s.grossMargin),"good"),
+    section("Operating costs"),
+    row("Marketing spend",gbp(s.marketingSpend,true)),
+    row("Cost rules",gbp(s.costRuleTotal,true)),
+    row("Variable costs",gbp(s.variableCostTotal,true),"Fulfilment, postage, card etc; excludes COGS and fixed monthly costs"),
+    row("Variable cost / order",gbp(s.variableCostPerOrder,true),"Variable costs / orders"),
+    row("Order-driven variable costs",gbp(s.orderVariableCostTotal,true),"Order, item, pick/pack, and per-order fee components"),
+    row("Revenue-driven variable costs",gbp(s.revenueVariableCostTotal,true),"Percent-of-despatch costs"),
+    row("Total costs",gbp(s.operatingCosts,true),"Marketing + rules","bad"),
+    section("Profit"),
+    row("Net profit",gbp(s.operatingProfit,true),pct(s.operatingMargin),s.operatingProfit>=0?"good":"bad"),
+    row("Net profit / day",gbp(s.profitPerDay,true))
+  ].join("");
+  const costRows=(s.costGroups||[]).map(group=>`<tr><td>${esc(group.category)}</td><td class="num">${gbp(group.amount,true)}</td></tr>`).join("");
+  el("pnl-table").innerHTML=`<table><tbody>${rows}${costRows?`${section("Cost breakdown")}${costRows}`:""}</tbody></table>`;
+}
+function renderWarnings(){
+  const warnings=[...(state.statement?.warnings||[])];
+  el("warnings").innerHTML=warnings.map(message=>`<div class="notice warn">${esc(message)}</div>`).join("");
+}
+function ruleBadge(rule){return `<span class="badge ${String(rule.status).toLowerCase()}">${esc(rule.status)}</span>`;}
+function renderRules(){
+  const rows=state.settings.costRules||[];
+  el("rule-count").textContent=`${rows.length} rule${rows.length===1?"":"s"}`;
+  if(!rows.length){el("rules-table").innerHTML='<div class="empty-state">No cost rules saved.</div>';return;}
+  el("rules-table").innerHTML=`<table><thead><tr><th>Name</th><th>Type</th><th class="num">Value</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(rule=>{
+    const value=rule.costType==="percent_revenue"?`${(Number(rule.rate||0)*100).toFixed(2)}%`:rule.costType==="percent_revenue_plus_per_order"?`${(Number(rule.rate||0)*100).toFixed(2)}% + ${gbp(rule.amount,true)} / order`:rule.costType==="pick_pack"?`${gbp(rule.firstItemRate,true)} / ${gbp(rule.additionalItemRate,true)}`:gbp(rule.amount,true);
+    return `<tr><td><strong>${esc(rule.name)}</strong><span class="delta muted">${esc(rule.category)}</span></td><td>${esc(rule.costType.replaceAll("_"," "))}</td><td class="num">${value}</td><td>${ruleBadge(rule)}</td><td><div class="mini-actions"><button class="btn small" type="button" onclick="editRule('${attr(rule.id)}')">Edit</button><button class="btn small" type="button" onclick="deleteRule('${attr(rule.id)}')" ${state.settings.canWrite?"":"disabled"}>Delete</button></div></td></tr>`;
+  }).join("")}</tbody></table>`;
+}
+function renderSpend(){
+  const rows=state.settings.marketingSpend||[];
+  el("spend-count").textContent=`${rows.length} entr${rows.length===1?"y":"ies"}`;
+  if(!rows.length){el("spend-table").innerHTML='<div class="empty-state">No marketing spend saved.</div>';return;}
+  el("spend-table").innerHTML=`<table><thead><tr><th>Channel</th><th>Date range</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows.map(entry=>`<tr><td><strong>${esc(entry.channel)}</strong>${entry.notes?`<span class="delta muted">${esc(entry.notes)}</span>`:""}</td><td>${esc(entry.startDate)} to ${esc(entry.endDate)}</td><td class="num">${gbp(entry.amount,true)}</td><td><div class="mini-actions"><button class="btn small" type="button" onclick="editSpend('${attr(entry.id)}')">Edit</button><button class="btn small" type="button" onclick="deleteSpend('${attr(entry.id)}')" ${state.settings.canWrite?"":"disabled"}>Delete</button></div></td></tr>`).join("")}</tbody></table>`;
+}
+function renderScenarioSummary(){
+  const box=el("scenario-summary");
+  if(!box)return;
+  const r=state.scenario;
+  if(!r){
+    box.innerHTML=[
+      metric("Scenario net profit","-"),
+      metric("Despatch","-"),
+      metric("AOV","-"),
+      metric("Variable costs","-"),
+      metric("Variable cost / order","-"),
+      metric("Marketing","-"),
+      metric("Net margin","-"),
+      metric("Profit / day","-")
+    ].join("");
+    return;
+  }
+  box.innerHTML=[
+    metric("Scenario net profit",gbp(r.scenario.operatingProfit),signedGbp(r.delta.operatingProfit),r.scenario.operatingProfit>=0?"good":"bad"),
+    metric("Despatch",gbp(r.scenario.despatchRevenue),signedGbp(r.delta.despatchRevenue),r.delta.despatchRevenue>=0?"good":"bad"),
+    metric("AOV",gbp(r.scenario.aov,true),signedGbp(r.delta.aov,true),r.delta.aov>=0?"good":"bad"),
+    metric("Variable costs",gbp(r.scenario.variableCostTotal),signedGbp(r.delta.variableCostTotal),r.delta.variableCostTotal>0?"bad":"good"),
+    metric("Variable cost / order",gbp(r.scenario.variableCostPerOrder,true),signedGbp(r.delta.variableCostPerOrder,true),r.delta.variableCostPerOrder>0?"bad":"good"),
+    metric("Marketing",gbp(r.scenario.marketingSpend),signedGbp(r.delta.marketingSpend),r.delta.marketingSpend>0?"bad":"good"),
+    metric("Net margin",pct(r.scenario.operatingMargin),deltaText(r.delta.operatingMargin,true).replace(/<[^>]+>/g,""),r.delta.operatingMargin>=0?"good":"bad"),
+    metric("Profit / day",gbp(r.scenario.profitPerDay),signedGbp(r.delta.profitPerDay),r.delta.profitPerDay>=0?"good":"bad")
+  ].join("");
+}
+function renderScenario(){
+  const r=state.scenario;
+  renderScenarioSummary();
+  if(!r){
+    el("scenario-pill").textContent="Not run";
+    el("scenario-note").textContent=state.statement?"Adjust drivers, then run a scenario.":"Load actuals first.";
+    el("scenario-table").innerHTML='<div class="empty-state">No scenario run.</div>';
+    return;
+  }
+  el("scenario-pill").textContent="Scenario ready";
+  const rows=[
+    ["Despatch","despatchRevenue",false],
+    ["Demand","demandRevenue",false],
+    ["Gross sales ex VAT","grossRevenue",false],
+    ["Discounts","discounts",false],
+    ["Returns","returns",false],
+    ["Net sales","netRevenue",false],
+    ["Shipping charges","shippingRevenue",false],
+    ["Orders","orders",false],
+    ["Units","units",false],
+    ["AOV","aov",false],
+    ["Variable costs","variableCostTotal",false],
+    ["Variable cost / order","variableCostPerOrder",false],
+    ["Order-driven variable costs","orderVariableCostTotal",false],
+    ["Revenue-driven variable costs","revenueVariableCostTotal",false],
+    ["Order-driven cost / order","orderVariableCostPerOrder",false],
+    ["Gross profit","grossProfit",false],
+    ["Gross margin","grossMargin",true],
+    ["Marketing spend","marketingSpend",false],
+    ["Total costs","operatingCosts",false],
+    ["Net profit","operatingProfit",false],
+    ["Net margin","operatingMargin",true],
+    ["Net profit / day","profitPerDay",false]
+  ];
+  const badWhenHigher=new Set(["discounts","returns","cogs","variableCostTotal","variableCostPerOrder","orderVariableCostTotal","orderVariableCostPerOrder","revenueVariableCostTotal","marketingSpend","operatingCosts"]);
+  const exactMoneyKeys=new Set(["aov","variableCostPerOrder","orderVariableCostPerOrder"]);
+  function scenarioCell(key,value,isPct,isDelta=false){
+    if(isPct)return pct(value);
+    if(key==="orders"||key==="units")return isDelta?`${Number(value||0)>0?"+":""}${numberFmt.format(value)}`:numberFmt.format(value);
+    if(!isDelta&&(key==="discounts"||key==="returns"))return signedGbp(-Math.abs(Number(value||0)));
+    if(isDelta)return signedGbp(value,exactMoneyKeys.has(key));
+    return gbp(value,exactMoneyKeys.has(key));
+  }
+  el("scenario-table").innerHTML=`<table><thead><tr><th>Metric</th><th class="num">Actual</th><th class="num">Scenario</th><th class="num">Delta</th></tr></thead><tbody>${rows.map(([label,key,isPct])=>{
+    const actual=scenarioCell(key,r.actual[key],isPct);
+    const scenario=scenarioCell(key,r.scenario[key],isPct);
+    const delta=isPct?deltaText(r.delta[key],true):scenarioCell(key,r.delta[key],isPct,true);
+    const deltaValue=Number(r.delta[key]||0);
+    const cls=deltaValue>=0?(badWhenHigher.has(key)?"bad":"good"):(badWhenHigher.has(key)?"good":"bad");
+    return `<tr><td>${esc(label)}</td><td class="num">${actual}</td><td class="num">${scenario}</td><td class="num ${cls}">${delta}</td></tr>`;
+  }).join("")}</tbody></table>`;
+}
+function renderSensitivityTable(title,rows,labelFn){
+  if(!rows?.length)return `<section><p class="panel-title">${esc(title)}</p><div class="empty-state">No data.</div></section>`;
+  const max=Math.max(1,...rows.map(row=>Math.abs(Number(row.operatingProfit||0))));
+  const chart=`<div class="chart">${rows.map(row=>{
+    const profit=Number(row.operatingProfit||0);
+    const width=Math.max(2,Math.round(Math.abs(profit)/max*100));
+    return `<div class="chart-row"><span class="chart-label">${esc(labelFn(row))}</span><span class="chart-track"><span class="chart-bar ${profit<0?"bad":""}" style="width:${width}%"></span></span><span class="chart-value ${profit>=0?"good":"bad"}">${gbp(profit)}</span></div>`;
+  }).join("")}</div>`;
+  return `<section><p class="panel-title">${esc(title)}</p>${chart}<div class="table-wrap"><table><thead><tr><th>Driver</th><th class="num">Despatch</th><th class="num">Var costs</th><th class="num">Net profit</th><th class="num">Margin</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${esc(labelFn(row))}</td><td class="num">${gbp(row.despatchRevenue)}</td><td class="num">${gbp(row.variableCostTotal)}</td><td class="num ${row.operatingProfit>=0?"good":"bad"}">${gbp(row.operatingProfit)}</td><td class="num">${pct(row.operatingMargin)}</td></tr>`).join("")}</tbody></table></div></section>`;
+}
+function renderSensitivity(){
+  if(!state.sensitivity){el("sensitivity").innerHTML='<div class="empty-state">Run a scenario to view sensitivity tables.</div>';return;}
+  el("sensitivity-pill").textContent="Ready";
+  el("sensitivity").innerHTML=[
+    renderSensitivityTable("Daily despatch",state.sensitivity.dailySales,row=>gbp(row.despatchRevenue/Math.max(row.range.days,1))),
+    renderSensitivityTable("AOV",state.sensitivity.aov,row=>gbp(row.aov,true)),
+    renderSensitivityTable("Marketing",state.sensitivity.marketing,row=>gbp(row.marketingSpend))
+  ].join("");
+}
+function renderAll(){
+  renderMetrics();renderSalesBridge();renderPnl();renderWarnings();renderRules();renderSpend();renderScenario();renderSensitivity();updateScalerOutputs();setScenarioControlsEnabled(Boolean(state.statement));setWriteMode();
+}
+function setWriteMode(){
+  const can=Boolean(state.settings.canWrite);
+  document.querySelectorAll("#rule-form input,#rule-form select,#rule-form button,#spend-form input,#spend-form button").forEach(node=>{node.disabled=!can&&node.id!=="clear-rule-btn"&&node.id!=="clear-spend-btn";});
+}
+async function loadSettings(){
+  const data=await apiJson("/api/pnl/settings");
+  state.settings=data;
+  renderAll();
+}
+function applyStatementDefaults(){
+  const s=state.statement;if(!s)return;
+  const baseDaily=s.despatchRevenue/Math.max(s.range.days,1);
+  const dailyMax=Math.ceil(Math.max(baseDaily*1.8,baseDaily+2500,1000)/100)*100;
+  setScaler("sc-daily-sales",{min:0,max:dailyMax,step:0.01,value:baseDaily.toFixed(2)});
+  setScaler("sc-aov-delta",{min:-20,max:30,step:0.5,value:0});
+  const marketingSpend=Number(s.marketingSpend||0);
+  const marketingMax=Math.ceil(Math.max(marketingSpend*2,marketingSpend+5000,1000)/100)*100;
+  setScaler("sc-marketing",{min:0,max:marketingMax,step:0.01,value:marketingSpend.toFixed(2)});
+  const marketingReturn=Number(s.marketingSpend||0)>0?s.despatchRevenue/s.marketingSpend:0;
+  setScaler("sc-marketing-return",{min:0,max:Math.ceil(Math.max(marketingReturn*2,10)),step:0.01,value:marketingReturn?marketingReturn.toFixed(2):0});
+  el("sc-marketing-drives").checked=Boolean(marketingReturn);
+  const marginPct=Number(s.grossMargin||0)*100;
+  setScaler("sc-margin",{min:Math.max(0,Math.floor(marginPct-25)),max:Math.min(95,Math.ceil(marginPct+25)),step:0.1,value:marginPct.toFixed(1)});
+  const itemsPerOrder=Number(s.itemsPerOrder||0);
+  setScaler("sc-items-order",{min:0,max:Math.max(5,Math.ceil(itemsPerOrder*2)),step:0.05,value:itemsPerOrder.toFixed(2)});
+  updateScalerOutputs();
+}
+async function loadActuals(){
+  try{
+    if(!val("date-from")||!val("date-to")){setStatus("Select a From and To date before loading actuals.","warn");return;}
+    setStatus(`Loading Shopify actuals for ${val("date-from")} to ${val("date-to")}...`,"warn");
+    const data=await apiJson(`/api/pnl${query()}`);
+    state.settings=data.settings||state.settings;
+    if(!data.configured){state.statement=null;setStatus(data.message||"Shopify is not configured.","warn");renderAll();return;}
+    state.statement=data.statement;
+    state.scenario=null;state.sensitivity=null;
+    const sourceType=data.source?.type==="shopifyql_sales"?"ShopifyQL report actuals":`${Number(data.source?.orderCount||0).toLocaleString("en-GB")} Shopify orders`;
+    el("source-note").textContent=`${sourceType} fetched for ${data.range?.startDate||val("date-from")} to ${data.range?.endDate||val("date-to")} ${data.source?.fetchedAt?`at ${new Date(data.source.fetchedAt).toLocaleString("en-GB")}`:""}`;
+    applyStatementDefaults();
+    setStatus("P&L actuals loaded.","ok");
+    renderAll();
+    await runScenario({auto:true});
+  }catch(error){setStatus(error.message,"err");}
+}
+async function runScenario(options={}){
+  if(!state.statement){setStatus("Load actuals before running a scenario.","warn");return;}
+  try{
+    const requestId=++scenarioRequestId;
+    if(!options.auto)el("scenario-note").textContent="Calculating scenario...";
+    const baseDaily=state.statement.despatchRevenue/Math.max(state.statement.range.days,1);
+    const dailyInput=Number(val("sc-daily-sales")||0);
+    const marginInput=Number(val("sc-margin")||0);
+    const baseMarginPct=Number(state.statement.grossMargin||0)*100;
+    const itemsInput=Number(val("sc-items-order")||state.statement.itemsPerOrder||0);
+    const baseItems=Number(state.statement.itemsPerOrder||0);
+    const drivers={
+      targetDailySales:Math.abs(dailyInput-baseDaily)<0.01?baseDaily:dailyInput,
+      aovDelta:Number(val("sc-aov-delta")||0),
+      marketingSpend:val("sc-marketing")===""?"":Number(val("sc-marketing")||0),
+      marketingDrivesSales:el("sc-marketing-drives").checked,
+      marketingReturn:val("sc-marketing-return")===""?"":Number(val("sc-marketing-return")||0),
+      grossMarginOverride:Math.abs(marginInput-baseMarginPct)<0.05?"":marginInput,
+      itemsPerOrder:Math.abs(itemsInput-baseItems)<0.01?baseItems:itemsInput
+    };
+    const data=await apiJson("/api/pnl/scenario",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actuals:state.statement,drivers})});
+    if(requestId!==scenarioRequestId)return;
+    state.scenario=data;state.sensitivity=data.sensitivity;
+    el("scenario-note").textContent=`Scenario net profit ${gbp(data.scenario.operatingProfit)} (${pct(data.scenario.operatingMargin)} margin).`;
+    renderAll();
+  }catch(error){el("scenario-note").textContent=error.message;}
+}
+function clearRule(){["rule-id","rule-name","rule-amount","rule-rate","rule-first","rule-additional","rule-start","rule-end","rule-notes"].forEach(id=>el(id).value="");el("rule-category").value="Fulfilment";el("rule-status").value="Active";el("rule-type").value="fixed_monthly";}
+function editRule(id){const rule=state.settings.costRules.find(item=>item.id===id);if(!rule)return;el("rule-id").value=rule.id;el("rule-name").value=rule.name;el("rule-category").value=rule.category;el("rule-status").value=rule.status;el("rule-type").value=rule.costType;el("rule-amount").value=rule.amount||"";el("rule-rate").value=rule.rate?Number(rule.rate*100).toFixed(2):"";el("rule-first").value=rule.firstItemRate||"";el("rule-additional").value=rule.additionalItemRate||"";el("rule-start").value=rule.effectiveStart||"";el("rule-end").value=rule.effectiveEnd||"";el("rule-notes").value=rule.notes||"";window.scrollTo({top:document.getElementById("rule-form").getBoundingClientRect().top+window.scrollY-80,behavior:"smooth"});}
+async function saveRule(){
+  const rule={id:val("rule-id"),name:val("rule-name"),category:val("rule-category"),status:val("rule-status"),costType:val("rule-type"),amount:Number(val("rule-amount")||0),rate:Number(val("rule-rate")||0)/100,firstItemRate:Number(val("rule-first")||0),additionalItemRate:Number(val("rule-additional")||0),effectiveStart:val("rule-start"),effectiveEnd:val("rule-end"),notes:val("rule-notes")};
+  const data=await apiJson("/api/pnl/cost-rules/upsert",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({rule})});
+  state.settings=data.settings;clearRule();renderAll();if(state.statement)await loadActuals();
+}
+async function deleteRule(id){if(!confirm("Delete this cost rule?"))return;const data=await apiJson("/api/pnl/cost-rules/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id})});state.settings=data.settings;renderAll();if(state.statement)await loadActuals();}
+function clearSpend(){["spend-id","spend-amount","spend-notes"].forEach(id=>el(id).value="");el("spend-channel").value="Google";el("spend-start").value=val("date-from");el("spend-end").value=val("date-to");}
+function editSpend(id){const entry=state.settings.marketingSpend.find(item=>item.id===id);if(!entry)return;el("spend-id").value=entry.id;el("spend-channel").value=entry.channel;el("spend-start").value=entry.startDate;el("spend-end").value=entry.endDate;el("spend-amount").value=entry.amount||"";el("spend-notes").value=entry.notes||"";window.scrollTo({top:document.getElementById("spend-form").getBoundingClientRect().top+window.scrollY-80,behavior:"smooth"});}
+async function saveSpend(){
+  const entry={id:val("spend-id"),channel:val("spend-channel"),startDate:val("spend-start"),endDate:val("spend-end"),amount:Number(val("spend-amount")||0),notes:val("spend-notes")};
+  const data=await apiJson("/api/pnl/marketing-spend/upsert",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({entry})});
+  state.settings=data.settings;clearSpend();renderAll();if(state.statement)await loadActuals();
+}
+async function deleteSpend(id){if(!confirm("Delete this marketing spend entry?"))return;const data=await apiJson("/api/pnl/marketing-spend/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id})});state.settings=data.settings;renderAll();if(state.statement)await loadActuals();}
+window.editRule=editRule;window.deleteRule=deleteRule;window.editSpend=editSpend;window.deleteSpend=deleteSpend;
+
+document.getElementById("apply-quick-btn").addEventListener("click",()=>{setQuick(val("quick-period"));clearSpend();setStatus(val("quick-period")==="custom"?"Custom period unchanged. Click Load actuals to fetch it.":"Period dates updated. Click Load actuals.","ok");});
+document.getElementById("quick-period").addEventListener("change",()=>{setQuick(val("quick-period"));clearSpend();setStatus(val("quick-period")==="custom"?"Custom period selected. Enter dates, then click Load actuals.":"Period dates updated. Click Load actuals.","ok");});
+document.getElementById("date-from").addEventListener("change",markCustomPeriod);
+document.getElementById("date-to").addEventListener("change",markCustomPeriod);
+document.getElementById("load-btn").addEventListener("click",loadActuals);
+document.getElementById("settings-btn").addEventListener("click",async()=>{await loadSettings();setStatus("Settings refreshed.","ok");});
+document.getElementById("scenario-btn").addEventListener("click",runScenario);
+SCALERS.forEach(id=>{
+  const pair=controlPair(id);
+  pair.range?.addEventListener("input",()=>syncScaler(id,"range"));
+  pair.number?.addEventListener("input",()=>syncScaler(id,"number"));
+});
+document.getElementById("sc-marketing-drives").addEventListener("change",queueScenario);
+document.getElementById("save-rule-btn").addEventListener("click",()=>saveRule().catch(error=>setStatus(error.message,"err")));
+document.getElementById("clear-rule-btn").addEventListener("click",clearRule);
+document.getElementById("save-spend-btn").addEventListener("click",()=>saveSpend().catch(error=>setStatus(error.message,"err")));
+document.getElementById("clear-spend-btn").addEventListener("click",clearSpend);
+
+setQuick("completed-week");clearRule();clearSpend();renderAll();
+(async()=>{if(window.MERCH_AUTH?.ready)await window.MERCH_AUTH.ready;await loadSettings();clearSpend();setStatus("Select a period, then Load actuals.","");})().catch(error=>setStatus(error.message,"err"));
+</script>
+</body>
+</html>

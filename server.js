@@ -7,6 +7,7 @@ const Database = require("better-sqlite3");
 const { createEmailCampaignService } = require("./lib/email-campaign-service");
 const { buildLabelJobSnapshot, normalizeDoubleBarcodeSnapshot } = require("./lib/label-jobs");
 const { DEFAULT_PAH_SETTINGS, buildPahReport, safeSettings: safePahSettings } = require("./lib/pah-report");
+const pnl = require("./lib/pnl");
 const salePlanner = require("./lib/sale-planner");
 
 const publicDir = path.join(__dirname, "public");
@@ -358,7 +359,7 @@ function shopifyConfig() {
   const rawShop = String(process.env.SHOPIFY_SHOP || process.env.SHOPIFY_STORE_DOMAIN || process.env.SHOPIFY_SHOP_DOMAIN || "").trim();
   const clientId = String(process.env.SHOPIFY_CLIENT_ID || "").trim();
   const clientSecret = String(process.env.SHOPIFY_CLIENT_SECRET || "").trim();
-  const apiVersion = process.env.SHOPIFY_API_VERSION || "2026-04";
+  const apiVersion = process.env.SHOPIFY_API_VERSION || "2026-07";
   const shop = rawShop.replace(/^https?:\/\//, "").replace(/\/+$/, "").replace(/\.myshopify\.com$/i, "");
   const domain = `${shop}.myshopify.com`;
   return { shop, domain, clientId, clientSecret, apiVersion };
@@ -2458,6 +2459,28 @@ function sameIdSet(left, right) {
   return left.every((id) => rightSet.has(id));
 }
 
+function normalizeCollectionMoves(moves) {
+  if (!Array.isArray(moves)) return [];
+  return moves.map((move, index) => {
+    const id = String(move?.id || "").trim();
+    const position = Number(move?.newPosition);
+    if (!id || !Number.isInteger(position) || position < 0) {
+      throw new Error(`Invalid collection move at row ${index + 1}.`);
+    }
+    return { id, newPosition: String(position) };
+  });
+}
+
+function applyCollectionMove(order, productId, newPosition) {
+  const currentIndex = order.indexOf(productId);
+  if (currentIndex === -1) return false;
+  const targetIndex = Math.max(0, Math.min(order.length - 1, Number(newPosition)));
+  if (currentIndex === targetIndex) return false;
+  order.splice(currentIndex, 1);
+  order.splice(targetIndex, 0, productId);
+  return true;
+}
+
 function nextCollectionMoveBatch(currentOrder, targetOrder, limit = 250) {
   const moves = [];
   for (let index = 0; index < targetOrder.length && moves.length < limit; index += 1) {
@@ -2465,11 +2488,28 @@ function nextCollectionMoveBatch(currentOrder, targetOrder, limit = 250) {
     if (currentOrder[index] === wantedId) continue;
     const currentIndex = currentOrder.indexOf(wantedId);
     if (currentIndex === -1) continue;
-    currentOrder.splice(currentIndex, 1);
-    currentOrder.splice(index, 0, wantedId);
+    applyCollectionMove(currentOrder, wantedId, index);
     moves.push({ id: wantedId, newPosition: String(index) });
   }
   return moves;
+}
+
+async function submitCollectionMoveBatches(job, moves) {
+  for (let index = 0; index < moves.length; index += 250) {
+    const batch = moves.slice(index, index + 250);
+    if (!batch.length) continue;
+    job.message = `Submitting Shopify reorder batch ${job.batchesSubmitted + 1}...`;
+    const shopifyJob = await submitCollectionReorderBatch(job.collectionId, batch);
+    job.batchesSubmitted += 1;
+    if (shopifyJob?.id) {
+      job.shopifyJobs.push(shopifyJob.id);
+      job.message = `Waiting for Shopify batch ${job.batchesSubmitted} to finish...`;
+      await pollShopifyJob(shopifyJob.id);
+    }
+    job.processedMoves += batch.length;
+    job.batchesCompleted += 1;
+    job.message = `Applied ${job.processedMoves.toLocaleString("en-GB")} of ${job.totalMoves.toLocaleString("en-GB")} moves.`;
+  }
 }
 
 async function submitCollectionReorderBatch(collectionId, moves) {
@@ -2515,6 +2555,45 @@ async function runCollectionReorderJob(job) {
       throw new Error("Can't reorder products unless the collection sort order is MANUAL.");
     }
 
+    if (job.requestedMoves?.length) {
+      const productSet = new Set(applyState.productIds);
+      const seenMoveIds = new Set();
+      const currentOrder = [...applyState.productIds];
+      const moves = [];
+      for (const move of job.requestedMoves) {
+        if (!productSet.has(move.id)) {
+          throw new Error("A product in the move list is no longer in this Shopify collection. Sync the collection again before applying.");
+        }
+        if (seenMoveIds.has(move.id)) {
+          throw new Error("Move list contains the same product more than once.");
+        }
+        seenMoveIds.add(move.id);
+        const position = Number(move.newPosition);
+        if (!Number.isInteger(position) || position < 0 || position >= currentOrder.length) {
+          throw new Error("Move list contains a target position outside the live collection.");
+        }
+        if (applyCollectionMove(currentOrder, move.id, position)) {
+          moves.push(move);
+        }
+      }
+
+      job.totalProducts = applyState.productIds.length;
+      job.totalMoves = moves.length;
+      if (!moves.length) {
+        job.status = "complete";
+        job.message = "Shopify collection already matches the requested product moves.";
+        job.finishedAt = new Date().toISOString();
+        return;
+      }
+
+      await submitCollectionMoveBatches(job, moves);
+      job.status = "complete";
+      job.message = `Applied ${job.totalMoves.toLocaleString("en-GB")} product moves to Shopify.`;
+      job.finishedAt = new Date().toISOString();
+      recordCollectionReorder(job);
+      return;
+    }
+
     const targetProductIds = uniqueIds(job.targetProductIds);
     if (targetProductIds.length !== job.targetProductIds.length) {
       throw new Error("Suggested order contains duplicate or blank product IDs.");
@@ -2546,17 +2625,7 @@ async function runCollectionReorderJob(job) {
     while (true) {
       const moves = nextCollectionMoveBatch(currentOrder, targetOrder, 250);
       if (!moves.length) break;
-      job.message = `Submitting Shopify reorder batch ${job.batchesSubmitted + 1}...`;
-      const shopifyJob = await submitCollectionReorderBatch(job.collectionId, moves);
-      job.batchesSubmitted += 1;
-      if (shopifyJob?.id) {
-        job.shopifyJobs.push(shopifyJob.id);
-        job.message = `Waiting for Shopify batch ${job.batchesSubmitted} to finish...`;
-        await pollShopifyJob(shopifyJob.id);
-      }
-      job.processedMoves += moves.length;
-      job.batchesCompleted += 1;
-      job.message = `Applied ${job.processedMoves.toLocaleString("en-GB")} of ${job.totalMoves.toLocaleString("en-GB")} moves.`;
+      await submitCollectionMoveBatches(job, moves);
     }
 
     job.status = "complete";
@@ -2585,10 +2654,17 @@ async function startCollectionReorder(req, res) {
   const collectionId = String(body.collectionId || "").trim();
   const collectionTitle = String(body.collectionTitle || "").trim();
   const collectionHandle = String(body.collectionHandle || "").trim();
+  let requestedMoves = [];
+  try {
+    requestedMoves = normalizeCollectionMoves(body.moves);
+  } catch (error) {
+    sendJson(res, 400, { message: error.message });
+    return;
+  }
   const targetProductIds = uniqueIds(body.targetProductIds);
   const confirmText = String(body.confirmText || "").trim().toUpperCase();
 
-  if (!collectionId || !targetProductIds.length) {
+  if (!collectionId || (!targetProductIds.length && !requestedMoves.length)) {
     sendJson(res, 400, { message: "Missing collection or suggested product order." });
     return;
   }
@@ -2604,9 +2680,10 @@ async function startCollectionReorder(req, res) {
     collectionTitle,
     collectionHandle,
     targetProductIds,
+    requestedMoves,
     strategy: String(body.strategy || "").trim(),
     scope: String(body.scope || "").trim(),
-    totalProducts: targetProductIds.length,
+    totalProducts: targetProductIds.length || requestedMoves.length,
     totalMoves: 0,
     processedMoves: 0,
     batchesCompleted: 0,
@@ -3705,6 +3782,38 @@ function openOrderSqliteDb() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS pnl_cost_rules (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'Other',
+      cost_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Active',
+      effective_start TEXT,
+      effective_end TEXT,
+      amount REAL DEFAULT 0,
+      rate REAL DEFAULT 0,
+      first_item_rate REAL DEFAULT 0,
+      additional_item_rate REAL DEFAULT 0,
+      notes TEXT,
+      data TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS pnl_marketing_spend (
+      id TEXT PRIMARY KEY,
+      channel TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      amount REAL DEFAULT 0,
+      notes TEXT,
+      data TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS email_campaigns (
       id TEXT PRIMARY KEY,
       campaign_code TEXT NOT NULL UNIQUE,
@@ -3794,6 +3903,8 @@ function openOrderSqliteDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_actions_unique ON sale_analysis_actions(plan_id, item_id, action_type);
     CREATE INDEX IF NOT EXISTS idx_sale_actions_plan_status ON sale_analysis_actions(plan_id, status, changed, updated_at);
     CREATE INDEX IF NOT EXISTS idx_sale_actions_type ON sale_analysis_actions(action_type, status, priority);
+    CREATE INDEX IF NOT EXISTS idx_pnl_cost_rules_status ON pnl_cost_rules(status, category, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_pnl_marketing_spend_dates ON pnl_marketing_spend(start_date, end_date, channel);
     CREATE INDEX IF NOT EXISTS idx_email_campaigns_status ON email_campaigns(status, sent_at, created_at);
     CREATE INDEX IF NOT EXISTS idx_email_campaign_products_campaign ON email_campaign_products(campaign_id, position);
     CREATE INDEX IF NOT EXISTS idx_email_campaign_products_key ON email_campaign_products(product_key, campaign_id);
@@ -6778,7 +6889,9 @@ function userPermissions(user) {
   if (userHasRole(user, ["Finance"])) {
     permissions.add("orders:payment");
     permissions.add("orders:invoice");
+    permissions.add("pnl:write");
   }
+  if (userHasRole(user, ["Finance", "Buying Director"])) permissions.add("pnl:view");
   if (userHasRole(user, ["Merchandising"])) {
     permissions.add("orders:intake");
     permissions.add("orders:archive");
@@ -10739,8 +10852,638 @@ const emailCampaignService = createEmailCampaignService({
   actorName
 });
 
+const pnlViewRoles = ["Admin", "Finance", "Buying Director"];
+const pnlWriteRoles = ["Admin", "Finance"];
+
+function pnlDefaultRange() {
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - 29);
+  return { startDate: isoDateOnly(start), endDate: isoDateOnly(end) };
+}
+
+function pnlRangeFromRequest(url, fallback = pnlDefaultRange()) {
+  const startDate = String(url.searchParams.get("startDate") || fallback.startDate || "").trim();
+  const endDate = String(url.searchParams.get("endDate") || fallback.endDate || "").trim();
+  return pnl.validateRange({ startDate, endDate }, { maxDays: 92 });
+}
+
+function cleanPnlDate(value) {
+  const raw = String(value || "").trim();
+  return validReportDate(raw) ? raw : "";
+}
+
+function pnlCostRuleFromRow(row) {
+  if (!row) return null;
+  return {
+    ...pnl.publicRule({
+      id: row.id,
+      name: row.name,
+      category: row.category,
+      costType: row.cost_type,
+      status: row.status,
+      effectiveStart: row.effective_start || "",
+      effectiveEnd: row.effective_end || "",
+      amount: row.amount,
+      rate: row.rate,
+      firstItemRate: row.first_item_rate,
+      additionalItemRate: row.additional_item_rate,
+      notes: row.notes || "",
+      data: parseJson(row.data, {})
+    }),
+    createdBy: row.created_by || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function pnlMarketingSpendFromRow(row) {
+  if (!row) return null;
+  return {
+    ...pnl.publicMarketingEntry({
+      id: row.id,
+      channel: row.channel,
+      startDate: row.start_date,
+      endDate: row.end_date,
+      amount: row.amount,
+      notes: row.notes || "",
+      data: parseJson(row.data, {})
+    }),
+    createdBy: row.created_by || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function readPnlCostRules() {
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM pnl_cost_rules
+    ORDER BY
+      CASE status WHEN 'Active' THEN 0 ELSE 1 END,
+      category COLLATE NOCASE,
+      name COLLATE NOCASE
+  `).all().map(pnlCostRuleFromRow);
+}
+
+function readPnlMarketingSpend() {
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM pnl_marketing_spend
+    ORDER BY date(start_date) DESC, channel COLLATE NOCASE, updated_at DESC
+  `).all().map(pnlMarketingSpendFromRow);
+}
+
+function upsertPnlCostRule(input, req) {
+  const body = input?.rule || input || {};
+  const rule = pnl.publicRule(body);
+  if (!rule.name) throw new Error("Add a cost rule name.");
+  if (!pnl.COST_TYPES.has(rule.costType)) throw new Error("Choose a valid cost rule type.");
+  const status = ["Active", "Inactive"].includes(rule.status) ? rule.status : "Active";
+  const id = rule.id || crypto.randomUUID();
+  const effectiveStart = cleanPnlDate(rule.effectiveStart);
+  const effectiveEnd = cleanPnlDate(rule.effectiveEnd);
+  if (effectiveStart && effectiveEnd && effectiveStart > effectiveEnd) throw new Error("Cost rule effective start must be before the end date.");
+  const payload = {
+    id,
+    name: rule.name.slice(0, 120),
+    category: (rule.category || "Other").slice(0, 80),
+    costType: rule.costType,
+    status,
+    effectiveStart,
+    effectiveEnd,
+    amount: Math.max(0, Number(rule.amount || 0)),
+    rate: Math.max(0, Number(rule.rate || 0)),
+    firstItemRate: Math.max(0, Number(rule.firstItemRate || 0)),
+    additionalItemRate: Math.max(0, Number(rule.additionalItemRate || 0)),
+    notes: String(rule.notes || "").slice(0, 600),
+    data: JSON.stringify(rule.data || {}),
+    createdBy: actorName(req)
+  };
+  openOrderSqliteDb().prepare(`
+    INSERT INTO pnl_cost_rules (
+      id, name, category, cost_type, status, effective_start, effective_end,
+      amount, rate, first_item_rate, additional_item_rate, notes, data, created_by,
+      created_at, updated_at
+    )
+    VALUES (
+      @id, @name, @category, @costType, @status, NULLIF(@effectiveStart, ''), NULLIF(@effectiveEnd, ''),
+      @amount, @rate, @firstItemRate, @additionalItemRate, @notes, @data, @createdBy,
+      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      category = excluded.category,
+      cost_type = excluded.cost_type,
+      status = excluded.status,
+      effective_start = excluded.effective_start,
+      effective_end = excluded.effective_end,
+      amount = excluded.amount,
+      rate = excluded.rate,
+      first_item_rate = excluded.first_item_rate,
+      additional_item_rate = excluded.additional_item_rate,
+      notes = excluded.notes,
+      data = excluded.data,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(payload);
+  return pnlCostRuleFromRow(openOrderSqliteDb().prepare("SELECT * FROM pnl_cost_rules WHERE id = ?").get(id));
+}
+
+function deletePnlCostRule(id) {
+  const clean = String(id || "").trim();
+  if (!clean) throw new Error("Missing cost rule id.");
+  return Boolean(openOrderSqliteDb().prepare("DELETE FROM pnl_cost_rules WHERE id = ?").run(clean).changes);
+}
+
+function upsertPnlMarketingSpend(input, req) {
+  const body = input?.entry || input || {};
+  const id = String(body.id || "").trim() || crypto.randomUUID();
+  const channel = String(body.channel || "").trim().slice(0, 80);
+  const startDate = cleanPnlDate(body.startDate || body.date);
+  const endDate = cleanPnlDate(body.endDate || body.date || body.startDate);
+  if (!channel) throw new Error("Choose a marketing channel.");
+  if (!startDate || !endDate || startDate > endDate) throw new Error("Choose a valid marketing spend date range.");
+  const payload = {
+    id,
+    channel,
+    startDate,
+    endDate,
+    amount: Math.max(0, Number(body.amount || 0)),
+    notes: String(body.notes || "").slice(0, 600),
+    data: JSON.stringify(body.data && typeof body.data === "object" ? body.data : {}),
+    createdBy: actorName(req)
+  };
+  openOrderSqliteDb().prepare(`
+    INSERT INTO pnl_marketing_spend (
+      id, channel, start_date, end_date, amount, notes, data, created_by, created_at, updated_at
+    )
+    VALUES (
+      @id, @channel, @startDate, @endDate, @amount, @notes, @data, @createdBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      channel = excluded.channel,
+      start_date = excluded.start_date,
+      end_date = excluded.end_date,
+      amount = excluded.amount,
+      notes = excluded.notes,
+      data = excluded.data,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(payload);
+  return pnlMarketingSpendFromRow(openOrderSqliteDb().prepare("SELECT * FROM pnl_marketing_spend WHERE id = ?").get(id));
+}
+
+function deletePnlMarketingSpend(id) {
+  const clean = String(id || "").trim();
+  if (!clean) throw new Error("Missing marketing spend id.");
+  return Boolean(openOrderSqliteDb().prepare("DELETE FROM pnl_marketing_spend WHERE id = ?").run(clean).changes);
+}
+
+function moneySetAmount(value) {
+  return Number(value?.shopMoney?.amount || value?.presentmentMoney?.amount || 0);
+}
+
+function moneySetListAmount(values = []) {
+  return values.reduce((sum, value) => sum + moneySetAmount(value?.priceSet || value), 0);
+}
+
+function shopifyQueryForRange(range, field = "created_at") {
+  const endExclusive = new Date(`${range.endDate}T00:00:00.000Z`);
+  endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+  return `${field}:>=${range.startDate}T00:00:00Z ${field}:<${endExclusive.toISOString()} status:any`;
+}
+
+function pnlOrderIsExcluded(order = {}) {
+  const status = String(order.displayFinancialStatus || "").toUpperCase();
+  return Boolean(order.test || order.cancelledAt || ["AUTHORIZED", "EXPIRED", "PARTIALLY_PAID", "PENDING", "VOIDED"].includes(status));
+}
+
+function pnlOrderPricesIncludeTax(order = {}, subtotal, shipping, tax, total) {
+  if (tax <= 0 || total <= 0) return false;
+  return subtotal + shipping + tax > total + 0.05;
+}
+
+function normalizePnlLineItem(line = {}, options = {}) {
+  const quantity = Math.max(0, Number(line.quantity || 0));
+  const revenue = moneySetAmount(line.discountedTotalSet);
+  const grossRevenue = moneySetAmount(line.originalTotalSet) || revenue;
+  const tax = moneySetListAmount(line.taxLines || []);
+  const revenueExTax = options.taxIncluded ? Math.max(0, revenue - tax) : revenue;
+  const grossTax = options.taxIncluded && revenue > 0 ? tax * (grossRevenue / revenue) : tax;
+  const grossRevenueExTax = options.taxIncluded ? Math.max(revenueExTax, grossRevenue - grossTax) : grossRevenue;
+  const cost = line.variant?.inventoryItem?.unitCost?.amount == null ? null : Number(line.variant.inventoryItem.unitCost.amount || 0);
+  const hasCost = Number.isFinite(cost) && cost >= 0;
+  return {
+    quantity,
+    revenue: revenueExTax,
+    grossRevenue: grossRevenueExTax,
+    cogs: hasCost ? quantity * cost : 0,
+    missingCostUnits: hasCost ? 0 : quantity,
+    missingCostRevenue: hasCost ? 0 : revenueExTax,
+    sku: line.variant?.sku || ""
+  };
+}
+
+function normalizePnlRefundLineItem(line = {}) {
+  const quantity = Math.max(0, Number(line.quantity || 0));
+  const revenue = moneySetAmount(line.subtotalSet);
+  const tax = moneySetAmount(line.totalTaxSet);
+  const cost = line.lineItem?.variant?.inventoryItem?.unitCost?.amount == null ? null : Number(line.lineItem.variant.inventoryItem.unitCost.amount || 0);
+  const hasCost = Number.isFinite(cost) && cost >= 0;
+  return {
+    quantity,
+    revenue,
+    tax,
+    cogs: hasCost ? quantity * cost : 0
+  };
+}
+
+function refundIsInsideRange(refund = {}, range) {
+  if (!refund.createdAt) return false;
+  const date = isoDateOnly(new Date(refund.createdAt));
+  return date >= range.startDate && date <= range.endDate;
+}
+
+function pnlActualsFromOrders(range, orders, refundOrders = [], warnings = []) {
+  const actuals = {
+    range,
+    netRevenue: 0,
+    grossRevenue: 0,
+    despatchRevenue: 0,
+    shippingRevenue: 0,
+    tax: 0,
+    discounts: 0,
+    returns: 0,
+    returnFees: 0,
+    orders: 0,
+    units: 0,
+    cogs: 0,
+    missingCostUnits: 0,
+    missingCostRevenue: 0
+  };
+  for (const order of orders) {
+    if (pnlOrderIsExcluded(order)) continue;
+    const subtotal = moneySetAmount(order.subtotalPriceSet) || moneySetAmount(order.currentSubtotalPriceSet);
+    const shipping = moneySetAmount(order.totalShippingPriceSet) || moneySetAmount(order.currentShippingPriceSet);
+    const tax = moneySetAmount(order.totalTaxSet) || moneySetAmount(order.currentTotalTaxSet);
+    const total = moneySetAmount(order.totalPriceSet) || moneySetAmount(order.currentTotalPriceSet);
+    const taxIncluded = pnlOrderPricesIncludeTax(order, subtotal, shipping, tax, total);
+    const shippingTax = moneySetListAmount((order.shippingLines?.nodes || []).flatMap(line => line.taxLines || []));
+    const shippingRevenue = taxIncluded ? Math.max(0, shipping - shippingTax) : shipping;
+    const lines = (order.lineItems?.nodes || []).map(line => normalizePnlLineItem(line, { taxIncluded }));
+    const lineRevenue = lines.reduce((sum, line) => sum + line.revenue, 0);
+    const lineGrossRevenue = lines.reduce((sum, line) => sum + line.grossRevenue, 0);
+    const lineUnits = lines.reduce((sum, line) => sum + line.quantity, 0);
+    const orderDiscounts = moneySetAmount(order.totalDiscountsSet) || moneySetAmount(order.currentTotalDiscountsSet);
+    const taxRate = taxIncluded && lineRevenue > 0 ? tax / lineRevenue : 0;
+    const discounts = orderDiscounts > 0 ? orderDiscounts / (1 + taxRate) : Math.max(0, lineGrossRevenue - lineRevenue);
+    const grossRevenue = Math.max(lineGrossRevenue, lineRevenue + discounts);
+    const cogs = lines.reduce((sum, line) => sum + line.cogs, 0);
+    const missingCostUnits = lines.reduce((sum, line) => sum + line.missingCostUnits, 0);
+    const missingCostRevenue = lines.reduce((sum, line) => sum + line.missingCostRevenue, 0);
+    actuals.netRevenue += lineRevenue;
+    actuals.grossRevenue += grossRevenue || lineRevenue;
+    actuals.tax += tax;
+    actuals.discounts += discounts;
+    actuals.shippingRevenue += shippingRevenue;
+    actuals.orders += 1;
+    actuals.units += lineUnits;
+    actuals.cogs += cogs;
+    actuals.missingCostUnits += missingCostUnits;
+    actuals.missingCostRevenue += missingCostRevenue;
+    if (order.lineItems?.pageInfo?.hasNextPage) warnings.push(`${order.name || order.id} has more than 100 line items; only the first 100 were included.`);
+  }
+  for (const order of refundOrders) {
+    if (pnlOrderIsExcluded(order)) continue;
+    for (const refund of order.refunds || []) {
+      if (!refundIsInsideRange(refund, range)) continue;
+      const refundLines = (refund.refundLineItems?.nodes || []).map(normalizePnlRefundLineItem);
+      const returnRevenue = refundLines.reduce((sum, line) => sum + line.revenue, 0);
+      const returnTax = refundLines.reduce((sum, line) => sum + line.tax, 0);
+      const returnUnits = refundLines.reduce((sum, line) => sum + line.quantity, 0);
+      const returnCogs = refundLines.reduce((sum, line) => sum + line.cogs, 0);
+      actuals.netRevenue -= returnRevenue;
+      actuals.returns += returnRevenue;
+      actuals.tax -= returnTax;
+      actuals.units -= returnUnits;
+      actuals.cogs -= returnCogs;
+    }
+  }
+  actuals.netRevenue = Math.max(0, actuals.netRevenue);
+  actuals.tax = Math.max(0, actuals.tax);
+  actuals.units = Math.max(0, actuals.units);
+  actuals.cogs = Math.max(0, actuals.cogs);
+  actuals.despatchRevenue = actuals.netRevenue + actuals.shippingRevenue + actuals.tax + actuals.returnFees;
+  return {
+    ...actuals,
+    netRevenue: pnl.money(actuals.netRevenue),
+    grossRevenue: pnl.money(actuals.grossRevenue),
+    despatchRevenue: pnl.money(actuals.despatchRevenue),
+    shippingRevenue: pnl.money(actuals.shippingRevenue),
+    tax: pnl.money(actuals.tax),
+    discounts: pnl.money(actuals.discounts),
+    returns: pnl.money(actuals.returns),
+    returnFees: pnl.money(actuals.returnFees),
+    units: Math.round(actuals.units * 100) / 100,
+    cogs: pnl.money(actuals.cogs),
+    missingCostUnits: Math.round(actuals.missingCostUnits * 100) / 100,
+    missingCostRevenue: pnl.money(actuals.missingCostRevenue),
+    orderCount: actuals.orders,
+    warnings
+  };
+}
+
+async function fetchShopifyOrderPnlActuals(range) {
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  if (!shop || !clientId || !clientSecret) {
+    return {
+      configured: false,
+      message: "Set SHOPIFY_SHOP, SHOPIFY_CLIENT_ID, and SHOPIFY_CLIENT_SECRET to load live P&L actuals.",
+      actuals: { range, netRevenue: 0, orders: 0, units: 0, cogs: 0 }
+    };
+  }
+  const query = `
+    query PnlOrders($cursor: String, $query: String!) {
+      orders(first: 100, after: $cursor, query: $query, sortKey: CREATED_AT, reverse: true) {
+        nodes {
+          id
+          name
+          createdAt
+          processedAt
+          cancelledAt
+          test
+          displayFinancialStatus
+          subtotalPriceSet { shopMoney { amount currencyCode } }
+          currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+          currentTotalPriceSet { shopMoney { amount currencyCode } }
+          totalPriceSet { shopMoney { amount currencyCode } }
+          currentTotalDiscountsSet { shopMoney { amount currencyCode } }
+          totalDiscountsSet { shopMoney { amount currencyCode } }
+          currentShippingPriceSet { shopMoney { amount currencyCode } }
+          totalShippingPriceSet { shopMoney { amount currencyCode } }
+          currentTotalTaxSet { shopMoney { amount currencyCode } }
+          totalTaxSet { shopMoney { amount currencyCode } }
+          shippingLines(first: 20) {
+            nodes {
+              taxLines { priceSet { shopMoney { amount currencyCode } } }
+            }
+          }
+          lineItems(first: 100) {
+            nodes {
+              quantity
+              originalTotalSet { shopMoney { amount currencyCode } }
+              discountedTotalSet { shopMoney { amount currencyCode } }
+              taxLines { priceSet { shopMoney { amount currencyCode } } }
+              variant {
+                id
+                sku
+                inventoryItem { unitCost { amount currencyCode } }
+              }
+            }
+            pageInfo { hasNextPage }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  `;
+  const orders = [];
+  let cursor = null;
+  let hasNextPage = true;
+  while (hasNextPage) {
+    const data = await shopifyGraphql(query, { cursor, query: shopifyQueryForRange(range, "processed_at") });
+    const connection = data.orders;
+    orders.push(...(connection.nodes || []));
+    hasNextPage = Boolean(connection.pageInfo?.hasNextPage);
+    cursor = connection.pageInfo?.endCursor || null;
+  }
+  const refundQuery = `
+    query PnlRefunds($cursor: String, $query: String!) {
+      orders(first: 100, after: $cursor, query: $query, sortKey: UPDATED_AT, reverse: true) {
+        nodes {
+          id
+          name
+          cancelledAt
+          test
+          displayFinancialStatus
+          refunds {
+            id
+            createdAt
+            refundLineItems(first: 100) {
+              nodes {
+                quantity
+                subtotalSet { shopMoney { amount currencyCode } }
+                totalTaxSet { shopMoney { amount currencyCode } }
+                lineItem {
+                  variant {
+                    inventoryItem { unitCost { amount currencyCode } }
+                  }
+                }
+              }
+              pageInfo { hasNextPage }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  `;
+  const refundOrders = [];
+  cursor = null;
+  hasNextPage = true;
+  while (hasNextPage) {
+    const data = await shopifyGraphql(refundQuery, { cursor, query: shopifyQueryForRange(range, "updated_at") });
+    const connection = data.orders;
+    refundOrders.push(...(connection.nodes || []));
+    hasNextPage = Boolean(connection.pageInfo?.hasNextPage);
+    cursor = connection.pageInfo?.endCursor || null;
+  }
+  return {
+    configured: true,
+    actuals: pnlActualsFromOrders(range, orders, refundOrders),
+    orderSample: orders.slice(0, 5).map(order => ({ id: order.id, name: order.name, createdAt: order.createdAt, processedAt: order.processedAt })),
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+async function fetchShopifyPnlActuals(range) {
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  if (!shop || !clientId || !clientSecret) {
+    return {
+      configured: false,
+      message: "Set SHOPIFY_SHOP, SHOPIFY_CLIENT_ID, and SHOPIFY_CLIENT_SECRET to load live P&L actuals.",
+      actuals: { range, netRevenue: 0, orders: 0, units: 0, cogs: 0 }
+    };
+  }
+  const query = `
+    query PnlShopifyQl($query: String!) {
+      shopifyqlQuery(query: $query) {
+        parseErrors
+        tableData {
+          columns { name displayName dataType }
+          rows
+        }
+      }
+    }
+  `;
+  const reportQuery = `
+    FROM sales
+    SHOW total_sales, gross_sales, net_sales, discounts, taxes, returns,
+      shipping_charges, return_fees, orders, average_order_value,
+      gross_profit, cost_of_goods_sold, quantity_ordered, quantity_returned
+    SINCE ${range.startDate}
+    UNTIL ${range.endDate}
+  `.replace(/\s+/g, " ").trim();
+  const data = await shopifyGraphql(query, { query: reportQuery });
+  const response = data.shopifyqlQuery || {};
+  const parseErrors = response.parseErrors || [];
+  if (parseErrors.length) throw new Error(`ShopifyQL P&L report query failed: ${parseErrors.join("; ")}`);
+  const rows = Array.isArray(response.tableData?.rows) ? response.tableData.rows : [];
+  const reportRow = rows[0] || {};
+  return {
+    configured: true,
+    actuals: pnl.shopifyQlSalesActualsFromRow(reportRow, range),
+    sourceType: "shopifyql_sales",
+    columns: response.tableData?.columns || [],
+    rowCount: rows.length,
+    reportQuery,
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+function pnlSettingsPayload(req) {
+  return {
+    costRules: readPnlCostRules(),
+    marketingSpend: readPnlMarketingSpend(),
+    canWrite: userHasRole(req.currentUser, pnlWriteRoles),
+    generatedAt: new Date().toISOString()
+  };
+}
+
+async function handlePnlGet(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const range = pnlRangeFromRequest(url);
+  const settings = pnlSettingsPayload(req);
+  const fetched = await fetchShopifyPnlActuals(range);
+  if (!fetched.configured) {
+    sendJson(res, 200, {
+      configured: false,
+      message: fetched.message,
+      range,
+      settings,
+      canWrite: settings.canWrite,
+      generatedAt: new Date().toISOString()
+    });
+    return;
+  }
+  const statement = pnl.buildPnl(fetched.actuals, settings.costRules, settings.marketingSpend);
+  sendJson(res, 200, {
+    configured: true,
+    range,
+    statement,
+    settings,
+    source: {
+      type: fetched.sourceType || "shopify_orders",
+      fetchedAt: fetched.fetchedAt,
+      orderCount: fetched.actuals.orderCount || fetched.actuals.orders || 0,
+      rowCount: fetched.rowCount || 0,
+      columns: fetched.columns || [],
+      orderSample: fetched.orderSample || []
+    },
+    canWrite: settings.canWrite,
+    generatedAt: new Date().toISOString()
+  });
+}
+
+async function handlePnlScenario(req, res) {
+  const body = await readJsonBody(req);
+  const actuals = body.actuals || body.statement || body.actual;
+  if (!actuals?.range) throw new Error("Load P&L actuals before running a scenario.");
+  const costRules = Array.isArray(body.costRules) ? body.costRules : readPnlCostRules();
+  const marketingSpend = Array.isArray(body.marketingSpend) ? body.marketingSpend : readPnlMarketingSpend();
+  const result = pnl.buildScenario(actuals, costRules, marketingSpend, body.drivers || {});
+  sendJson(res, 200, {
+    ...result,
+    sensitivity: pnl.sensitivityTables(actuals, costRules, marketingSpend, body.drivers || {}),
+    generatedAt: new Date().toISOString()
+  });
+}
+
 async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (req.method === "GET" && url.pathname === "/api/pnl") {
+    if (!requireRoles(req, res, pnlViewRoles)) return true;
+    try {
+      await handlePnlGet(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not load P&L actuals." });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/pnl/settings") {
+    if (!requireRoles(req, res, pnlViewRoles)) return true;
+    sendJson(res, 200, pnlSettingsPayload(req));
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pnl/cost-rules/upsert") {
+    if (!requireRoles(req, res, pnlWriteRoles, "Only Finance or Admin users can update P&L cost rules.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const rule = upsertPnlCostRule(body, req);
+      sendJson(res, 200, { ok: true, rule, settings: pnlSettingsPayload(req) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save cost rule." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pnl/cost-rules/delete") {
+    if (!requireRoles(req, res, pnlWriteRoles, "Only Finance or Admin users can delete P&L cost rules.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const deleted = deletePnlCostRule(body.id);
+      sendJson(res, 200, { ok: true, deleted, settings: pnlSettingsPayload(req) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not delete cost rule." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pnl/marketing-spend/upsert") {
+    if (!requireRoles(req, res, pnlWriteRoles, "Only Finance or Admin users can update P&L marketing spend.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const entry = upsertPnlMarketingSpend(body, req);
+      sendJson(res, 200, { ok: true, entry, settings: pnlSettingsPayload(req) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save marketing spend." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pnl/marketing-spend/delete") {
+    if (!requireRoles(req, res, pnlWriteRoles, "Only Finance or Admin users can delete P&L marketing spend.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const deleted = deletePnlMarketingSpend(body.id);
+      sendJson(res, 200, { ok: true, deleted, settings: pnlSettingsPayload(req) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not delete marketing spend." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pnl/scenario") {
+    if (!requireRoles(req, res, pnlViewRoles)) return true;
+    try {
+      await handlePnlScenario(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not run P&L scenario." });
+    }
+    return true;
+  }
 
   if (req.method === "GET" && url.pathname === "/api/email-campaigns") {
     const cfg = emailCampaignService.config();
@@ -11857,6 +12600,7 @@ const server = http.createServer(async (req, res) => {
 
   const requestPath = new URL(req.url, `http://${req.headers.host}`).pathname;
   if (requestPath === "/sku-register.html" && !requireRoles(req, res, skuRegisterRoles(), "You do not have access to the SKU register.")) return;
+  if (requestPath === "/pnl.html" && !requireRoles(req, res, pnlViewRoles, "You do not have access to the P&L planner.")) return;
 
   if (req.url.startsWith("/api/shopify-merchandising")) {
     fetchShopifyMerchandising(req, res).catch((error) => {

@@ -40,6 +40,7 @@ The app favours simple operational tools over a large framework:
 - `public/order-form.html`: purchase order creation, SKU issuing/lookup, line image upload, printable PO output.
 - `public/orders.html`: order workspace, approval/payment/intake workflow, invoices, notes, archive/delete, printable warehouse image reports, and barcode label-job reports for printers and suppliers.
 - `public/order-reports.html`: read-only operational reports for arrivals, intake exceptions, next actions, finance, buying mix, and data quality.
+- `public/pnl.html`: finance P&L planner using live Shopify actuals, saved cost rules, manual marketing spend, and driver-based profit scenarios.
 - `public/sku-register.html`: local SKU register and safe deletion of unused issued SKUs.
 - `public/products.html`: product and supplier master-data workspace, local SKU enrichment, readiness review, and Shopify draft push workflow.
 - `public/merchandising.html`: Shopify product merchandising view using product, order, and optional GA4 metrics.
@@ -81,6 +82,7 @@ Primary table groups:
 - Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
 - Weekly actions: `weekly_actions`, `weekly_action_events`.
 - Sale planner: `sale_plans`, `sale_plan_items`, `sale_plan_events`, plus Sale collection mapping stored in `app_settings.salePlannerCollections`.
+- P&L planner: reusable `pnl_cost_rules` and dated manual `pnl_marketing_spend` entries.
 - Email merchandising: `email_campaigns`, immutable product snapshots in `email_campaign_products`, and source-specific `email_campaign_metric_snapshots`.
 
 Legacy/prototype data:
@@ -105,7 +107,7 @@ Configuration:
 - `SHOPIFY_SHOP`, `SHOPIFY_STORE_DOMAIN`, or `SHOPIFY_SHOP_DOMAIN`.
 - `SHOPIFY_CLIENT_ID`.
 - `SHOPIFY_CLIENT_SECRET`.
-- `SHOPIFY_API_VERSION`, defaulting to `2026-04`.
+- `SHOPIFY_API_VERSION`, defaulting to `2026-07`.
 
 Used for:
 
@@ -154,6 +156,13 @@ Reports and actions:
 - `GET /api/reports/bestsellers/sync-job`
 - `POST /api/reports/bestsellers/import-csv`
 - `GET /api/reports/stock-snapshots`
+- `GET /api/pnl`
+- `GET /api/pnl/settings`
+- `POST /api/pnl/cost-rules/upsert`
+- `POST /api/pnl/cost-rules/delete`
+- `POST /api/pnl/marketing-spend/upsert`
+- `POST /api/pnl/marketing-spend/delete`
+- `POST /api/pnl/scenario`
 - `GET /api/weekly-actions`
 - `POST /api/weekly-actions/generate`
 - `POST /api/weekly-actions/update`
@@ -365,6 +374,24 @@ Key principles:
 - Users can mark analysis actions as `Pending`, `Accepted`, `Ignored`, `Snoozed`, or `Applied`. Selected deepen/remove actions can create a follow-up sale plan containing only those products, so Admin users can apply the existing Shopify job workflow without re-reviewing the full original sale list.
 - Apply and remove jobs are kept in memory while running and write item-level results plus `sale_plan_events` audit rows. If the server restarts, users should refresh the planner and verify Shopify before retrying.
 
+### P&L Planner
+
+The P&L Planner is a Finance-led profit workspace. Admin and Finance users can edit cost rules and marketing spend. Buying Director users can view actuals and run scenarios.
+
+Key principles:
+
+- ShopifyQL sales reports are the source for P&L actuals. Date ranges are inclusive and capped at 92 days.
+- Primary P&L sales views are Despatch and Demand. Despatch maps to ShopifyQL `total_sales`. Demand is derived as product sales inc VAT, after discounts, before returns: `(gross_sales - absolute_discounts) * (1 + effective VAT rate)`. ShopifyQL `gross_sales` remains visible only as gross sales ex VAT before discounts and returns. Discounts, returns, shipping, net sales, and taxes are shown as separate sales-bridge boxes because they materially explain the movement from Demand to Despatch. Net sales remains the ex-VAT product revenue used for gross-profit and net-profit calculations.
+- AOV is Despatch divided by ShopifyQL order count.
+- COGS uses current Shopify variant unit cost at fetch time. If a line item has no cost, the planner flags the affected units and revenue so profit quality is visible.
+- Reusable cost rules support `fixed_monthly`, `per_order`, `per_item`, `pick_pack`, `percent_revenue`, and `percent_revenue_plus_per_order` for card/payment fees that combine a Despatch percentage with a fixed per-order fee. Fixed monthly costs are prorated by overlapping days in each calendar month. Variable rules are prorated by active-date overlap before applying the selected range's Despatch, orders, or units.
+- Variable costs are shown separately from product COGS and fixed monthly overheads. Total variable costs include all non-fixed cost rules, including fulfilment, postage, pick/pack, per-item costs, and card/payment fees. Variable cost per order is total variable costs divided by orders. The scenario detail table can also show order-driven and revenue-driven portions for diagnosis.
+- Pick and pack costs are calculated as first-item rate per order plus additional-item rate for units above one per order.
+- Marketing spend is stored manually by dated channel entries such as Google, Meta, Klaviyo, TikTok, Affiliate, or Other. Entries are prorated by date overlap with the selected P&L range.
+- The period control defaults to the last completed Monday-Sunday week. Changing either date switches the control to Custom, and Shopify actuals are fetched only when the user clicks Load actuals.
+- Scenarios are not saved in v1. They recalculate from loaded actuals using either a manual daily Despatch target or a marketing-driven sales model where scenario Despatch changes by `marketing spend delta * marketing return`. AOV delta, optional gross margin override, and items per order then reshape orders, units, COGS, and variable costs. Fixed costs remain fixed/prorated; variable costs recalculate from scenario sales, orders, and units. Sensitivity tables and charts show net-profit impact for daily Despatch, AOV, and marketing-spend changes.
+- Scenario outputs are decision-support estimates, not posted accounting entries.
+
 ### Collection Reorder Planner
 
 The collection planner fetches Shopify collections/products, ranks products according to the selected strategy, previews movement, and can apply a new order through a background reorder job.
@@ -372,6 +399,7 @@ The collection planner fetches Shopify collections/products, ranks products acco
 Guardrails:
 
 - Applying a reorder requires explicit user confirmation.
+- Manual Lift sends explicit Shopify move inputs for the selected products only, preserving the relative order of everything else.
 - Reorder jobs are polled until complete/error.
 - Successful applies are written to `collection_reorder_audit`.
 - After apply, the user should sync collections again to verify live Shopify order.
