@@ -399,7 +399,8 @@ The collection planner fetches Shopify collections/products, ranks products acco
 Guardrails:
 
 - Applying a reorder requires explicit user confirmation.
-- Manual Lift sends explicit Shopify move inputs for the selected products only, preserving the relative order of everything else.
+- Manual Lift can stage products whose Shopify featured image media was recently updated, optionally constrained by current collection position, then sends explicit Shopify move inputs for the selected products only, preserving the relative order of everything else. Product-level `updatedAt` is shown for audit but is not used for image lifting.
+- The default Manual Lift shortcut uses `Images 3d` and `From #9`, preserving the first two four-product visual rows before staging recently updated imagery.
 - Reorder jobs are polled until complete/error.
 - Successful applies are written to `collection_reorder_audit`.
 - After apply, the user should sync collections again to verify live Shopify order.

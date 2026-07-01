@@ -512,6 +512,19 @@ function productColor(product) {
   return palette.find((color) => haystack.includes(color.toLowerCase())) || "";
 }
 
+function latestIsoDate(values) {
+  let latest = "";
+  let latestTime = 0;
+  for (const value of values) {
+    const time = value ? new Date(value).getTime() : 0;
+    if (Number.isFinite(time) && time > latestTime) {
+      latestTime = time;
+      latest = value;
+    }
+  }
+  return latest;
+}
+
 function normalizeProduct(product, orderMetrics) {
   const variants = product.variants.nodes;
   const stock = variants.reduce((sum, variant) => sum + Number(variant.inventoryQuantity || 0), 0);
@@ -525,7 +538,18 @@ function normalizeProduct(product, orderMetrics) {
   const cost = costs.length ? costs.reduce((sum, value) => sum + value, 0) / costs.length : null;
   const margin = price > 0 && cost > 0 ? Math.round(((price - cost) / price) * 100) : null;
   const metrics = orderMetrics.get(product.id) || { revenue: 0, units: 0 };
-  const image = product.featuredImage || product.images.nodes[0] || null;
+  const featuredMediaImage = product.featuredMedia?.image ? {
+    url: product.featuredMedia.image.url,
+    altText: product.featuredMedia.image.altText,
+    id: product.featuredMedia.id,
+    createdAt: product.featuredMedia.createdAt || "",
+    updatedAt: product.featuredMedia.updatedAt || ""
+  } : null;
+  const image = featuredMediaImage || product.featuredImage || product.images.nodes[0] || null;
+  const imageUpdatedAt = latestIsoDate([
+    featuredMediaImage?.updatedAt,
+    featuredMediaImage?.createdAt
+  ]);
   const status = product.status || "";
   const productStatusCode = String(product.productStatusMetafield?.value || product.productStatus?.value || "").trim();
   const normalizedVariants = variants.map((variant) => {
@@ -558,6 +582,8 @@ function normalizeProduct(product, orderMetrics) {
     createdAt: product.createdAt || "",
     publishedAt: product.publishedAt || "",
     updatedAt: product.updatedAt || "",
+    imageUpdatedAt,
+    imageMediaId: featuredMediaImage?.id || "",
     legacyResourceId: product.legacyResourceId,
     skus,
     variantIds,
@@ -2222,6 +2248,14 @@ async function fetchCollectionPlanner(req, res) {
             createdAt
             publishedAt
             updatedAt
+            featuredMedia {
+              ... on MediaImage {
+                id
+                createdAt
+                updatedAt
+                image { url altText }
+              }
+            }
             featuredImage { url altText }
             images(first: 1) { nodes { url altText } }
             variants(first: 100) {
