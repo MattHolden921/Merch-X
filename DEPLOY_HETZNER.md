@@ -67,6 +67,8 @@ WINDSOR_ACCOUNT_NAME_CONTAINS=kit,kaboodal
 # Optional exact ad-account allowlists after confirming Windsor account IDs.
 WINDSOR_GOOGLE_ACCOUNT_IDS=
 WINDSOR_META_ACCOUNT_IDS=
+WINDSOR_GOOGLE_ACCOUNT_PARAM=account_id
+WINDSOR_META_ACCOUNT_PARAM=account
 ```
 
 The P&L planner uses ShopifyQL sales reports, which require a Shopify Admin GraphQL schema that exposes `shopifyqlQuery`. If the live site reports that `shopifyqlQuery` does not exist on `QueryRoot`, check `/opt/merch-x/.env` and update `SHOPIFY_API_VERSION` to `2026-07`, then restart `merch-x`.

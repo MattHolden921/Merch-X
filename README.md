@@ -81,9 +81,11 @@ WINDSOR_GOOGLE_FIELDS=date,campaign,spend,account_id,account_name
 WINDSOR_META_FIELDS=date,campaign,spend,account_id,account_name
 WINDSOR_GOOGLE_ACCOUNT_IDS=
 WINDSOR_META_ACCOUNT_IDS=
+WINDSOR_GOOGLE_ACCOUNT_PARAM=account_id
+WINDSOR_META_ACCOUNT_PARAM=account
 ```
 
-Windsor sync is account-scoped by default to account names containing both `kit` and `kaboodal`; returned rows are checked again before storage. Use exact `*_ACCOUNT_IDS` values once the Windsor account IDs are known.
+Windsor sync is account-scoped by default to account names containing both `kit` and `kaboodal`; returned rows are checked again before storage. Use exact `*_ACCOUNT_IDS` values once the Windsor account IDs are known. Google uses Windsor's `account_id` connector parameter; Meta uses `account`.
 
 Manual marketing spend entries remain available for adjustments and non-automated channels.
 

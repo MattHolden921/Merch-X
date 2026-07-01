@@ -11214,7 +11214,8 @@ async function fetchWindsorMarketingChannel(range, channel, cfg) {
     endDate: range.endDate,
     refreshSince: cfg.refreshSince,
     refreshInterval: cfg.refreshInterval,
-    filter: accountFilter
+    filter: accountFilter,
+    connectorParams: windsorMarketing.accountConnectorParams(channel)
   });
   const response = await requestJson(url, { headers: { "user-agent": "Merch-X/1.0 Windsor marketing sync" } });
   if (!response.ok || response.json?.error || response.json?.errors) {

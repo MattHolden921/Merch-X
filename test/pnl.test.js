@@ -6,6 +6,7 @@ const {
   buildPnl,
   buildScenario,
   calculateCostRule,
+  effectiveMarketingEntries,
   marketingEntryAmount,
   normalizeActuals,
   shopifyQlSalesActualsFromRow,
@@ -62,6 +63,30 @@ test("prorates marketing spend entries by date overlap", () => {
 
   assert.equal(applied.overlapDays, 16);
   assert.equal(applied.amountApplied, 1600);
+});
+
+test("automated marketing spend overrides overlapping manual entries for the same channel", () => {
+  const entries = effectiveMarketingEntries([
+    { channel: "Google", startDate: "2026-06-01", endDate: "2026-06-07", amount: 1000, source: "manual" },
+    { channel: "Meta", startDate: "2026-06-01", endDate: "2026-06-07", amount: 500, source: "manual" },
+    { channel: "Google", startDate: "2026-06-03", endDate: "2026-06-03", amount: 120, source: "windsor", automated: true },
+    { channel: "Affiliate", startDate: "2026-06-01", endDate: "2026-06-07", amount: 300, source: "manual" }
+  ]);
+
+  assert.deepEqual(entries.map(entry => `${entry.channel}:${entry.amount}`), [
+    "Meta:500",
+    "Google:120",
+    "Affiliate:300"
+  ]);
+
+  const pnl = buildPnl({
+    range: { startDate: "2026-06-01", endDate: "2026-06-07" },
+    netRevenue: 10000,
+    orders: 100,
+    units: 200,
+    cogs: 4000
+  }, [], entries);
+  assert.equal(pnl.marketingSpend, 920);
 });
 
 test("builds actual P&L totals and missing-cost warnings", () => {

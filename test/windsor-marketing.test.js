@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  accountConnectorParams,
   accountFilterForChannel,
   aggregateDaily,
   buildWindsorUrl,
@@ -20,7 +21,8 @@ test("builds Windsor connector URLs for a dated spend query", () => {
     endDate: "2026-06-07",
     refreshSince: "3d",
     refreshInterval: "1h",
-    filter: [["account_name", "contains", "kit"], "and", ["account_name", "contains", "kaboodal"]]
+    filter: [["account_name", "contains", "kit"], "and", ["account_name", "contains", "kaboodal"]],
+    connectorParams: { account_id: "1234567890" }
   }));
 
   assert.equal(url.origin, "https://connectors.windsor.ai");
@@ -31,6 +33,7 @@ test("builds Windsor connector URLs for a dated spend query", () => {
   assert.equal(url.searchParams.get("date_to"), "2026-06-07");
   assert.equal(url.searchParams.get("refresh_interval"), "1h");
   assert.deepEqual(JSON.parse(url.searchParams.get("filter")), [["account_name", "contains", "kit"], "and", ["account_name", "contains", "kaboodal"]]);
+  assert.equal(url.searchParams.get("account_id"), "1234567890");
 });
 
 test("normalizes Windsor Google and Meta rows into auditable spend rows", () => {
@@ -80,6 +83,8 @@ test("allows Windsor connector and field overrides from environment", () => {
 
   assert.equal(channels.Google.connector, "google_search_ads");
   assert.equal(channels.Google.fields, "date,campaign,spend,account_id,account_name");
+  assert.equal(channels.Google.accountParam, "account_id");
+  assert.equal(channels.Meta.accountParam, "account");
   assert.equal(channels.Meta.enabled, false);
 });
 
@@ -104,14 +109,22 @@ test("uses exact Windsor account ids without the default name fallback", () => {
   const channels = configuredChannels({
     WINDSOR_GOOGLE_ACCOUNT_IDS: "123,456"
   });
-  assert.deepEqual(accountFilterForChannel(channels.Google), [["account_id", "eq", "123"], "or", ["account_id", "eq", "456"]]);
+  assert.equal(accountFilterForChannel(channels.Google), null);
+  assert.deepEqual(accountConnectorParams(channels.Google), { account_id: "123,456" });
 
   const rows = normalizeRows([
-    { date: "2026-06-01", account_id: "123", account_name: "Kit & Kaboodal", campaign: "Brand", spend: 100 },
+    { date: "2026-06-01", account_id: "act_123", account_name: "Kit & Kaboodal", campaign: "Brand", spend: 100 },
     { date: "2026-06-01", account_id: "999", account_name: "Kit & Kaboodal", campaign: "Other", spend: 200 }
   ], { connector: "google_ads", channel: "Google" });
 
   const scoped = filterRowsByAllowedAccounts(rows, channels.Google);
   assert.equal(scoped.rows.length, 1);
-  assert.equal(scoped.rows[0].accountId, "123");
+  assert.equal(scoped.rows[0].accountId, "act_123");
+});
+
+test("uses Meta account connector parameter", () => {
+  const channels = configuredChannels({
+    WINDSOR_META_ACCOUNT_IDS: "2187569"
+  });
+  assert.deepEqual(accountConnectorParams(channels.Meta), { account: "2187569" });
 });
