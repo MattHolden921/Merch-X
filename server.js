@@ -9,6 +9,7 @@ const { buildLabelJobSnapshot, normalizeDoubleBarcodeSnapshot } = require("./lib
 const { DEFAULT_PAH_SETTINGS, buildPahReport, safeSettings: safePahSettings } = require("./lib/pah-report");
 const pnl = require("./lib/pnl");
 const salePlanner = require("./lib/sale-planner");
+const windsorMarketing = require("./lib/windsor-marketing");
 
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
@@ -365,6 +366,15 @@ function shopifyConfig() {
   return { shop, domain, clientId, clientSecret, apiVersion };
 }
 
+function windsorConfig() {
+  return {
+    apiKey: String(process.env.WINDSOR_API_KEY || "").trim(),
+    refreshSince: String(process.env.WINDSOR_REFRESH_SINCE || "3d").trim(),
+    refreshInterval: String(process.env.WINDSOR_REFRESH_INTERVAL || "6h").trim(),
+    channels: windsorMarketing.configuredChannels(process.env)
+  };
+}
+
 let shopifyToken = null;
 let shopifyTokenExpiresAt = 0;
 let googleToken = null;
@@ -491,8 +501,16 @@ async function shopifyGraphql(query, variables) {
   });
   const json = response.json;
   if (!response.ok || json.errors) {
+    const errors = Array.isArray(json.errors) ? json.errors : [];
+    const missingShopifyQl = errors.some(error =>
+      error?.extensions?.code === "undefinedField" &&
+      error?.extensions?.fieldName === "shopifyqlQuery"
+    );
     const detail = json.errors ? JSON.stringify(json.errors) : response.statusText;
-    throw new Error(`Shopify API error (${response.status} ${response.statusText}, ${domain}, ${apiVersion}): ${detail}`);
+    const hint = missingShopifyQl
+      ? " ShopifyQL reports need a newer Shopify Admin API schema; set SHOPIFY_API_VERSION=2026-07 on the server and restart."
+      : "";
+    throw new Error(`Shopify API error (${response.status} ${response.statusText}, ${domain}, ${apiVersion}):${hint} ${detail}`);
   }
   return json.data;
 }
@@ -3841,11 +3859,30 @@ function openOrderSqliteDb() {
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL,
       amount REAL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'manual',
+      source_key TEXT,
       notes TEXT,
       data TEXT,
       created_by TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS pnl_marketing_spend_actuals (
+      id TEXT PRIMARY KEY,
+      source TEXT NOT NULL,
+      connector TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      spend_date TEXT NOT NULL,
+      amount REAL DEFAULT 0,
+      currency TEXT,
+      account_id TEXT,
+      account_name TEXT,
+      campaign_id TEXT,
+      campaign_name TEXT,
+      source_row_key TEXT NOT NULL UNIQUE,
+      raw_json TEXT,
+      synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS email_campaigns (
@@ -3939,6 +3976,7 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_sale_actions_type ON sale_analysis_actions(action_type, status, priority);
     CREATE INDEX IF NOT EXISTS idx_pnl_cost_rules_status ON pnl_cost_rules(status, category, updated_at);
     CREATE INDEX IF NOT EXISTS idx_pnl_marketing_spend_dates ON pnl_marketing_spend(start_date, end_date, channel);
+    CREATE INDEX IF NOT EXISTS idx_pnl_marketing_actuals_dates ON pnl_marketing_spend_actuals(source, connector, spend_date);
     CREATE INDEX IF NOT EXISTS idx_email_campaigns_status ON email_campaigns(status, sent_at, created_at);
     CREATE INDEX IF NOT EXISTS idx_email_campaign_products_campaign ON email_campaign_products(campaign_id, position);
     CREATE INDEX IF NOT EXISTS idx_email_campaign_products_key ON email_campaign_products(product_key, campaign_id);
@@ -3958,6 +3996,14 @@ function openOrderSqliteDb() {
   if (!invoiceColumns.includes("file_size")) {
     orderSqliteDb.prepare("ALTER TABLE order_invoices ADD COLUMN file_size INTEGER DEFAULT 0").run();
   }
+  const pnlMarketingColumns = orderSqliteDb.prepare("PRAGMA table_info(pnl_marketing_spend)").all().map(column => column.name);
+  if (!pnlMarketingColumns.includes("source")) {
+    orderSqliteDb.prepare("ALTER TABLE pnl_marketing_spend ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'").run();
+  }
+  if (!pnlMarketingColumns.includes("source_key")) {
+    orderSqliteDb.prepare("ALTER TABLE pnl_marketing_spend ADD COLUMN source_key TEXT").run();
+  }
+  orderSqliteDb.prepare("CREATE INDEX IF NOT EXISTS idx_pnl_marketing_spend_source ON pnl_marketing_spend(source, source_key, start_date)").run();
   const workflowColumns = orderSqliteDb.prepare("PRAGMA table_info(order_workflows)").all().map(column => column.name);
   if (!workflowColumns.includes("next_action_user_id")) {
     orderSqliteDb.prepare("ALTER TABLE order_workflows ADD COLUMN next_action_user_id TEXT").run();
@@ -10933,6 +10979,8 @@ function pnlCostRuleFromRow(row) {
 
 function pnlMarketingSpendFromRow(row) {
   if (!row) return null;
+  const source = row.source || "manual";
+  const data = parseJson(row.data, {});
   return {
     ...pnl.publicMarketingEntry({
       id: row.id,
@@ -10941,8 +10989,11 @@ function pnlMarketingSpendFromRow(row) {
       endDate: row.end_date,
       amount: row.amount,
       notes: row.notes || "",
-      data: parseJson(row.data, {})
+      data
     }),
+    source,
+    sourceKey: row.source_key || "",
+    automated: source !== "manual" || Boolean(data.automated),
     createdBy: row.created_by || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -10960,12 +11011,70 @@ function readPnlCostRules() {
   `).all().map(pnlCostRuleFromRow);
 }
 
-function readPnlMarketingSpend() {
+function readPnlMarketingSpend(options = {}) {
+  const where = options.manualOnly ? "WHERE COALESCE(source, 'manual') = 'manual'" : "";
   return openOrderSqliteDb().prepare(`
     SELECT *
     FROM pnl_marketing_spend
+    ${where}
     ORDER BY date(start_date) DESC, channel COLLATE NOCASE, updated_at DESC
   `).all().map(pnlMarketingSpendFromRow);
+}
+
+function readPnlAutomatedMarketingSpendSummary() {
+  return openOrderSqliteDb().prepare(`
+    SELECT
+      source,
+      channel,
+      MIN(start_date) AS start_date,
+      MAX(end_date) AS end_date,
+      SUM(amount) AS amount,
+      COUNT(*) AS day_count,
+      MAX(updated_at) AS updated_at
+    FROM pnl_marketing_spend
+    WHERE COALESCE(source, 'manual') <> 'manual'
+    GROUP BY source, channel
+    ORDER BY channel COLLATE NOCASE
+  `).all().map(row => ({
+    id: `auto:${row.source}:${row.channel}`,
+    source: row.source || "automated",
+    channel: row.channel,
+    startDate: row.start_date || "",
+    endDate: row.end_date || "",
+    amount: Math.round(Number(row.amount || 0) * 100) / 100,
+    dayCount: Number(row.day_count || 0),
+    updatedAt: row.updated_at || "",
+    automated: true
+  }));
+}
+
+function pnlWindsorStatus() {
+  const cfg = windsorConfig();
+  const rows = openOrderSqliteDb().prepare(`
+    SELECT connector, channel, MIN(spend_date) start_date, MAX(spend_date) end_date, COUNT(*) row_count, MAX(synced_at) synced_at
+    FROM pnl_marketing_spend_actuals
+    WHERE source = 'windsor'
+    GROUP BY connector, channel
+    ORDER BY channel COLLATE NOCASE
+  `).all();
+  return {
+    configured: Boolean(cfg.apiKey),
+    channels: Object.values(cfg.channels).filter(channel => channel.enabled).map(channel => ({
+      channel: channel.channel,
+      connector: channel.connector,
+      label: channel.label,
+      accountScope: windsorMarketing.accountScopeLabel(channel)
+    })),
+    lastSyncedAt: rows.reduce((latest, row) => row.synced_at > latest ? row.synced_at : latest, ""),
+    summaries: rows.map(row => ({
+      connector: row.connector,
+      channel: row.channel,
+      startDate: row.start_date || "",
+      endDate: row.end_date || "",
+      rowCount: Number(row.row_count || 0),
+      syncedAt: row.synced_at || ""
+    }))
+  };
 }
 
 function upsertPnlCostRule(input, req) {
@@ -11043,22 +11152,26 @@ function upsertPnlMarketingSpend(input, req) {
     startDate,
     endDate,
     amount: Math.max(0, Number(body.amount || 0)),
+    source: "manual",
+    sourceKey: "",
     notes: String(body.notes || "").slice(0, 600),
     data: JSON.stringify(body.data && typeof body.data === "object" ? body.data : {}),
     createdBy: actorName(req)
   };
   openOrderSqliteDb().prepare(`
     INSERT INTO pnl_marketing_spend (
-      id, channel, start_date, end_date, amount, notes, data, created_by, created_at, updated_at
+      id, channel, start_date, end_date, amount, source, source_key, notes, data, created_by, created_at, updated_at
     )
     VALUES (
-      @id, @channel, @startDate, @endDate, @amount, @notes, @data, @createdBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      @id, @channel, @startDate, @endDate, @amount, @source, NULLIF(@sourceKey, ''), @notes, @data, @createdBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
     )
     ON CONFLICT(id) DO UPDATE SET
       channel = excluded.channel,
       start_date = excluded.start_date,
       end_date = excluded.end_date,
       amount = excluded.amount,
+      source = excluded.source,
+      source_key = excluded.source_key,
       notes = excluded.notes,
       data = excluded.data,
       updated_at = CURRENT_TIMESTAMP
@@ -11070,6 +11183,180 @@ function deletePnlMarketingSpend(id) {
   const clean = String(id || "").trim();
   if (!clean) throw new Error("Missing marketing spend id.");
   return Boolean(openOrderSqliteDb().prepare("DELETE FROM pnl_marketing_spend WHERE id = ?").run(clean).changes);
+}
+
+function pnlWindsorChannelsFromInput(channelsInput) {
+  const cfg = windsorConfig();
+  const requested = Array.isArray(channelsInput) && channelsInput.length
+    ? channelsInput.map(value => String(value || "").trim()).filter(Boolean)
+    : ["Google", "Meta"];
+  const seen = new Set();
+  return requested.map(name => {
+    const channel = cfg.channels[name] || Object.values(cfg.channels).find(item => item.channel.toLowerCase() === name.toLowerCase());
+    return channel && channel.enabled ? channel : null;
+  }).filter(channel => {
+    if (!channel || seen.has(channel.channel)) return false;
+    seen.add(channel.channel);
+    return true;
+  });
+}
+
+async function fetchWindsorMarketingChannel(range, channel, cfg) {
+  if (!windsorMarketing.channelHasAccountScope(channel)) {
+    throw new Error(`Set an account allowlist before syncing Windsor ${channel.label || channel.channel}.`);
+  }
+  const accountFilter = windsorMarketing.accountFilterForChannel(channel);
+  const url = windsorMarketing.buildWindsorUrl({
+    apiKey: cfg.apiKey,
+    connector: channel.connector,
+    fields: channel.fields,
+    startDate: range.startDate,
+    endDate: range.endDate,
+    refreshSince: cfg.refreshSince,
+    refreshInterval: cfg.refreshInterval,
+    filter: accountFilter
+  });
+  const response = await requestJson(url, { headers: { "user-agent": "Merch-X/1.0 Windsor marketing sync" } });
+  if (!response.ok || response.json?.error || response.json?.errors) {
+    const error = response.json?.error?.message || response.json?.message || JSON.stringify(response.json?.errors || response.json || {});
+    throw new Error(`Windsor ${channel.label || channel.channel} sync failed (${response.status} ${response.statusText}): ${error}`);
+  }
+  const rawRows = windsorMarketing.normalizeRows(response.json, {
+    source: "windsor",
+    connector: channel.connector,
+    channel: channel.channel,
+    currency: process.env.WINDSOR_SPEND_CURRENCY || "GBP"
+  });
+  const scoped = windsorMarketing.filterRowsByAllowedAccounts(rawRows, channel);
+  if (rawRows.length && !scoped.rows.length) {
+    throw new Error(`Windsor ${channel.label || channel.channel} returned ${rawRows.length} row(s), but none matched the allowed ${windsorMarketing.accountScopeLabel(channel)} account scope.`);
+  }
+  return {
+    channel: channel.channel,
+    connector: channel.connector,
+    label: channel.label,
+    accountScope: windsorMarketing.accountScopeLabel(channel),
+    rawRowCount: rawRows.length,
+    rejectedRowCount: scoped.rejected.length,
+    rows: scoped.rows,
+    daily: windsorMarketing.aggregateDaily(scoped.rows)
+  };
+}
+
+function replaceWindsorMarketingSpend(range, results, req) {
+  const db = openOrderSqliteDb();
+  const actor = actorName(req);
+  const insertActual = db.prepare(`
+    INSERT INTO pnl_marketing_spend_actuals (
+      id, source, connector, channel, spend_date, amount, currency, account_id, account_name,
+      campaign_id, campaign_name, source_row_key, raw_json, synced_at
+    )
+    VALUES (
+      @id, @source, @connector, @channel, @spendDate, @amount, @currency, @accountId, @accountName,
+      @campaignId, @campaignName, @sourceRowKey, @rawJson, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(source_row_key) DO UPDATE SET
+      amount = excluded.amount,
+      currency = excluded.currency,
+      account_id = excluded.account_id,
+      account_name = excluded.account_name,
+      campaign_id = excluded.campaign_id,
+      campaign_name = excluded.campaign_name,
+      raw_json = excluded.raw_json,
+      synced_at = CURRENT_TIMESTAMP
+  `);
+  const insertSpend = db.prepare(`
+    INSERT INTO pnl_marketing_spend (
+      id, channel, start_date, end_date, amount, source, source_key, notes, data, created_by, created_at, updated_at
+    )
+    VALUES (
+      @id, @channel, @startDate, @endDate, @amount, 'windsor', @sourceKey, @notes, @data, @createdBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      channel = excluded.channel,
+      start_date = excluded.start_date,
+      end_date = excluded.end_date,
+      amount = excluded.amount,
+      source = excluded.source,
+      source_key = excluded.source_key,
+      notes = excluded.notes,
+      data = excluded.data,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  db.transaction(() => {
+    for (const result of results) {
+      db.prepare(`
+        DELETE FROM pnl_marketing_spend_actuals
+        WHERE source = 'windsor'
+          AND connector = ?
+          AND date(spend_date) BETWEEN date(?) AND date(?)
+      `).run(result.connector, range.startDate, range.endDate);
+      db.prepare(`
+        DELETE FROM pnl_marketing_spend
+        WHERE source = 'windsor'
+          AND source_key LIKE ?
+          AND date(start_date) BETWEEN date(?) AND date(?)
+      `).run(`windsor:${result.connector}:%`, range.startDate, range.endDate);
+      for (const row of result.rows) {
+        insertActual.run({
+          ...row,
+          rawJson: JSON.stringify(row.raw || {})
+        });
+      }
+      for (const entry of result.daily) {
+        insertSpend.run({
+          id: entry.id,
+          channel: entry.channel,
+          startDate: entry.startDate,
+          endDate: entry.endDate,
+          amount: entry.amount,
+          sourceKey: entry.sourceKey,
+          notes: `Synced from Windsor ${result.label || result.channel}`,
+          data: JSON.stringify({
+            automated: true,
+            source: "windsor",
+            connector: result.connector,
+            currency: entry.currency,
+            rowCount: entry.rowCount,
+            accountScope: result.accountScope
+          }),
+          createdBy: actor
+        });
+      }
+    }
+  })();
+}
+
+async function syncPnlWindsorMarketingSpend(input, req) {
+  const cfg = windsorConfig();
+  if (!cfg.apiKey) throw new Error("Set WINDSOR_API_KEY before syncing Windsor marketing spend.");
+  const range = pnl.validateRange({
+    startDate: input?.startDate,
+    endDate: input?.endDate
+  }, { maxDays: 92 });
+  const channels = pnlWindsorChannelsFromInput(input?.channels);
+  if (!channels.length) throw new Error("Choose at least one enabled Windsor marketing channel.");
+  const results = [];
+  for (const channel of channels) {
+    results.push(await fetchWindsorMarketingChannel(range, channel, cfg));
+  }
+  replaceWindsorMarketingSpend(range, results, req);
+  return {
+    ok: true,
+    range,
+    source: "windsor",
+    channels: results.map(result => ({
+      channel: result.channel,
+      connector: result.connector,
+      accountScope: result.accountScope,
+      rawRowCount: result.rawRowCount,
+      rowCount: result.rows.length,
+      rejectedRowCount: result.rejectedRowCount,
+      dayCount: result.daily.length,
+      amount: Math.round(result.daily.reduce((sum, entry) => sum + Number(entry.amount || 0), 0) * 100) / 100
+    })),
+    syncedAt: new Date().toISOString()
+  };
 }
 
 function moneySetAmount(value) {
@@ -11385,9 +11672,15 @@ async function fetchShopifyPnlActuals(range) {
 }
 
 function pnlSettingsPayload(req) {
+  const windsor = pnlWindsorStatus();
   return {
     costRules: readPnlCostRules(),
-    marketingSpend: readPnlMarketingSpend(),
+    marketingSpend: readPnlMarketingSpend({ manualOnly: true }),
+    automatedMarketingSpend: readPnlAutomatedMarketingSpendSummary(),
+    integrations: {
+      windsorConfigured: windsor.configured
+    },
+    windsor,
     canWrite: userHasRole(req.currentUser, pnlWriteRoles),
     generatedAt: new Date().toISOString()
   };
@@ -11409,7 +11702,7 @@ async function handlePnlGet(req, res) {
     });
     return;
   }
-  const statement = pnl.buildPnl(fetched.actuals, settings.costRules, settings.marketingSpend);
+  const statement = pnl.buildPnl(fetched.actuals, settings.costRules, readPnlMarketingSpend());
   sendJson(res, 200, {
     configured: true,
     range,
@@ -11505,6 +11798,18 @@ async function handleApi(req, res) {
       sendJson(res, 200, { ok: true, deleted, settings: pnlSettingsPayload(req) });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not delete marketing spend." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pnl/marketing-spend/sync-windsor") {
+    if (!requireRoles(req, res, pnlWriteRoles, "Only Finance or Admin users can sync Windsor marketing spend.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const result = await syncPnlWindsorMarketingSpend(body, req);
+      sendJson(res, 200, { ...result, settings: pnlSettingsPayload(req) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not sync Windsor marketing spend." });
     }
     return true;
   }

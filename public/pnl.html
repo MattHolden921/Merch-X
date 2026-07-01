@@ -54,6 +54,9 @@ tr:last-child td{border-bottom:0}
 .mini-actions{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
 .btn.small{min-height:28px;padding:0 8px;font-size:11px}
 .muted{color:var(--ds-text-soft)}
+.sync-strip{display:flex;justify-content:space-between;gap:12px;align-items:center;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px;margin-bottom:10px}
+.sync-strip strong{display:block;font-size:12px;color:var(--ds-text)}
+.sync-strip span{display:block;font-size:11px;color:var(--ds-text-soft);margin-top:2px}
 .sensitivity{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:14px}
 .sensitivity>section{min-width:0}
 .sensitivity table{min-width:0}
@@ -191,6 +194,13 @@ tr:last-child td{border-bottom:0}
         <p class="section-title">Marketing spend</p>
         <span class="pill" id="spend-count">0 entries</span>
       </div>
+      <div class="sync-strip">
+        <div>
+          <strong>Windsor Google + Meta</strong>
+          <span id="windsor-note">Connect Windsor to sync automated ad spend.</span>
+        </div>
+        <button class="btn" type="button" id="sync-windsor-btn">Sync period</button>
+      </div>
       <div class="form-grid" id="spend-form">
         <input id="spend-id" type="hidden">
         <div class="field"><label>Channel</label><input id="spend-channel" list="channels" value="Google"><datalist id="channels"><option>Google</option><option>Meta</option><option>Klaviyo</option><option>TikTok</option><option>Affiliate</option><option>Other</option></datalist></div>
@@ -212,7 +222,7 @@ const exactMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",
 const numberFmt=new Intl.NumberFormat("en-GB",{maximumFractionDigits:1});
 const pctFmt=new Intl.NumberFormat("en-GB",{style:"percent",minimumFractionDigits:1,maximumFractionDigits:1});
 const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
-let state={settings:{costRules:[],marketingSpend:[],canWrite:false},statement:null,scenario:null,sensitivity:null};
+let state={settings:{costRules:[],marketingSpend:[],automatedMarketingSpend:[],integrations:{},windsor:{configured:false},canWrite:false},statement:null,scenario:null,sensitivity:null};
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
 const SCALERS=["sc-daily-sales","sc-aov-delta","sc-marketing","sc-marketing-return","sc-margin","sc-items-order"];
@@ -411,10 +421,21 @@ function renderRules(){
   }).join("")}</tbody></table>`;
 }
 function renderSpend(){
-  const rows=state.settings.marketingSpend||[];
-  el("spend-count").textContent=`${rows.length} entr${rows.length===1?"y":"ies"}`;
+  const manual=state.settings.marketingSpend||[];
+  const automated=state.settings.automatedMarketingSpend||[];
+  const windsor=state.settings.windsor||{};
+  el("spend-count").textContent=`${manual.length} manual · ${automated.length} automated`;
+  const channels=(windsor.channels||[]).map(item=>item.label||item.channel).join(", ");
+  const scopes=[...new Set((windsor.channels||[]).map(item=>item.accountScope).filter(Boolean))].join(", ");
+  const last=windsor.lastSyncedAt?`Last sync ${new Date(windsor.lastSyncedAt.replace(" ","T")).toLocaleString("en-GB")}`:"Not synced yet";
+  el("windsor-note").textContent=windsor.configured?`${channels||"Google Ads, Meta Ads"} · ${scopes?`Scoped to ${scopes} · `:""}${last}`:"Set WINDSOR_API_KEY to enable Google and Meta spend sync.";
+  const syncBtn=el("sync-windsor-btn");
+  if(syncBtn)syncBtn.disabled=!state.settings.canWrite||!windsor.configured;
+  const autoRows=automated.map(entry=>`<tr><td><strong>${esc(entry.channel)}</strong><span class="delta muted">Automated · ${esc(entry.source)} · ${Number(entry.dayCount||0)} day${Number(entry.dayCount||0)===1?"":"s"}</span></td><td>${esc(entry.startDate)} to ${esc(entry.endDate)}</td><td class="num">${gbp(entry.amount,true)}</td><td><span class="badge active">Synced</span></td></tr>`);
+  const manualRows=manual.map(entry=>`<tr><td><strong>${esc(entry.channel)}</strong>${entry.notes?`<span class="delta muted">${esc(entry.notes)}</span>`:""}</td><td>${esc(entry.startDate)} to ${esc(entry.endDate)}</td><td class="num">${gbp(entry.amount,true)}</td><td><div class="mini-actions"><button class="btn small" type="button" onclick="editSpend('${attr(entry.id)}')">Edit</button><button class="btn small" type="button" onclick="deleteSpend('${attr(entry.id)}')" ${state.settings.canWrite?"":"disabled"}>Delete</button></div></td></tr>`);
+  const rows=[...autoRows,...manualRows];
   if(!rows.length){el("spend-table").innerHTML='<div class="empty-state">No marketing spend saved.</div>';return;}
-  el("spend-table").innerHTML=`<table><thead><tr><th>Channel</th><th>Date range</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows.map(entry=>`<tr><td><strong>${esc(entry.channel)}</strong>${entry.notes?`<span class="delta muted">${esc(entry.notes)}</span>`:""}</td><td>${esc(entry.startDate)} to ${esc(entry.endDate)}</td><td class="num">${gbp(entry.amount,true)}</td><td><div class="mini-actions"><button class="btn small" type="button" onclick="editSpend('${attr(entry.id)}')">Edit</button><button class="btn small" type="button" onclick="deleteSpend('${attr(entry.id)}')" ${state.settings.canWrite?"":"disabled"}>Delete</button></div></td></tr>`).join("")}</tbody></table>`;
+  el("spend-table").innerHTML=`<table><thead><tr><th>Channel</th><th>Date range</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table>`;
 }
 function renderScenarioSummary(){
   const box=el("scenario-summary");
@@ -521,6 +542,7 @@ function renderAll(){
 function setWriteMode(){
   const can=Boolean(state.settings.canWrite);
   document.querySelectorAll("#rule-form input,#rule-form select,#rule-form button,#spend-form input,#spend-form button").forEach(node=>{node.disabled=!can&&node.id!=="clear-rule-btn"&&node.id!=="clear-spend-btn";});
+  if(el("sync-windsor-btn"))el("sync-windsor-btn").disabled=!can||!state.settings.windsor?.configured;
 }
 async function loadSettings(){
   const data=await apiJson("/api/pnl/settings");
@@ -605,6 +627,25 @@ async function saveSpend(){
   state.settings=data.settings;clearSpend();renderAll();if(state.statement)await loadActuals();
 }
 async function deleteSpend(id){if(!confirm("Delete this marketing spend entry?"))return;const data=await apiJson("/api/pnl/marketing-spend/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id})});state.settings=data.settings;renderAll();if(state.statement)await loadActuals();}
+async function syncWindsorSpend(){
+  if(!val("date-from")||!val("date-to")){setStatus("Select a From and To date before syncing Windsor.","warn");return;}
+  const button=el("sync-windsor-btn");
+  try{
+    if(button)button.disabled=true;
+    setStatus(`Syncing Windsor Google and Meta spend for ${val("date-from")} to ${val("date-to")}...`,"warn");
+    const data=await apiJson("/api/pnl/marketing-spend/sync-windsor",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({startDate:val("date-from"),endDate:val("date-to"),channels:["Google","Meta"]})});
+    state.settings=data.settings;
+    const total=(data.channels||[]).reduce((sum,item)=>sum+Number(item.amount||0),0);
+    const parts=(data.channels||[]).map(item=>`${item.channel} ${gbp(item.amount)}`).join(", ");
+    setStatus(`Windsor spend synced: ${parts||gbp(total)}.`,"ok");
+    renderAll();
+    if(state.statement)await loadActuals();
+  }catch(error){
+    setStatus(error.message,"err");
+  }finally{
+    renderAll();
+  }
+}
 window.editRule=editRule;window.deleteRule=deleteRule;window.editSpend=editSpend;window.deleteSpend=deleteSpend;
 
 document.getElementById("apply-quick-btn").addEventListener("click",()=>{setQuick(val("quick-period"));clearSpend();setStatus(val("quick-period")==="custom"?"Custom period unchanged. Click Load actuals to fetch it.":"Period dates updated. Click Load actuals.","ok");});
@@ -624,6 +665,7 @@ document.getElementById("save-rule-btn").addEventListener("click",()=>saveRule()
 document.getElementById("clear-rule-btn").addEventListener("click",clearRule);
 document.getElementById("save-spend-btn").addEventListener("click",()=>saveSpend().catch(error=>setStatus(error.message,"err")));
 document.getElementById("clear-spend-btn").addEventListener("click",clearSpend);
+document.getElementById("sync-windsor-btn").addEventListener("click",()=>syncWindsorSpend().catch(error=>setStatus(error.message,"err")));
 
 setQuick("completed-week");clearRule();clearSpend();renderAll();
 (async()=>{if(window.MERCH_AUTH?.ready)await window.MERCH_AUTH.ready;await loadSettings();clearSpend();setStatus("Select a period, then Load actuals.","");})().catch(error=>setStatus(error.message,"err"));

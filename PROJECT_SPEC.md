@@ -82,7 +82,7 @@ Primary table groups:
 - Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
 - Weekly actions: `weekly_actions`, `weekly_action_events`.
 - Sale planner: `sale_plans`, `sale_plan_items`, `sale_plan_events`, plus Sale collection mapping stored in `app_settings.salePlannerCollections`.
-- P&L planner: reusable `pnl_cost_rules` and dated manual `pnl_marketing_spend` entries.
+- P&L planner: reusable `pnl_cost_rules`, dated manual/automated `pnl_marketing_spend` entries, and raw `pnl_marketing_spend_actuals` rows for Windsor campaign spend.
 - Email merchandising: `email_campaigns`, immutable product snapshots in `email_campaign_products`, and source-specific `email_campaign_metric_snapshots`.
 
 Legacy/prototype data:
@@ -118,6 +118,7 @@ Used for:
 - Collection reorder apply jobs.
 - Sale planner price, compare-at price, and Sale collection apply/remove jobs.
 - Bestsellers sync from Shopify orders/products.
+- P&L actual sales via ShopifyQL reports.
 
 When Shopify is not configured, tools should return a clear configured=false response and use samples or saved local data where appropriate.
 
@@ -133,6 +134,21 @@ Used for:
 
 - Product view/add/purchase/revenue metrics merged into merchandising and collection planning reports.
 - Google OAuth start/callback endpoints can write a refresh token back to `.env`.
+
+### Windsor.ai
+
+Configuration:
+
+- `WINDSOR_API_KEY`.
+- Optional connector overrides: `WINDSOR_GOOGLE_CONNECTOR`, `WINDSOR_META_CONNECTOR`.
+- Optional field overrides: `WINDSOR_GOOGLE_FIELDS`, `WINDSOR_META_FIELDS`.
+- Account allowlist: `WINDSOR_ACCOUNT_NAME_CONTAINS=kit,kaboodal` by default, with optional exact `WINDSOR_GOOGLE_ACCOUNT_IDS` and `WINDSOR_META_ACCOUNT_IDS`.
+- Optional refresh controls: `WINDSOR_REFRESH_SINCE`, `WINDSOR_REFRESH_INTERVAL`.
+
+Used for:
+
+- P&L marketing spend automation for Google Ads and Meta Ads. Windsor requests include an account filter and returned rows are checked against the account allowlist before storage. Rows are stored as campaign-level daily actuals, then rolled into daily P&L marketing spend entries with `source = windsor`.
+- Manual P&L marketing spend remains available for adjustments and non-automated channels.
 
 ### Klaviyo
 
@@ -162,6 +178,7 @@ Reports and actions:
 - `POST /api/pnl/cost-rules/delete`
 - `POST /api/pnl/marketing-spend/upsert`
 - `POST /api/pnl/marketing-spend/delete`
+- `POST /api/pnl/marketing-spend/sync-windsor`
 - `POST /api/pnl/scenario`
 - `GET /api/weekly-actions`
 - `POST /api/weekly-actions/generate`
@@ -387,7 +404,7 @@ Key principles:
 - Reusable cost rules support `fixed_monthly`, `per_order`, `per_item`, `pick_pack`, `percent_revenue`, and `percent_revenue_plus_per_order` for card/payment fees that combine a Despatch percentage with a fixed per-order fee. Fixed monthly costs are prorated by overlapping days in each calendar month. Variable rules are prorated by active-date overlap before applying the selected range's Despatch, orders, or units.
 - Variable costs are shown separately from product COGS and fixed monthly overheads. Total variable costs include all non-fixed cost rules, including fulfilment, postage, pick/pack, per-item costs, and card/payment fees. Variable cost per order is total variable costs divided by orders. The scenario detail table can also show order-driven and revenue-driven portions for diagnosis.
 - Pick and pack costs are calculated as first-item rate per order plus additional-item rate for units above one per order.
-- Marketing spend is stored manually by dated channel entries such as Google, Meta, Klaviyo, TikTok, Affiliate, or Other. Entries are prorated by date overlap with the selected P&L range.
+- Marketing spend is stored as dated channel entries such as Google, Meta, Klaviyo, TikTok, Affiliate, or Other. Manual entries remain available for adjustments. Google and Meta can also be synced from Windsor.ai: API requests are account-scoped to Kit and Kaboodal by default, raw campaign/day spend is stored in `pnl_marketing_spend_actuals`, then rolled up into daily `pnl_marketing_spend` entries marked `source = windsor`. Entries are prorated by date overlap with the selected P&L range.
 - The period control defaults to the last completed Monday-Sunday week. Changing either date switches the control to Custom, and Shopify actuals are fetched only when the user clicks Load actuals.
 - Scenarios are not saved in v1. They recalculate from loaded actuals using either a manual daily Despatch target or a marketing-driven sales model where scenario Despatch changes by `marketing spend delta * marketing return`. AOV delta, optional gross margin override, and items per order then reshape orders, units, COGS, and variable costs. Fixed costs remain fixed/prorated; variable costs recalculate from scenario sales, orders, and units. Sensitivity tables and charts show net-profit impact for daily Despatch, AOV, and marketing-spend changes.
 - Scenario outputs are decision-support estimates, not posted accounting entries.

@@ -63,6 +63,30 @@ Order handoff emails are sent immediately. Weekly Action handoffs, owner changes
 
 The Email Merchandiser uses the existing Shopify and GA4 connections. To create Klaviyo drafts, configure `KLAVIYO_PRIVATE_API_KEY`, `KLAVIYO_DEFAULT_AUDIENCE_ID`, and `STOREFRONT_URL`. Optionally set `KLAVIYO_BASE_TEMPLATE_ID` or `KLAVIYO_BASE_TEMPLATE_PATH`; custom templates must include `{{MERCH_X_PRODUCTS}}`. Merch X creates drafts only and never schedules or sends campaigns.
 
+## P&L marketing spend sync
+
+The P&L planner can sync Google Ads and Meta Ads spend from Windsor.ai. Configure:
+
+```text
+WINDSOR_API_KEY=...
+WINDSOR_ACCOUNT_NAME_CONTAINS=kit,kaboodal
+```
+
+Optional overrides are available if your Windsor connector names or fields differ:
+
+```text
+WINDSOR_GOOGLE_CONNECTOR=google_ads
+WINDSOR_META_CONNECTOR=facebook
+WINDSOR_GOOGLE_FIELDS=date,campaign,spend,account_id,account_name
+WINDSOR_META_FIELDS=date,campaign,spend,account_id,account_name
+WINDSOR_GOOGLE_ACCOUNT_IDS=
+WINDSOR_META_ACCOUNT_IDS=
+```
+
+Windsor sync is account-scoped by default to account names containing both `kit` and `kaboodal`; returned rows are checked again before storage. Use exact `*_ACCOUNT_IDS` values once the Windsor account IDs are known.
+
+Manual marketing spend entries remain available for adjustments and non-automated channels.
+
 ## Database
 
 Order forms, suppliers, saved product details, invoice metadata, and workflow status are stored in SQLite. Uploaded invoice files and order/product images are stored on disk and referenced from SQLite.

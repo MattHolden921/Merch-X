@@ -58,7 +58,18 @@ APP_PASSWORD=use-a-long-random-password
 PORT=3000
 DATABASE_PATH=/var/lib/merch-x/merch-x.sqlite
 UPLOADS_DIR=/var/lib/merch-x/uploads
+SHOPIFY_SHOP=your-store
+SHOPIFY_CLIENT_ID=your-client-id
+SHOPIFY_CLIENT_SECRET=your-client-secret
+SHOPIFY_API_VERSION=2026-07
+WINDSOR_API_KEY=your-windsor-api-key
+WINDSOR_ACCOUNT_NAME_CONTAINS=kit,kaboodal
+# Optional exact ad-account allowlists after confirming Windsor account IDs.
+WINDSOR_GOOGLE_ACCOUNT_IDS=
+WINDSOR_META_ACCOUNT_IDS=
 ```
+
+The P&L planner uses ShopifyQL sales reports, which require a Shopify Admin GraphQL schema that exposes `shopifyqlQuery`. If the live site reports that `shopifyqlQuery` does not exist on `QueryRoot`, check `/opt/merch-x/.env` and update `SHOPIFY_API_VERSION` to `2026-07`, then restart `merch-x`.
 
 ## 3. Run with systemd
 
