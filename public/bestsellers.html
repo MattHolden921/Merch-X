@@ -712,6 +712,7 @@ let salesFiles=[],invRows=null,prodFiles=[];
 const G={col:'rev',dir:-1,cat:'All',exp:new Set(),dsExpanded:false,dsVisible:false,dsSeason:'All',view:'table',season:'All',periodFilter:'all'};
 let SYM='£';
 let serverPeriods=[];
+let refreshNeededServerPeriods=[];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function st(msg,cls){const e=document.getElementById('status');if(!msg){e.style.display='none';return;}e.textContent=msg;e.className='status '+cls;e.style.display='block';}
@@ -793,7 +794,7 @@ function setRangePresetValue(prefix,value){
   if(el)el.value=value;
 }
 function cachedTyPeriods(){
-  return serverPeriods.filter(period=>period.sourceType==='shopify_api').sort((a,b)=>b.startDate.localeCompare(a.startDate));
+  return serverPeriods.filter(period=>period.sourceType==='shopify_api'&&!period.needsRefresh).sort((a,b)=>b.startDate.localeCompare(a.startDate));
 }
 function setWeekSelectValues(prefix,startDate,endDate){
   const from=document.getElementById(`${prefix}-from-week`);
@@ -864,6 +865,10 @@ function applyTyRangePreset(prefix='api',preset='latest'){
   loadCachedBestsellers(prefix);
 }
 function renderServerPeriods(){
+  const refreshNeededTyPeriods=refreshNeededServerPeriods.filter(period=>period.sourceType==='shopify_api');
+  const refreshHint=refreshNeededTyPeriods.length
+    ? ` ${refreshNeededTyPeriods.length} partial cached TY week${refreshNeededTyPeriods.length===1?' was':'s were'} skipped; sync Shopify to refresh.`
+    : '';
   const renderTyWeekRange=(items,prefix)=>{
     const from=document.getElementById(`${prefix}-from-week`);
     const to=document.getElementById(`${prefix}-to-week`);
@@ -883,12 +888,12 @@ function renderServerPeriods(){
     const note=document.getElementById(noteId);
     if(!wrap||!note)return;
     if(!items.length){
-      note.textContent=emptyText;
+      note.textContent=emptyText+refreshHint;
       wrap.innerHTML='';
       return;
     }
     const latest=items[0];
-    note.textContent=`${items.length} saved TY week${items.length===1?'':'s'} available. Saved ranges load whole Monday-Sunday weeks.`;
+    note.textContent=`${items.length} saved TY week${items.length===1?'':'s'} available. Saved ranges load whole Monday-Sunday weeks.${refreshHint}`;
     const options=items.map(period=>{
       const value=`${period.startDate}|${period.endDate}`;
       const selected=period===latest?' selected':'';
@@ -913,7 +918,7 @@ function renderServerPeriods(){
       `<button class="server-period" type="button" data-start="${period.startDate}" data-end="${period.endDate}" onclick="${onClickName}(this.dataset.start,this.dataset.end,'${prefix}')">${period.label} · ${period.summary?.productCount||0} lines</button>`
     ).join('');
   };
-  const tyPeriods=serverPeriods.filter(period=>period.sourceType==='shopify_api');
+  const tyPeriods=cachedTyPeriods();
   const lyPeriods=serverPeriods.filter(period=>period.sourceType==='csv_import'&&(period.yearBucket||'').toUpperCase()==='LY');
   renderTyWeekRange(tyPeriods,'api');
   renderTyWeekRange(tyPeriods,'ty-report-api');
@@ -926,6 +931,7 @@ async function loadServerPeriods(){
   try{
     const data=await apiJson('/api/reports/bestsellers/periods');
     serverPeriods=data.periods||[];
+    refreshNeededServerPeriods=data.refreshNeededPeriods||[];
     renderServerPeriods();
   }catch(error){
     const note=document.getElementById('api-cache-note');
@@ -1019,6 +1025,10 @@ async function loadCachedBestsellers(prefix='api'){
   }catch(error){
     const lastWeek=lastCompletedWeekRange();
     const isLastWeek=range&&range.startDate===lastWeek.startDate&&range.endDate===lastWeek.endDate;
+    if(/saved before the week finished|needs refresh|BESTSELLERS_CACHE_NEEDS_REFRESH/i.test(error.message||'')){
+      await syncBestsellersFromApi(prefix);
+      return;
+    }
     if(isLastWeek&&/no cached|missing cached/i.test(error.message||'')){
       await syncBestsellersFromApi(prefix);
       return;
@@ -1095,6 +1105,7 @@ async function syncBestsellersFromApi(prefix='api'){
     const data=await pollBestsellersSyncJob(jobId);
     if(data.configured===false)throw new Error(data.message||'Shopify is not configured.');
     serverPeriods=data.periods||serverPeriods;
+    refreshNeededServerPeriods=data.refreshNeededPeriods||[];
     renderServerPeriods();
     applyServerBestsellers(data);
   }catch(error){

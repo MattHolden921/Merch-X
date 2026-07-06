@@ -354,6 +354,8 @@ Report concepts:
 - `report_product_metrics` stores product-level sales, stock, GP, price, GA, and Shopify identifiers.
 - `report_snapshots` caches assembled payloads.
 - `report_sync_jobs` tracks longer Shopify syncs.
+- Shopify API sync stores only completed Monday-Sunday weeks. Current-week, future-week, and otherwise incomplete ranges are shown live and not written to the saved-period cache until the week has ended.
+- Shopify weeks saved before their end date are treated as needing refresh, hidden from saved-period selectors, and blocked from weekly-action generation until Shopify is synced again.
 
 Key calculated fields include weekly units, average price, GP percent, GP per unit, cover weeks, forecast buy, dead stock, stock value, and category/season summaries.
 

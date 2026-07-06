@@ -1087,6 +1087,42 @@ function canonicalReportWeeks(range) {
   return weeks;
 }
 
+function completedBestsellersStorageWeeks(range, now = new Date()) {
+  const today = isoDateOnly(now);
+  return canonicalReportWeeks(range).filter(week => week.endDate < today);
+}
+
+function hasIncompleteBestsellersStorageWeek(range, now = new Date()) {
+  const today = isoDateOnly(now);
+  return canonicalReportWeeks(range).some(week => week.endDate >= today);
+}
+
+function bestsellersPeriodNeedsRefresh(row) {
+  if (!row || row.report_type !== "bestsellers" || row.source_type !== "shopify_api") return false;
+  if (!validReportDate(row.start_date) || !validReportDate(row.end_date)) return false;
+  const syncedAt = new Date(row.synced_at || row.updated_at || row.created_at || "");
+  if (!Number.isFinite(syncedAt.getTime())) return false;
+  const completeAfter = reportUtcDate(row.end_date);
+  completeAfter.setUTCDate(completeAfter.getUTCDate() + 1);
+  return syncedAt < completeAfter;
+}
+
+function refreshNeededBestsellersResponse(res, rows) {
+  const staleWeeks = rows.map(row => ({
+    startDate: row.start_date,
+    endDate: row.end_date,
+    label: reportDateLabel(row.start_date, row.end_date),
+    syncedAt: row.synced_at || ""
+  }));
+  const labelText = staleWeeks.map(week => week.label).join(", ");
+  const plural = staleWeeks.length !== 1;
+  sendJson(res, 409, {
+    error: `Cached bestsellers week${plural ? "s" : ""} ${labelText} ${plural ? "were" : "was"} saved before the week finished. Sync Shopify to refresh.`,
+    code: "BESTSELLERS_CACHE_NEEDS_REFRESH",
+    staleWeeks
+  });
+}
+
 function validReportDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
 }
@@ -1218,6 +1254,8 @@ function reportRangeFromRequest(url, fallbackDays = 28) {
 function publicReportPeriod(row) {
   if (!row) return null;
   const summary = parseJson(row.summary_json, {});
+  const needsRefresh = bestsellersPeriodNeedsRefresh(row);
+  if (needsRefresh) summary.needsRefresh = true;
   return {
     id: row.id,
     reportType: row.report_type,
@@ -1232,19 +1270,30 @@ function publicReportPeriod(row) {
     lockedAt: row.locked_at || "",
     syncedAt: row.synced_at,
     updatedAt: row.updated_at,
+    needsRefresh,
+    cacheStatus: needsRefresh ? "needs_refresh" : "ready",
     summary
   };
 }
 
-function readBestsellersPeriods() {
+function readBestsellersPeriods(options = {}) {
   const db = openOrderSqliteDb();
-  return db.prepare(`
+  const periods = db.prepare(`
     SELECT *
     FROM report_periods
     WHERE report_type = 'bestsellers'
     ORDER BY start_date DESC, end_date DESC
     LIMIT 120
   `).all().map(publicReportPeriod);
+  return options.includeRefreshNeeded ? periods : periods.filter(period => !period.needsRefresh);
+}
+
+function readBestsellersPeriodListing() {
+  const allPeriods = readBestsellersPeriods({ includeRefreshNeeded: true });
+  return {
+    periods: allPeriods.filter(period => !period.needsRefresh),
+    refreshNeededPeriods: allPeriods.filter(period => period.needsRefresh)
+  };
 }
 
 function publicStockSnapshot(row) {
@@ -1347,17 +1396,18 @@ function readReportSyncJob(jobId) {
 function createReportSyncJob(range) {
   const db = openOrderSqliteDb();
   const days = reportDaysInclusive(range);
-  const weeks = days >= 7 ? canonicalReportWeeks(range) : [];
+  const weeks = days >= 7 ? completedBestsellersStorageWeeks(range) : [];
+  const liveOnly = days < 7 || hasIncompleteBestsellersStorageWeek(range);
   const job = {
     id: crypto.randomUUID(),
     reportType: "bestsellers",
     status: "queued",
     requestedStartDate: range.startDate,
     requestedEndDate: range.endDate,
-    totalSteps: days < 7 ? 1 : weeks.length,
+    totalSteps: liveOnly ? 1 : weeks.length,
     completedSteps: 0,
-    message: days < 7
-      ? "Queued live ad hoc Shopify report. Ranges under 7 days are not stored."
+    message: liveOnly
+      ? "Queued live Shopify report. Current or future weeks are not stored until complete."
       : `Queued ${weeks.length} Monday-Sunday week${weeks.length === 1 ? "" : "s"} for Shopify sync.`
   };
   db.prepare(`
@@ -1970,8 +2020,10 @@ async function syncBestsellersReport(req, res) {
 }
 
 async function runBestsellersSync(range, onProgress = null) {
-  if (reportDaysInclusive(range) < 7) {
-    if (onProgress) onProgress({ status: "running", completedSteps: 0, totalSteps: 1, message: "Fetching live ad hoc Shopify report...", currentStartDate: range.startDate, currentEndDate: range.endDate });
+  const days = reportDaysInclusive(range);
+  const liveOnly = days < 7 || hasIncompleteBestsellersStorageWeek(range);
+  if (liveOnly) {
+    if (onProgress) onProgress({ status: "running", completedSteps: 0, totalSteps: 1, message: "Fetching live Shopify report without caching incomplete weeks...", currentStartDate: range.startDate, currentEndDate: range.endDate });
     const fetched = await fetchShopifyBestsellersProducts(range);
     if (!fetched.configured) {
       return fetched;
@@ -1983,14 +2035,16 @@ async function runBestsellersSync(range, onProgress = null) {
       ...payload,
       synced: true,
       stored: false,
-      message: "Ad hoc ranges under 7 days are shown live and not stored.",
+      message: days < 7
+        ? "Ad hoc ranges under 7 days are shown live and not stored."
+        : "Current or future weeks are shown live and not stored until the week is complete.",
       ordersAvailable: fetched.ordersAvailable,
       gaAvailable: fetched.gaAvailable,
       gaMessage: fetched.gaMessage,
-      periods: readBestsellersPeriods()
+      ...readBestsellersPeriodListing()
     };
   }
-  const weeks = canonicalReportWeeks(range);
+  const weeks = completedBestsellersStorageWeeks(range);
   const syncedRows = [];
   let lastFetched = { ordersAvailable: true, gaAvailable: false, gaMessage: "" };
   for (let index = 0; index < weeks.length; index += 1) {
@@ -2054,7 +2108,7 @@ async function runBestsellersSync(range, onProgress = null) {
     ordersAvailable: lastFetched.ordersAvailable,
     gaAvailable: lastFetched.gaAvailable,
     gaMessage: lastFetched.gaMessage,
-    periods: readBestsellersPeriods()
+    ...readBestsellersPeriodListing()
   };
 }
 
@@ -2142,7 +2196,7 @@ async function importBestsellersCsv(req, res) {
   sendJson(res, 200, {
     ok: true,
     imported,
-    periods: readBestsellersPeriods()
+    ...readBestsellersPeriodListing()
   });
 }
 
@@ -2158,9 +2212,18 @@ function getBestsellersReport(req, res) {
   const sourceType = url.searchParams.get("sourceType") || "shopify_api";
   const yearBucket = url.searchParams.get("yearBucket") || "";
   const periodRow = bestsellersPeriodRow(range.startDate, range.endDate, sourceType);
+  if (periodRow && bestsellersPeriodNeedsRefresh(periodRow)) {
+    refreshNeededBestsellersResponse(res, [periodRow]);
+    return;
+  }
   if (!periodRow && sourceType === "shopify_api" && reportDaysInclusive(range) >= 7) {
     const weeks = canonicalReportWeeks(range);
     const periodRows = bestsellersPeriodRowsForRanges(weeks, sourceType);
+    const staleRows = periodRows.filter(bestsellersPeriodNeedsRefresh);
+    if (staleRows.length) {
+      refreshNeededBestsellersResponse(res, staleRows);
+      return;
+    }
     if (periodRows.length === weeks.length) {
       sendJson(res, 200, buildBestsellersPayloadFromPeriods(periodRows, {
         startDate: weeks[0]?.startDate || range.startDate,
@@ -7136,15 +7199,16 @@ async function handleNotificationApi(req, res) {
 }
 
 function latestBestsellersPeriodRow() {
-  return openOrderSqliteDb().prepare(`
+  const rows = openOrderSqliteDb().prepare(`
     SELECT *
     FROM report_periods
     WHERE report_type = 'bestsellers'
       AND source_type = 'shopify_api'
       AND status = 'ready'
     ORDER BY start_date DESC, end_date DESC
-    LIMIT 1
-  `).get();
+    LIMIT 20
+  `).all();
+  return rows.find(row => !bestsellersPeriodNeedsRefresh(row));
 }
 
 function weeklyActionsPeriodFromRequest(body = {}) {
@@ -7157,11 +7221,13 @@ function weeklyActionsPeriodFromRequest(body = {}) {
         AND report_type = 'bestsellers'
     `).get(String(body.periodId));
     if (!row) throw new Error("Saved bestsellers period not found.");
+    if (bestsellersPeriodNeedsRefresh(row)) throw new Error("That saved bestsellers period needs a Shopify refresh because it was cached before the week finished.");
     return row;
   }
   if (validReportDate(body.startDate) && validReportDate(body.endDate)) {
     const row = bestsellersPeriodRow(body.startDate, body.endDate, sourceType);
     if (!row) throw new Error("No saved bestsellers report exists for that period.");
+    if (bestsellersPeriodNeedsRefresh(row)) throw new Error("That saved bestsellers period needs a Shopify refresh because it was cached before the week finished.");
     return row;
   }
   const latest = latestBestsellersPeriodRow();
@@ -12429,7 +12495,7 @@ async function handleApi(req, res) {
 
   if (req.method === "GET" && url.pathname === "/api/reports/bestsellers/periods") {
     sendJson(res, 200, {
-      periods: readBestsellersPeriods(),
+      ...readBestsellersPeriodListing(),
       generatedAt: new Date().toISOString()
     });
     return true;
