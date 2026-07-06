@@ -7,6 +7,7 @@ const {
   accountFilterForChannel,
   aggregateDaily,
   buildWindsorUrl,
+  channelFields,
   configuredChannels,
   filterRowsByAllowedAccounts,
   normalizeRows
@@ -85,7 +86,22 @@ test("allows Windsor connector and field overrides from environment", () => {
   assert.equal(channels.Google.fields, "date,campaign,spend,account_id,account_name");
   assert.equal(channels.Google.accountParam, "account_id");
   assert.equal(channels.Meta.accountParam, "account");
+  assert.equal(channelFields(channels.Google), "date,campaign,spend,account_id,account_name,conversion_value");
   assert.equal(channels.Meta.enabled, false);
+});
+
+test("normalizes and aggregates Windsor attributed revenue", () => {
+  const rows = normalizeRows([
+    { date: "2026-06-01", campaign: "Brand", spend: 100, all_conversions_value: 500 },
+    { date: "2026-06-01", campaign: "Shopping", spend: 50, all_conversions_value: 250 }
+  ], { connector: "google_ads", channel: "Google", revenueFields: ["all_conversions_value"], revenueWeight: 1.2 });
+  const daily = aggregateDaily(rows);
+
+  assert.equal(rows[0].attributedRevenue, 500);
+  assert.equal(rows[0].attributionWeight, 1.2);
+  assert.equal(daily[0].amount, 150);
+  assert.equal(daily[0].attributedRevenue, 750);
+  assert.equal(daily[0].attributedRoas, 5);
 });
 
 test("scopes Windsor rows to Kit and Kaboodal accounts", () => {

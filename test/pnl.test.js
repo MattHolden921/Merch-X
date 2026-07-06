@@ -5,10 +5,13 @@ const assert = require("node:assert/strict");
 const {
   buildPnl,
   buildScenario,
+  breakEvenMarketingReturn,
   calculateCostRule,
   effectiveMarketingEntries,
+  marketingForecastModel,
   marketingEntryAmount,
   normalizeActuals,
+  operatingLeverage,
   shopifyQlSalesActualsFromRow,
   sensitivityTables
 } = require("../lib/pnl");
@@ -121,6 +124,7 @@ test("builds actual P&L totals and missing-cost warnings", () => {
   assert.equal(pnl.returnFees, 25);
   assert.equal(pnl.despatchRevenue, 21000);
   assert.equal(pnl.costRuleTotal, 1620);
+  assert.equal(pnl.fixedCostTotal, 0);
   assert.equal(pnl.variableCostTotal, 1620);
   assert.equal(pnl.variableCostPerOrder, 4.05);
   assert.equal(pnl.orderVariableCostTotal, 1200);
@@ -236,6 +240,87 @@ test("marketing-driven scenarios change sales and variable costs while fixed cos
   assert.equal(result.delta.variableCostPerOrder, 0);
 });
 
+test("channel attribution splits forecast returns without changing blended Shopify return", () => {
+  const actual = normalizeActuals({
+    range: { startDate: "2026-06-01", endDate: "2026-06-07" },
+    despatchRevenue: 70000,
+    netRevenue: 56000,
+    orders: 1400,
+    units: 2800,
+    cogs: 28000
+  });
+  const marketing = [
+    { channel: "Google", startDate: "2026-06-01", endDate: "2026-06-07", amount: 3000, data: { attributedRevenue: 9000, attributionWeight: 1 } },
+    { channel: "Meta", startDate: "2026-06-01", endDate: "2026-06-07", amount: 2000, data: { attributedRevenue: 16000, attributionWeight: 0.5 } }
+  ];
+  const base = buildScenario(actual, [], marketing, {
+    marketingDrivesSales: true,
+    marketingReturn: 4
+  });
+  const model = marketingForecastModel(base.actual, { marketingReturn: 4 });
+
+  assert.equal(model.blendedReturn, 4);
+  assert.equal(model.channels.find(channel => channel.channel === "Google").calibratedReturn, 3.53);
+  assert.equal(model.channels.find(channel => channel.channel === "Meta").calibratedReturn, 4.71);
+
+  const result = buildScenario(actual, [], marketing, {
+    targetDailySales: 10000,
+    marketingDrivesSales: true,
+    marketingReturn: 4,
+    channelMarketingSpend: {
+      Google: 4000,
+      Meta: 2000
+    }
+  });
+
+  assert.equal(result.marketingForecast.scenarioSpend, 6000);
+  assert.equal(result.marketingForecast.incrementalRevenue, 3529.41);
+  assert.equal(result.scenario.despatchRevenue, 73529.41);
+
+  const override = buildScenario(actual, [], marketing, {
+    targetDailySales: 10000,
+    marketingDrivesSales: true,
+    marketingReturn: 4,
+    channelMarketingSpend: {
+      Google: 4000,
+      Meta: 2000
+    },
+    channelMarketingReturn: {
+      Google: 6,
+      Meta: 2
+    }
+  });
+
+  assert.equal(override.marketingForecast.incrementalRevenue, 6000);
+  assert.equal(override.marketingForecast.channels.find(channel => channel.channel === "Google").scenarioReturn, 6);
+  assert.equal(override.scenario.despatchRevenue, 76000);
+});
+
+test("channel attribution caps extreme platform scores before calibration", () => {
+  const actual = normalizeActuals({
+    range: { startDate: "2026-06-01", endDate: "2026-06-07" },
+    despatchRevenue: 70000,
+    netRevenue: 56000,
+    orders: 1400,
+    units: 2800,
+    cogs: 28000
+  });
+  const marketing = [
+    { channel: "Google", startDate: "2026-06-01", endDate: "2026-06-07", amount: 100, data: { attributedRevenue: 10000, attributionWeight: 1 } },
+    { channel: "Meta", startDate: "2026-06-01", endDate: "2026-06-07", amount: 100, data: { attributedRevenue: 100, attributionWeight: 1 } }
+  ];
+  const base = buildScenario(actual, [], marketing, {
+    marketingDrivesSales: true,
+    marketingReturn: 5
+  });
+  const google = base.marketingForecast.channels.find(channel => channel.channel === "Google");
+
+  assert.equal(google.uncappedRawScore, 100);
+  assert.equal(google.rawScore, 7.5);
+  assert.equal(google.scoreCapped, true);
+  assert.equal(base.marketingForecast.blendedReturn, 5);
+});
+
 test("higher AOV lowers total order-driven variable costs when despatch is unchanged", () => {
   const actual = normalizeActuals({
     range: { startDate: "2026-06-01", endDate: "2026-06-30" },
@@ -261,6 +346,83 @@ test("higher AOV lowers total order-driven variable costs when despatch is uncha
   assert.ok(result.scenario.variableCostTotal < result.actual.variableCostTotal);
   assert.ok(result.scenario.orderVariableCostTotal < result.actual.orderVariableCostTotal);
   assert.equal(result.scenario.revenueVariableCostTotal, result.actual.revenueVariableCostTotal);
+});
+
+test("calculates incremental break-even marketing ROAS from the cost stack", () => {
+  const actual = normalizeActuals({
+    range: { startDate: "2026-06-01", endDate: "2026-06-30" },
+    despatchRevenue: 100000,
+    netRevenue: 80000,
+    orders: 2000,
+    units: 4000,
+    cogs: 40000
+  });
+  const rules = [
+    { name: "Rent", category: "Overheads", costType: "fixed_monthly", amount: 6000, status: "Active" },
+    { name: "Card fees", category: "Payment", costType: "percent_revenue_plus_per_order", rate: 0.02, amount: 0.2, status: "Active" },
+    { name: "Postage", category: "Postage", costType: "per_order", amount: 3, status: "Active" },
+    { name: "Pack materials", category: "Fulfilment", costType: "per_item", amount: 0.5, status: "Active" }
+  ];
+  const result = breakEvenMarketingReturn(actual, rules, {
+    targetDailySales: 100000 / 30,
+    aovDelta: 0,
+    itemsPerOrder: 2
+  });
+
+  assert.equal(result.contributionMargin, 0.296);
+  assert.equal(result.requiredReturn, 3.38);
+});
+
+test("operating leverage identifies breakeven and fixed-cost dilution points", () => {
+  const actual = normalizeActuals({
+    range: { startDate: "2026-06-01", endDate: "2026-06-30" },
+    despatchRevenue: 100000,
+    netRevenue: 80000,
+    orders: 2000,
+    units: 4000,
+    cogs: 40000
+  });
+  const rules = [
+    { name: "Rent", category: "Overheads", costType: "fixed_monthly", amount: 6000, status: "Active" },
+    { name: "Postage", category: "Postage", costType: "per_order", amount: 2, status: "Active" }
+  ];
+  const result = operatingLeverage(actual, rules, [], {
+    targetDailySales: 100000 / 30
+  });
+
+  assert.equal(result.selected.fixedCostTotal, 6000);
+  assert.equal(result.selected.fixedCostPerOrder, 3);
+  assert.equal(result.selected.fixedCostImpact, 0.075);
+  assert.equal(result.selected.contributionMargin, 0.45);
+  assert.ok(Math.abs(result.breakEven.dailyDespatch - 555.56) < 0.01);
+  assert.ok(Math.abs(result.lowFixedDrag.dailyDespatch - 5000) < 0.01);
+  assert.equal(result.lowFixedDrag.fixedCostImpact, 0.05);
+  assert.ok(result.points.some(point => point.dailyDespatch === result.lowFixedDrag.dailyDespatch));
+});
+
+test("linked daily despatch target does not double-count marketing uplift", () => {
+  const actual = normalizeActuals({
+    range: { startDate: "2026-06-01", endDate: "2026-06-30" },
+    despatchRevenue: 100000,
+    netRevenue: 80000,
+    orders: 2000,
+    units: 4000,
+    cogs: 40000
+  });
+  const marketing = [
+    { channel: "Google", startDate: "2026-06-01", endDate: "2026-06-30", amount: 10000, data: { attributedRevenue: 40000, attributionWeight: 1 } }
+  ];
+  const result = buildScenario(actual, [], marketing, {
+    targetDailySales: 110000 / 30,
+    targetDailySalesIncludesMarketing: true,
+    marketingDrivesSales: true,
+    marketingSpend: 12000,
+    channelMarketingSpend: { Google: 12000 },
+    channelMarketingReturn: { Google: 5 }
+  });
+
+  assert.equal(result.marketingForecast.incrementalRevenue, 10000);
+  assert.equal(result.scenario.despatchRevenue, 110000);
 });
 
 test("daily despatch sensitivity still varies when marketing drives sales", () => {

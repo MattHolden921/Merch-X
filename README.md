@@ -83,9 +83,20 @@ WINDSOR_GOOGLE_ACCOUNT_IDS=
 WINDSOR_META_ACCOUNT_IDS=
 WINDSOR_GOOGLE_ACCOUNT_PARAM=account_id
 WINDSOR_META_ACCOUNT_PARAM=account
+WINDSOR_GOOGLE_REVENUE_FIELDS=conversion_value
+WINDSOR_META_REVENUE_FIELDS=action_values_offsite_conversion_fb_pixel_purchase
+WINDSOR_GOOGLE_REVENUE_WEIGHT=1
+WINDSOR_META_REVENUE_WEIGHT=0.5
+WINDSOR_AUTO_SYNC=true
+WINDSOR_AUTO_SYNC_STALE_HOURS=24
+WINDSOR_AUTO_SYNC_COOLDOWN_MINUTES=60
 ```
 
 Windsor sync is account-scoped by default to account names containing both `kit` and `kaboodal`; returned rows are checked again before storage. Use exact `*_ACCOUNT_IDS` values once the Windsor account IDs are known. Google uses Windsor's `account_id` connector parameter; Meta uses `account`.
+
+Attribution revenue from Windsor is used only as a scenario weighting signal. Shopify remains the accounting source for actual revenue. The forecast scales Google/Meta platform revenue back to the selected blended marketing return so platform attribution cannot double-count Shopify sales. Google defaults to `conversion_value`; avoid `all_conversions_value` unless the Google Ads conversion setup has been checked, because it can include non-primary conversion values and massively overstate purchase revenue. `WINDSOR_META_REVENUE_WEIGHT=0.5` dampens Meta's platform attribution by default; adjust these weights as confidence improves. Extreme channel platform scores are sanity-capped before calibration so one noisy field cannot dominate the forecast.
+
+When Finance/Admin users load P&L actuals, Windsor auto-syncs missing Google/Meta spend for the selected period. It records sync attempts, skips periods already covered by a successful sync, refreshes recent ranges only after `WINDSOR_AUTO_SYNC_STALE_HOURS`, and backs off for `WINDSOR_AUTO_SYNC_COOLDOWN_MINUTES` after a recent attempt.
 
 Manual marketing spend entries remain available for adjustments and non-automated channels.
 

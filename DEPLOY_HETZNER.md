@@ -69,6 +69,13 @@ WINDSOR_GOOGLE_ACCOUNT_IDS=
 WINDSOR_META_ACCOUNT_IDS=
 WINDSOR_GOOGLE_ACCOUNT_PARAM=account_id
 WINDSOR_META_ACCOUNT_PARAM=account
+WINDSOR_GOOGLE_REVENUE_FIELDS=conversion_value
+WINDSOR_META_REVENUE_FIELDS=action_values_offsite_conversion_fb_pixel_purchase
+WINDSOR_GOOGLE_REVENUE_WEIGHT=1
+WINDSOR_META_REVENUE_WEIGHT=0.5
+WINDSOR_AUTO_SYNC=true
+WINDSOR_AUTO_SYNC_STALE_HOURS=24
+WINDSOR_AUTO_SYNC_COOLDOWN_MINUTES=60
 ```
 
 The P&L planner uses ShopifyQL sales reports, which require a Shopify Admin GraphQL schema that exposes `shopifyqlQuery`. If the live site reports that `shopifyqlQuery` does not exist on `QueryRoot`, check `/opt/merch-x/.env` and update `SHOPIFY_API_VERSION` to `2026-07`, then restart `merch-x`.

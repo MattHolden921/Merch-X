@@ -26,7 +26,9 @@
 .range-control{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px;align-items:center}
 .range-control input[type=range]{width:100%}
 .scaler-number{min-height:34px;padding:0 8px;font-size:12px}
+.baseline{display:block;margin-top:6px;font-size:11px;color:var(--ds-text-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .scenario-actions{display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap}
+.scenario-tools{display:grid;grid-template-columns:minmax(180px,1fr) auto auto;gap:8px;align-items:end;margin-top:10px}
 .scenario-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:10px}
 .checkline{display:flex;align-items:center;gap:8px;min-height:38px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:0 10px;background:var(--ds-bg-surface);font-size:12px;color:var(--ds-text-muted)}
 .checkline input{width:16px;height:16px}
@@ -54,6 +56,9 @@ tr:last-child td{border-bottom:0}
 .mini-actions{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
 .btn.small{min-height:28px;padding:0 8px;font-size:11px}
 .muted{color:var(--ds-text-soft)}
+.compare-name{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.compare-value strong{display:block;color:var(--ds-text);font-weight:650}
+.compare-value small{display:block;color:var(--ds-text-soft);font-size:11px;margin-top:2px}
 .sync-strip{display:flex;justify-content:space-between;gap:12px;align-items:center;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px;margin-bottom:10px}
 .sync-strip strong{display:block;font-size:12px;color:var(--ds-text)}
 .sync-strip span{display:block;font-size:11px;color:var(--ds-text-soft);margin-top:2px}
@@ -63,6 +68,7 @@ tr:last-child td{border-bottom:0}
 .panel-title{font-size:13px;font-weight:650;margin-bottom:10px}
 .delta{font-size:11px;display:block;margin-top:2px}
 .chart{display:grid;gap:7px;margin-bottom:10px}
+.table-wrap>.chart{padding:10px 10px 0}
 .chart-row{display:grid;grid-template-columns:76px minmax(0,1fr) 82px;gap:8px;align-items:center;font-size:11px;color:var(--ds-text-muted)}
 .chart-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chart-track{display:block;height:20px;background:var(--ds-bg-muted);border:1px solid var(--ds-line);border-radius:var(--ds-radius);overflow:hidden}
@@ -70,7 +76,7 @@ tr:last-child td{border-bottom:0}
 .chart-bar.bad{background:var(--ds-bad)}
 .chart-value{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 @media(max-width:1080px){.scenario-layout,.settings-grid,.sensitivity{grid-template-columns:1fr}.toolbar{grid-template-columns:repeat(3,1fr)}.toolbar .status{grid-column:1/-1}}
-@media(max-width:720px){body{padding:18px 10px 36px}.toolbar,.metric-grid,.form-grid,.scaler-grid,.scenario-kpis{grid-template-columns:1fr}.form-grid .wide{grid-column:auto}.actions,.scenario-actions{justify-content:flex-start}.range-control{grid-template-columns:1fr}}
+@media(max-width:720px){body{padding:18px 10px 36px}.toolbar,.metric-grid,.form-grid,.scaler-grid,.scenario-kpis,.scenario-tools{grid-template-columns:1fr}.form-grid .wide{grid-column:auto}.actions,.scenario-actions{justify-content:flex-start}.range-control{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -110,31 +116,58 @@ tr:last-child td{border-bottom:0}
         <div class="slider-field">
           <div class="slider-head"><label>Daily despatch</label><output id="sc-daily-sales-output">-</output></div>
           <div class="range-control"><input id="sc-daily-sales" type="range" min="0" max="10000" step="0.01"><input class="scaler-number" id="sc-daily-sales-number" type="number" min="0" step="100"></div>
+          <small class="baseline" id="sc-daily-sales-base">Actual -</small>
         </div>
         <div class="slider-field">
           <div class="slider-head"><label>AOV change</label><output id="sc-aov-delta-output">-</output></div>
           <div class="range-control"><input id="sc-aov-delta" type="range" min="-20" max="30" step="0.5" value="0"><input class="scaler-number" id="sc-aov-delta-number" type="number" step="0.5" value="0"></div>
+          <small class="baseline" id="sc-aov-delta-base">Actual -</small>
         </div>
         <div class="slider-field">
-          <div class="slider-head"><label>Marketing spend</label><output id="sc-marketing-output">-</output></div>
+          <div class="slider-head"><label>Total marketing spend</label><output id="sc-marketing-output">-</output></div>
           <div class="range-control"><input id="sc-marketing" type="range" min="0" max="10000" step="0.01"><input class="scaler-number" id="sc-marketing-number" type="number" min="0" step="50"></div>
+          <small class="baseline" id="sc-marketing-base">Actual -</small>
         </div>
         <div class="slider-field">
-          <div class="slider-head"><label>Marketing return</label><output id="sc-marketing-return-output">-</output></div>
+          <div class="slider-head"><label>Google spend</label><output id="sc-google-spend-output">-</output></div>
+          <div class="range-control"><input id="sc-google-spend" type="range" min="0" max="10000" step="0.01"><input class="scaler-number" id="sc-google-spend-number" type="number" min="0" step="50"></div>
+          <small class="baseline" id="sc-google-spend-base">Actual -</small>
+        </div>
+        <div class="slider-field">
+          <div class="slider-head"><label>Google ROAS</label><output id="sc-google-roas-output">-</output></div>
+          <div class="range-control"><input id="sc-google-roas" type="range" min="0" max="10" step="0.01"><input class="scaler-number" id="sc-google-roas-number" type="number" min="0" step="0.1"></div>
+          <small class="baseline" id="sc-google-roas-base">Actual -</small>
+        </div>
+        <div class="slider-field">
+          <div class="slider-head"><label>Meta spend</label><output id="sc-meta-spend-output">-</output></div>
+          <div class="range-control"><input id="sc-meta-spend" type="range" min="0" max="10000" step="0.01"><input class="scaler-number" id="sc-meta-spend-number" type="number" min="0" step="50"></div>
+          <small class="baseline" id="sc-meta-spend-base">Actual -</small>
+        </div>
+        <div class="slider-field">
+          <div class="slider-head"><label>Meta ROAS</label><output id="sc-meta-roas-output">-</output></div>
+          <div class="range-control"><input id="sc-meta-roas" type="range" min="0" max="10" step="0.01"><input class="scaler-number" id="sc-meta-roas-number" type="number" min="0" step="0.1"></div>
+          <small class="baseline" id="sc-meta-roas-base">Actual -</small>
+        </div>
+        <div class="slider-field">
+          <div class="slider-head"><label>Marketing ROAS</label><output id="sc-marketing-return-output">-</output></div>
           <div class="range-control"><input id="sc-marketing-return" type="range" min="0" max="10" step="0.01"><input class="scaler-number" id="sc-marketing-return-number" type="number" min="0" step="0.1" placeholder="Despatch / GBP"></div>
+          <small class="baseline" id="sc-marketing-return-base">Actual -</small>
         </div>
         <div class="slider-field">
-          <div class="slider-head"><label>Gross margin</label><output id="sc-margin-output">-</output></div>
+          <div class="slider-head"><label>Gross profit %</label><output id="sc-margin-output">-</output></div>
           <div class="range-control"><input id="sc-margin" type="range" min="0" max="95" step="0.1"><input class="scaler-number" id="sc-margin-number" type="number" min="0" max="100" step="0.1"></div>
+          <small class="baseline" id="sc-margin-base">Actual -</small>
         </div>
         <div class="slider-field">
           <div class="slider-head"><label>Items / order</label><output id="sc-items-order-output">-</output></div>
           <div class="range-control"><input id="sc-items-order" type="range" min="0" max="5" step="0.05"><input class="scaler-number" id="sc-items-order-number" type="number" min="0" step="0.05"></div>
+          <small class="baseline" id="sc-items-order-base">Actual -</small>
         </div>
         <label class="checkline"><input id="sc-marketing-drives" type="checkbox"> Marketing drives sales</label>
       </div>
       <div class="scenario-results">
         <div class="scenario-kpis" id="scenario-summary"></div>
+        <div class="table-wrap" id="channel-forecast"></div>
         <div class="table-wrap" id="scenario-table"></div>
       </div>
     </div>
@@ -142,6 +175,28 @@ tr:last-child td{border-bottom:0}
       <p class="status" id="scenario-note">Load actuals first.</p>
       <button class="btn" type="button" id="scenario-btn">Recalculate</button>
     </div>
+    <div class="scenario-tools">
+      <div class="field"><label>Scenario name</label><input id="scenario-name" placeholder="Spend up, sale, AOV lift"></div>
+      <button class="btn" type="button" id="save-scenario-btn">Add comparison</button>
+      <button class="btn" type="button" id="reset-scenario-btn">Reset drivers</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <p class="section-title">Scenario comparison</p>
+      <span class="pill" id="comparison-pill">0 scenarios</span>
+    </div>
+    <div class="table-wrap" id="scenario-comparison"></div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <p class="section-title">Operating leverage</p>
+      <span class="pill" id="leverage-pill">Scenario required</span>
+    </div>
+    <div class="scenario-kpis" id="leverage-summary"></div>
+    <div class="table-wrap" id="leverage-table"></div>
   </section>
 
   <section class="panel">
@@ -222,12 +277,14 @@ const exactMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",
 const numberFmt=new Intl.NumberFormat("en-GB",{maximumFractionDigits:1});
 const pctFmt=new Intl.NumberFormat("en-GB",{style:"percent",minimumFractionDigits:1,maximumFractionDigits:1});
 const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
-let state={settings:{costRules:[],marketingSpend:[],automatedMarketingSpend:[],integrations:{},windsor:{configured:false},canWrite:false},statement:null,scenario:null,sensitivity:null};
+let state={settings:{costRules:[],marketingSpend:[],automatedMarketingSpend:[],integrations:{},windsor:{configured:false},canWrite:false},statement:null,scenario:null,sensitivity:null,scenarioComparisons:[]};
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
-const SCALERS=["sc-daily-sales","sc-aov-delta","sc-marketing","sc-marketing-return","sc-margin","sc-items-order"];
+const SCALERS=["sc-daily-sales","sc-aov-delta","sc-marketing","sc-google-spend","sc-google-roas","sc-meta-spend","sc-meta-roas","sc-marketing-return","sc-margin","sc-items-order"];
 let scenarioTimer=null;
 let scenarioRequestId=0;
+let linkedDailyBaseline=0;
+let suppressLinkedDailySync=false;
 
 async function apiFetch(path,options){
   let lastError;
@@ -251,6 +308,8 @@ function attr(value){return esc(value).replace(/`/g,"&#096;");}
 function gbp(value,exact=false){return exact?exactMoney.format(Number(value||0)):money.format(Number(value||0));}
 function signedGbp(value,exact=true){const n=Number(value||0);return `${n<0?"-":n>0?"+":""}${gbp(Math.abs(n),exact)}`;}
 function pct(value){return Number.isFinite(Number(value))?pctFmt.format(Number(value||0)):"-";}
+function roas(value){const n=Number(value);return Number.isFinite(n)&&n>0?`${n.toFixed(2)}x`:"-";}
+function snapshot(value){return JSON.parse(JSON.stringify(value));}
 function localIso(date){const copy=new Date(date.getTime()-date.getTimezoneOffset()*60000);return copy.toISOString().slice(0,10);}
 function setStatus(message,type=""){el("status-note").className=`status ${type}`;el("status-note").textContent=message;}
 function controlPair(id){return {range:el(id),number:el(`${id}-number`),output:el(`${id}-output`)};}
@@ -264,6 +323,84 @@ function setScaler(id,{min,max,step,value}={}){
     if(value!=null)node.value=String(value);
   }
 }
+function setBaseline(id,value){const node=el(`${id}-base`);if(node)node.textContent=`Actual ${value}`;}
+function updateActualBaselines(){
+  const ids=["sc-daily-sales","sc-aov-delta","sc-marketing","sc-google-spend","sc-google-roas","sc-meta-spend","sc-meta-roas","sc-marketing-return","sc-margin","sc-items-order"];
+  if(!state.statement){ids.forEach(id=>setBaseline(id,"-"));return;}
+  const s=state.statement;
+  const days=Math.max(1,Number(s.range?.days||1));
+  const google=statementChannel("Google");
+  const meta=statementChannel("Meta");
+  const marketingReturn=Number(s.marketingSpend||0)>0?Number(s.despatchRevenue||0)/Number(s.marketingSpend||0):0;
+  setBaseline("sc-daily-sales",gbp(Number(s.despatchRevenue||0)/days));
+  setBaseline("sc-aov-delta",gbp(s.aov,true));
+  setBaseline("sc-marketing",gbp(s.marketingSpend));
+  setBaseline("sc-google-spend",gbp(google.amount,true));
+  setBaseline("sc-google-roas",roas(google.attributedRoas||google.calibratedReturn));
+  setBaseline("sc-meta-spend",gbp(meta.amount,true));
+  setBaseline("sc-meta-roas",roas(meta.attributedRoas||meta.calibratedReturn));
+  setBaseline("sc-marketing-return",roas(marketingReturn));
+  setBaseline("sc-margin",pct(s.grossMargin));
+  setBaseline("sc-items-order",Number(s.itemsPerOrder||0).toFixed(2));
+}
+function marketingForecastChannels(){return state.scenario?.marketingForecast?.channels||state.statement?.marketingForecast?.channels||[];}
+function channelForecast(name){return marketingForecastChannels().find(channel=>channel.channel===name)||{channel:name,amount:0,scenarioSpend:0,attributedRevenue:0,attributedRoas:0,calibratedReturn:0,scenarioReturn:0};}
+function statementChannel(name){return (state.statement?.marketingForecast?.channels||[]).find(channel=>channel.channel===name)||{channel:name,amount:0,attributedRoas:0,calibratedReturn:0};}
+function baseChannelSpend(name){return Number(channelForecast(name).amount||0);}
+function baseOtherMarketing(){return state.statement?Math.max(0,Number(state.statement.marketingSpend||0)-baseChannelSpend("Google")-baseChannelSpend("Meta")):0;}
+function setControlValue(id,value){const pair=controlPair(id);for(const node of [pair.range,pair.number])if(node)node.value=String(value);}
+function channelScenarioSpend(name){const id=name==="Google"?"sc-google-spend":"sc-meta-spend";return Number(val(id)||baseChannelSpend(name));}
+function channelScenarioReturn(name){const id=name==="Google"?"sc-google-roas":"sc-meta-roas";const forecast=channelForecast(name);const fallback=forecast.scenarioReturn||forecast.attributedRoas||forecast.calibratedReturn||Number(val("sc-marketing-return")||0);return Number(val(id)||fallback||0);}
+function scenarioMarketingSpendFromChannels(){return state.statement?channelScenarioSpend("Google")+channelScenarioSpend("Meta")+baseOtherMarketing():Number(val("sc-marketing")||0);}
+function syncTotalMarketingFromChannels(){if(state.statement)setControlValue("sc-marketing",scenarioMarketingSpendFromChannels().toFixed(2));}
+function scenarioMarketingReturnFromChannels(){
+  const googleSpend=channelScenarioSpend("Google");
+  const metaSpend=channelScenarioSpend("Meta");
+  const spend=googleSpend+metaSpend;
+  if(spend<=0)return Number(val("sc-marketing-return")||0);
+  return ((googleSpend*channelScenarioReturn("Google"))+(metaSpend*channelScenarioReturn("Meta")))/spend;
+}
+function syncTotalReturnFromChannels(){if(state.statement)setControlValue("sc-marketing-return",scenarioMarketingReturnFromChannels().toFixed(2));}
+function scaleChannelsFromTotal(total){
+  if(!state.statement)return;
+  const target=Math.max(0,Number(total||0)-baseOtherMarketing());
+  const google=channelScenarioSpend("Google");
+  const meta=channelScenarioSpend("Meta");
+  const current=google+meta;
+  if(current<=0){setControlValue("sc-google-spend",target.toFixed(2));setControlValue("sc-meta-spend","0");return;}
+  const ratio=target/current;
+  setControlValue("sc-google-spend",(google*ratio).toFixed(2));
+  setControlValue("sc-meta-spend",(meta*ratio).toFixed(2));
+}
+function scaleChannelReturnsFromTotal(total){
+  if(!state.statement)return;
+  const target=Math.max(0,Number(total||0));
+  const current=scenarioMarketingReturnFromChannels();
+  const google=channelScenarioReturn("Google");
+  const meta=channelScenarioReturn("Meta");
+  if(current<=0){setControlValue("sc-google-roas",target.toFixed(2));setControlValue("sc-meta-roas",target.toFixed(2));return;}
+  const ratio=target/current;
+  setControlValue("sc-google-roas",(google*ratio).toFixed(2));
+  setControlValue("sc-meta-roas",(meta*ratio).toFixed(2));
+}
+function marketingUpliftPerDay(){
+  if(!state.statement||!el("sc-marketing-drives").checked)return 0;
+  const days=Math.max(1,Number(state.statement.range?.days||1));
+  const googleDelta=(channelScenarioSpend("Google")-baseChannelSpend("Google"))*channelScenarioReturn("Google");
+  const metaDelta=(channelScenarioSpend("Meta")-baseChannelSpend("Meta"))*channelScenarioReturn("Meta");
+  return (googleDelta+metaDelta)/days;
+}
+function setLinkedDailyValue(value){
+  suppressLinkedDailySync=true;
+  setControlValue("sc-daily-sales",Math.max(0,Number(value||0)).toFixed(2));
+  suppressLinkedDailySync=false;
+}
+function updateLinkedDailyFromMarketing(){
+  if(!state.statement)return;
+  const linked=el("sc-marketing-drives").checked;
+  const value=linked?linkedDailyBaseline+marketingUpliftPerDay():linkedDailyBaseline;
+  setLinkedDailyValue(value);
+}
 function syncScaler(id,source){
   const pair=controlPair(id);
   const sourceNode=source==="number"?pair.number:pair.range;
@@ -271,6 +408,14 @@ function syncScaler(id,source){
   if(!sourceNode||!targetNode)return;
   const numeric=Number(sourceNode.value);
   if(Number.isFinite(numeric))targetNode.value=String(numeric);
+  if(id==="sc-daily-sales"&&!suppressLinkedDailySync){
+    linkedDailyBaseline=el("sc-marketing-drives").checked?Math.max(0,numeric-marketingUpliftPerDay()):numeric;
+  }
+  if(id==="sc-marketing")scaleChannelsFromTotal(numeric);
+  if(id==="sc-google-spend"||id==="sc-meta-spend")syncTotalMarketingFromChannels();
+  if(id==="sc-marketing-return")scaleChannelReturnsFromTotal(numeric);
+  if(id==="sc-google-roas"||id==="sc-meta-roas")syncTotalReturnFromChannels();
+  if(id!=="sc-daily-sales"&&["sc-marketing","sc-google-spend","sc-meta-spend","sc-marketing-return","sc-google-roas","sc-meta-roas"].includes(id))updateLinkedDailyFromMarketing();
   updateScalerOutputs();
   queueScenario();
 }
@@ -282,17 +427,31 @@ function setScenarioControlsEnabled(enabled){
   }
   if(el("sc-marketing-drives"))el("sc-marketing-drives").disabled=!enabled;
   if(el("scenario-btn"))el("scenario-btn").disabled=!enabled;
+  if(el("save-scenario-btn"))el("save-scenario-btn").disabled=!enabled;
+  if(el("reset-scenario-btn"))el("reset-scenario-btn").disabled=!enabled;
+  if(el("scenario-name"))el("scenario-name").disabled=!enabled;
 }
 function updateScalerOutputs(){
+  updateActualBaselines();
   const daily=Number(val("sc-daily-sales")||0);
   const aovDelta=Number(val("sc-aov-delta")||0);
-  const marketing=Number(val("sc-marketing")||0);
-  const marketingReturn=Number(val("sc-marketing-return")||0);
+  const marketing=scenarioMarketingSpendFromChannels();
+  if(state.statement)setControlValue("sc-marketing",marketing.toFixed(2));
+  const googleSpend=channelScenarioSpend("Google");
+  const metaSpend=channelScenarioSpend("Meta");
+  const googleReturn=channelScenarioReturn("Google");
+  const metaReturn=channelScenarioReturn("Meta");
+  const marketingReturn=state.statement?scenarioMarketingReturnFromChannels():Number(val("sc-marketing-return")||0);
+  if(state.statement)setControlValue("sc-marketing-return",marketingReturn.toFixed(2));
   const margin=Number(val("sc-margin")||0);
   const items=Number(val("sc-items-order")||0);
   if(el("sc-daily-sales-output"))el("sc-daily-sales-output").textContent=state.statement?gbp(daily):"-";
   if(el("sc-aov-delta-output"))el("sc-aov-delta-output").textContent=state.statement?signedGbp(aovDelta,true):"-";
   if(el("sc-marketing-output"))el("sc-marketing-output").textContent=state.statement?gbp(marketing):"-";
+  if(el("sc-google-spend-output"))el("sc-google-spend-output").textContent=state.statement?gbp(googleSpend):"-";
+  if(el("sc-google-roas-output"))el("sc-google-roas-output").textContent=state.statement?`${googleReturn.toFixed(2)}x`:"-";
+  if(el("sc-meta-spend-output"))el("sc-meta-spend-output").textContent=state.statement?gbp(metaSpend):"-";
+  if(el("sc-meta-roas-output"))el("sc-meta-roas-output").textContent=state.statement?`${metaReturn.toFixed(2)}x`:"-";
   if(el("sc-marketing-return-output"))el("sc-marketing-return-output").textContent=state.statement?`${marketingReturn.toFixed(2)}x`:"-";
   if(el("sc-margin-output"))el("sc-margin-output").textContent=state.statement?`${margin.toFixed(1)}%`:"-";
   if(el("sc-items-order-output"))el("sc-items-order-output").textContent=state.statement?items.toFixed(2):"-";
@@ -334,10 +493,24 @@ function deltaText(value,isPct=false){
   const formatted=isPct?`${numeric>0?"+":""}${(numeric*100).toFixed(1)}pp`:`${numeric>0?"+":""}${gbp(numeric)}`;
   return `<span class="delta ${numeric>=0?"good":"bad"}">${formatted}</span>`;
 }
+function valueText(value,type="money",exact=false){
+  if(type==="pct")return pct(value);
+  if(type==="roas")return roas(value);
+  if(type==="number")return numberFmt.format(value);
+  return gbp(value,exact);
+}
+function deltaValueText(value,type="money",exact=false){
+  const numeric=Number(value||0);
+  if(type==="pct")return `${numeric>0?"+":""}${(numeric*100).toFixed(1)}pp`;
+  if(type==="roas")return `${numeric>0?"+":""}${numeric.toFixed(2)}x`;
+  if(type==="number")return `${numeric>0?"+":""}${numberFmt.format(numeric)}`;
+  return signedGbp(numeric,exact);
+}
+function actualSmall(actual,delta,type="money",exact=false){return `Actual ${valueText(actual,type,exact)} (${deltaValueText(delta,type,exact)})`;}
 function renderMetrics(){
   const s=state.statement;
   if(!s){el("metrics").innerHTML=[
-    metric("Despatch","-"),metric("Demand","-"),metric("Discounts","-"),metric("Returns","-"),metric("Shipping","-"),metric("Net sales","-"),metric("Net profit","-"),metric("Orders","-"),metric("AOV","-"),metric("Variable costs","-"),metric("Variable cost / order","-"),metric("Marketing","-")
+    metric("Despatch","-"),metric("Demand","-"),metric("Discounts","-"),metric("Returns","-"),metric("Shipping","-"),metric("Net sales","-"),metric("Net profit","-"),metric("Fixed cost drag","-"),metric("Orders","-"),metric("AOV","-"),metric("Variable costs","-"),metric("Variable cost / order","-"),metric("Marketing","-")
   ].join("");return;}
   const days=Math.max(s.range.days,1);
   el("metrics").innerHTML=[
@@ -348,6 +521,7 @@ function renderMetrics(){
     metric("Shipping",gbp(s.shippingRevenue),`${gbp(s.shippingRevenue/days)} / day`),
     metric("Net sales",gbp(s.netRevenue),"Ex VAT product"),
     metric("Net profit",gbp(s.operatingProfit),pct(s.operatingMargin),s.operatingProfit>=0?"good":"bad"),
+    metric("Fixed cost drag",pct(s.fixedCostImpact),`${gbp(s.fixedCostTotal)} fixed costs`),
     metric("Orders",numberFmt.format(s.orders),`${numberFmt.format(s.units)} units`),
     metric("AOV",gbp(s.aov,true),"Despatch / order"),
     metric("Variable costs",gbp(s.variableCostTotal),`${gbp(s.variableCostPerOrder,true)} / order`),
@@ -394,10 +568,12 @@ function renderPnl(){
     section("Operating costs"),
     row("Marketing spend",gbp(s.marketingSpend,true)),
     row("Cost rules",gbp(s.costRuleTotal,true)),
+    row("Fixed monthly costs",gbp(s.fixedCostTotal,true),`${pct(s.fixedCostImpact)} of net sales`),
     row("Variable costs",gbp(s.variableCostTotal,true),"Fulfilment, postage, card etc; excludes COGS and fixed monthly costs"),
     row("Variable cost / order",gbp(s.variableCostPerOrder,true),"Variable costs / orders"),
     row("Order-driven variable costs",gbp(s.orderVariableCostTotal,true),"Order, item, pick/pack, and per-order fee components"),
     row("Revenue-driven variable costs",gbp(s.revenueVariableCostTotal,true),"Percent-of-despatch costs"),
+    row("Contribution before fixed",gbp(s.contributionProfit,true),pct(s.contributionMargin),s.contributionProfit>=0?"good":"bad"),
     row("Total costs",gbp(s.operatingCosts,true),"Marketing + rules","bad"),
     section("Profit"),
     row("Net profit",gbp(s.operatingProfit,true),pct(s.operatingMargin),s.operatingProfit>=0?"good":"bad"),
@@ -427,8 +603,9 @@ function renderSpend(){
   el("spend-count").textContent=`${manual.length} manual · ${automated.length} automated`;
   const channels=(windsor.channels||[]).map(item=>item.label||item.channel).join(", ");
   const scopes=[...new Set((windsor.channels||[]).map(item=>item.accountScope).filter(Boolean))].join(", ");
+  const autoText=windsor.autoSync?.enabled?`Auto on load, ${windsor.autoSync.cooldownMinutes||60}m cooldown`:"Manual sync only";
   const last=windsor.lastSyncedAt?`Last sync ${new Date(windsor.lastSyncedAt.replace(" ","T")).toLocaleString("en-GB")}`:"Not synced yet";
-  el("windsor-note").textContent=windsor.configured?`${channels||"Google Ads, Meta Ads"} · ${scopes?`Scoped to ${scopes} · `:""}${last}`:"Set WINDSOR_API_KEY to enable Google and Meta spend sync.";
+  el("windsor-note").textContent=windsor.configured?`${channels||"Google Ads, Meta Ads"} · ${scopes?`Scoped to ${scopes} · `:""}${autoText} · ${last}`:"Set WINDSOR_API_KEY to enable Google and Meta spend sync.";
   const syncBtn=el("sync-windsor-btn");
   if(syncBtn)syncBtn.disabled=!state.settings.canWrite||!windsor.configured;
   const autoRows=automated.map(entry=>`<tr><td><strong>${esc(entry.channel)}</strong><span class="delta muted">Automated · ${esc(entry.source)} · ${Number(entry.dayCount||0)} day${Number(entry.dayCount||0)===1?"":"s"}</span></td><td>${esc(entry.startDate)} to ${esc(entry.endDate)}</td><td class="num">${gbp(entry.amount,true)}</td><td><span class="badge active">Synced</span></td></tr>`);
@@ -448,22 +625,38 @@ function renderScenarioSummary(){
       metric("AOV","-"),
       metric("Variable costs","-"),
       metric("Variable cost / order","-"),
-      metric("Marketing","-"),
-      metric("Net margin","-"),
+      metric("Fixed cost drag","-"),
+      metric("Marketing spend","-"),
+      metric("Scenario ROAS","-"),
+      metric("Break-even ROAS","-"),
+      metric("Net profit %","-"),
       metric("Profit / day","-")
     ].join("");
     return;
   }
+  const forecast=r.marketingForecast||{};
+  const breakEven=r.breakEvenMarketing||{};
   box.innerHTML=[
-    metric("Scenario net profit",gbp(r.scenario.operatingProfit),signedGbp(r.delta.operatingProfit),r.scenario.operatingProfit>=0?"good":"bad"),
-    metric("Despatch",gbp(r.scenario.despatchRevenue),signedGbp(r.delta.despatchRevenue),r.delta.despatchRevenue>=0?"good":"bad"),
-    metric("AOV",gbp(r.scenario.aov,true),signedGbp(r.delta.aov,true),r.delta.aov>=0?"good":"bad"),
-    metric("Variable costs",gbp(r.scenario.variableCostTotal),signedGbp(r.delta.variableCostTotal),r.delta.variableCostTotal>0?"bad":"good"),
-    metric("Variable cost / order",gbp(r.scenario.variableCostPerOrder,true),signedGbp(r.delta.variableCostPerOrder,true),r.delta.variableCostPerOrder>0?"bad":"good"),
-    metric("Marketing",gbp(r.scenario.marketingSpend),signedGbp(r.delta.marketingSpend),r.delta.marketingSpend>0?"bad":"good"),
-    metric("Net margin",pct(r.scenario.operatingMargin),deltaText(r.delta.operatingMargin,true).replace(/<[^>]+>/g,""),r.delta.operatingMargin>=0?"good":"bad"),
-    metric("Profit / day",gbp(r.scenario.profitPerDay),signedGbp(r.delta.profitPerDay),r.delta.profitPerDay>=0?"good":"bad")
+    metric("Scenario net profit",gbp(r.scenario.operatingProfit),actualSmall(r.actual.operatingProfit,r.delta.operatingProfit),r.scenario.operatingProfit>=0?"good":"bad"),
+    metric("Despatch",gbp(r.scenario.despatchRevenue),actualSmall(r.actual.despatchRevenue,r.delta.despatchRevenue),r.delta.despatchRevenue>=0?"good":"bad"),
+    metric("AOV",gbp(r.scenario.aov,true),actualSmall(r.actual.aov,r.delta.aov,"money",true),r.delta.aov>=0?"good":"bad"),
+    metric("Variable costs",gbp(r.scenario.variableCostTotal),actualSmall(r.actual.variableCostTotal,r.delta.variableCostTotal),r.delta.variableCostTotal>0?"bad":"good"),
+    metric("Variable cost / order",gbp(r.scenario.variableCostPerOrder,true),actualSmall(r.actual.variableCostPerOrder,r.delta.variableCostPerOrder,"money",true),r.delta.variableCostPerOrder>0?"bad":"good"),
+    metric("Fixed cost drag",pct(r.scenario.fixedCostImpact),actualSmall(r.actual.fixedCostImpact,r.delta.fixedCostImpact,"pct"),r.delta.fixedCostImpact>0?"bad":"good"),
+    metric("Marketing spend",gbp(r.scenario.marketingSpend),actualSmall(r.actual.marketingSpend,r.delta.marketingSpend),r.delta.marketingSpend>0?"bad":"good"),
+    metric("Scenario ROAS",roas(forecast.scenarioReturn),`${gbp(forecast.incrementalRevenue||0)} inc. sales`,Number(forecast.scenarioReturn||0)>=Number(breakEven.requiredReturn||Infinity)?"good":"warn"),
+    metric("Break-even ROAS",roas(breakEven.requiredReturn),`${pct(breakEven.contributionMargin||0)} contribution`,Number(forecast.scenarioReturn||0)>=Number(breakEven.requiredReturn||Infinity)?"good":"warn"),
+    metric("Net profit %",pct(r.scenario.operatingMargin),actualSmall(r.actual.operatingMargin,r.delta.operatingMargin,"pct"),r.delta.operatingMargin>=0?"good":"bad"),
+    metric("Profit / day",gbp(r.scenario.profitPerDay),actualSmall(r.actual.profitPerDay,r.delta.profitPerDay),r.delta.profitPerDay>=0?"good":"bad")
   ].join("");
+}
+function renderChannelForecast(){
+  const box=el("channel-forecast");
+  if(!box)return;
+  const forecast=state.scenario?.marketingForecast||state.statement?.marketingForecast;
+  const rows=(forecast?.channels||[]).filter(channel=>["Google","Meta"].includes(channel.channel)||Number(channel.amount||0)>0);
+  if(!rows.length){box.innerHTML='<div class="empty-state">No channel forecast available.</div>';return;}
+  box.innerHTML=`<table><thead><tr><th>Channel</th><th class="num">Spend</th><th class="num">Platform revenue</th><th class="num">Platform ROAS</th><th class="num">Scenario ROAS</th></tr></thead><tbody>${rows.map(channel=>`<tr><td>${esc(channel.channel)}</td><td class="num">${gbp(channel.scenarioSpend??channel.amount,true)}</td><td class="num">${channel.attributedRevenue?gbp(channel.attributedRevenue,true):"-"}</td><td class="num">${roas(channel.attributedRoas)}</td><td class="num">${roas(channel.scenarioReturn||channel.calibratedReturn)}</td></tr>`).join("")}</tbody></table>`;
 }
 function renderScenario(){
   const r=state.scenario;
@@ -471,6 +664,7 @@ function renderScenario(){
   if(!r){
     el("scenario-pill").textContent="Not run";
     el("scenario-note").textContent=state.statement?"Adjust drivers, then run a scenario.":"Load actuals first.";
+    renderChannelForecast();
     el("scenario-table").innerHTML='<div class="empty-state">No scenario run.</div>';
     return;
   }
@@ -488,19 +682,24 @@ function renderScenario(){
     ["AOV","aov",false],
     ["Variable costs","variableCostTotal",false],
     ["Variable cost / order","variableCostPerOrder",false],
+    ["Fixed monthly costs","fixedCostTotal",false],
+    ["Fixed cost / order","fixedCostPerOrder",false],
+    ["Fixed cost drag","fixedCostImpact",true],
     ["Order-driven variable costs","orderVariableCostTotal",false],
     ["Revenue-driven variable costs","revenueVariableCostTotal",false],
     ["Order-driven cost / order","orderVariableCostPerOrder",false],
     ["Gross profit","grossProfit",false],
-    ["Gross margin","grossMargin",true],
+    ["Gross profit %","grossMargin",true],
     ["Marketing spend","marketingSpend",false],
+    ["Contribution before fixed","contributionProfit",false],
+    ["Contribution %","contributionMargin",true],
     ["Total costs","operatingCosts",false],
     ["Net profit","operatingProfit",false],
-    ["Net margin","operatingMargin",true],
+    ["Net profit %","operatingMargin",true],
     ["Net profit / day","profitPerDay",false]
   ];
-  const badWhenHigher=new Set(["discounts","returns","cogs","variableCostTotal","variableCostPerOrder","orderVariableCostTotal","orderVariableCostPerOrder","revenueVariableCostTotal","marketingSpend","operatingCosts"]);
-  const exactMoneyKeys=new Set(["aov","variableCostPerOrder","orderVariableCostPerOrder"]);
+  const badWhenHigher=new Set(["discounts","returns","cogs","variableCostTotal","variableCostPerOrder","fixedCostTotal","fixedCostPerOrder","fixedCostImpact","orderVariableCostTotal","orderVariableCostPerOrder","revenueVariableCostTotal","marketingSpend","operatingCosts"]);
+  const exactMoneyKeys=new Set(["aov","variableCostPerOrder","fixedCostPerOrder","orderVariableCostPerOrder"]);
   function scenarioCell(key,value,isPct,isDelta=false){
     if(isPct)return pct(value);
     if(key==="orders"||key==="units")return isDelta?`${Number(value||0)>0?"+":""}${numberFmt.format(value)}`:numberFmt.format(value);
@@ -516,6 +715,7 @@ function renderScenario(){
     const cls=deltaValue>=0?(badWhenHigher.has(key)?"bad":"good"):(badWhenHigher.has(key)?"good":"bad");
     return `<tr><td>${esc(label)}</td><td class="num">${actual}</td><td class="num">${scenario}</td><td class="num ${cls}">${delta}</td></tr>`;
   }).join("")}</tbody></table>`;
+  renderChannelForecast();
 }
 function renderSensitivityTable(title,rows,labelFn){
   if(!rows?.length)return `<section><p class="panel-title">${esc(title)}</p><div class="empty-state">No data.</div></section>`;
@@ -525,7 +725,7 @@ function renderSensitivityTable(title,rows,labelFn){
     const width=Math.max(2,Math.round(Math.abs(profit)/max*100));
     return `<div class="chart-row"><span class="chart-label">${esc(labelFn(row))}</span><span class="chart-track"><span class="chart-bar ${profit<0?"bad":""}" style="width:${width}%"></span></span><span class="chart-value ${profit>=0?"good":"bad"}">${gbp(profit)}</span></div>`;
   }).join("")}</div>`;
-  return `<section><p class="panel-title">${esc(title)}</p>${chart}<div class="table-wrap"><table><thead><tr><th>Driver</th><th class="num">Despatch</th><th class="num">Var costs</th><th class="num">Net profit</th><th class="num">Margin</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${esc(labelFn(row))}</td><td class="num">${gbp(row.despatchRevenue)}</td><td class="num">${gbp(row.variableCostTotal)}</td><td class="num ${row.operatingProfit>=0?"good":"bad"}">${gbp(row.operatingProfit)}</td><td class="num">${pct(row.operatingMargin)}</td></tr>`).join("")}</tbody></table></div></section>`;
+  return `<section><p class="panel-title">${esc(title)}</p>${chart}<div class="table-wrap"><table><thead><tr><th>Driver</th><th class="num">Despatch</th><th class="num">Var costs</th><th class="num">Net profit</th><th class="num">Net profit %</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${esc(labelFn(row))}</td><td class="num">${gbp(row.despatchRevenue)}</td><td class="num">${gbp(row.variableCostTotal)}</td><td class="num ${row.operatingProfit>=0?"good":"bad"}">${gbp(row.operatingProfit)}</td><td class="num">${pct(row.operatingMargin)}</td></tr>`).join("")}</tbody></table></div></section>`;
 }
 function renderSensitivity(){
   if(!state.sensitivity){el("sensitivity").innerHTML='<div class="empty-state">Run a scenario to view sensitivity tables.</div>';return;}
@@ -536,8 +736,108 @@ function renderSensitivity(){
     renderSensitivityTable("Marketing",state.sensitivity.marketing,row=>gbp(row.marketingSpend))
   ].join("");
 }
+function comparisonChannel(result,name){return (result?.marketingForecast?.channels||[]).find(channel=>channel.channel===name)||{};}
+const COMPARISON_ROWS=[
+  {id:"operatingProfit",label:"Net profit",type:"money",actual:s=>s.operatingProfit,scenario:r=>r.scenario.operatingProfit},
+  {id:"despatchRevenue",label:"Despatch",type:"money",actual:s=>s.despatchRevenue,scenario:r=>r.scenario.despatchRevenue},
+  {id:"demandRevenue",label:"Demand",type:"money",actual:s=>s.demandRevenue,scenario:r=>r.scenario.demandRevenue},
+  {id:"aov",label:"AOV",type:"moneyExact",actual:s=>s.aov,scenario:r=>r.scenario.aov},
+  {id:"grossMargin",label:"Gross profit %",type:"pct",actual:s=>s.grossMargin,scenario:r=>r.scenario.grossMargin},
+  {id:"marketingSpend",label:"Marketing spend",type:"money",actual:s=>s.marketingSpend,scenario:r=>r.scenario.marketingSpend,badHigher:true},
+  {id:"fixedCostImpact",label:"Fixed cost drag",type:"pct",actual:s=>s.fixedCostImpact,scenario:r=>r.scenario.fixedCostImpact,badHigher:true},
+  {id:"contributionProfit",label:"Contribution before fixed",type:"money",actual:s=>s.contributionProfit,scenario:r=>r.scenario.contributionProfit},
+  {id:"googleSpend",label:"Google spend",type:"moneyExact",actual:()=>statementChannel("Google").amount,scenario:r=>comparisonChannel(r,"Google").scenarioSpend??comparisonChannel(r,"Google").amount,badHigher:true},
+  {id:"googleRoas",label:"Google ROAS",type:"roas",actual:()=>statementChannel("Google").attributedRoas,scenario:r=>comparisonChannel(r,"Google").scenarioReturn||comparisonChannel(r,"Google").calibratedReturn},
+  {id:"metaSpend",label:"Meta spend",type:"moneyExact",actual:()=>statementChannel("Meta").amount,scenario:r=>comparisonChannel(r,"Meta").scenarioSpend??comparisonChannel(r,"Meta").amount,badHigher:true},
+  {id:"metaRoas",label:"Meta ROAS",type:"roas",actual:()=>statementChannel("Meta").attributedRoas,scenario:r=>comparisonChannel(r,"Meta").scenarioReturn||comparisonChannel(r,"Meta").calibratedReturn},
+  {id:"variableCostTotal",label:"Variable costs",type:"money",actual:s=>s.variableCostTotal,scenario:r=>r.scenario.variableCostTotal,badHigher:true},
+  {id:"variableCostPerOrder",label:"Variable cost / order",type:"moneyExact",actual:s=>s.variableCostPerOrder,scenario:r=>r.scenario.variableCostPerOrder,badHigher:true},
+  {id:"breakEvenRoas",label:"Break-even ROAS",type:"roas",actual:()=>null,scenario:r=>r.breakEvenMarketing?.requiredReturn,badHigher:true},
+  {id:"profitPerDay",label:"Net profit / day",type:"money",actual:s=>s.profitPerDay,scenario:r=>r.scenario.profitPerDay}
+];
+function compareFormat(value,type){
+  if(value==null||value==="")return "-";
+  if(type==="pct")return pct(value);
+  if(type==="roas")return roas(value);
+  if(type==="moneyExact")return gbp(value,true);
+  return gbp(value);
+}
+function compareDelta(actual,scenario,type){
+  if(actual==null||actual===""||scenario==null||scenario==="")return "";
+  const delta=Number(scenario||0)-Number(actual||0);
+  if(type==="pct")return `${delta>0?"+":""}${(delta*100).toFixed(1)}pp`;
+  if(type==="roas")return `${delta>0?"+":""}${delta.toFixed(2)}x`;
+  return type==="moneyExact"?signedGbp(delta,true):signedGbp(delta);
+}
+function renderScenarioComparison(){
+  const box=el("scenario-comparison");
+  if(!box)return;
+  const scenarios=state.scenarioComparisons||[];
+  el("comparison-pill").textContent=`${scenarios.length} scenario${scenarios.length===1?"":"s"}`;
+  if(!state.statement){box.innerHTML='<div class="empty-state">Load actuals to compare scenarios.</div>';return;}
+  if(!scenarios.length){box.innerHTML='<div class="empty-state">No temporary scenarios added.</div>';return;}
+  const header=scenarios.map(item=>`<th class="num"><span class="compare-name">${esc(item.name)} <button class="btn small" type="button" onclick="removeScenarioComparison('${attr(item.id)}')">Remove</button></span></th>`).join("");
+  const rows=COMPARISON_ROWS.map(row=>{
+    const actual=row.actual?row.actual(state.statement):null;
+    const cells=scenarios.map(item=>{
+      const scenario=row.scenario(item.result);
+      const delta=compareDelta(actual,scenario,row.type);
+      const deltaNumeric=actual==null?0:Number(scenario||0)-Number(actual||0);
+      const cls=!delta?"" : deltaNumeric>=0?(row.badHigher?"bad":"good"):(row.badHigher?"good":"bad");
+      return `<td class="num"><span class="compare-value"><strong>${compareFormat(scenario,row.type)}</strong>${delta?`<small class="${cls}">${esc(delta)}</small>`:""}</span></td>`;
+    }).join("");
+    return `<tr><td>${esc(row.label)}</td><td class="num">${compareFormat(actual,row.type)}</td>${cells}</tr>`;
+  }).join("");
+  box.innerHTML=`<table><thead><tr><th>Metric</th><th class="num">Actual</th>${header}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+function renderLeverage(){
+  const summary=el("leverage-summary");
+  const table=el("leverage-table");
+  if(!summary||!table)return;
+  const leverage=state.scenario?.leverage;
+  if(!leverage){
+    el("leverage-pill").textContent="Scenario required";
+    summary.innerHTML=[
+      metric("Breakeven daily despatch","-"),
+      metric("Low fixed-drag daily","-"),
+      metric("Fixed cost drag","-"),
+      metric("Fixed cost / order","-"),
+      metric("Contribution before fixed","-"),
+      metric("Net profit %","-")
+    ].join("");
+    table.innerHTML='<div class="empty-state">Run a scenario to view operating leverage.</div>';
+    return;
+  }
+  el("leverage-pill").textContent="Ready";
+  const selected=leverage.selected||{};
+  const breakEven=leverage.breakEven||{};
+  const lowDrag=leverage.lowFixedDrag||{};
+  summary.innerHTML=[
+    metric("Breakeven daily despatch",breakEven.dailyDespatch!=null?gbp(breakEven.dailyDespatch):"-",breakEven.operatingProfit!=null?`${gbp(breakEven.operatingProfit)} net profit`:""),
+    metric("Low fixed-drag daily",lowDrag.dailyDespatch!=null?gbp(lowDrag.dailyDespatch):"-",`Fixed drag ${pct(leverage.fixedDragThreshold||0)}`),
+    metric("Fixed cost drag",pct(selected.fixedCostImpact),`${gbp(selected.fixedCostTotal)} fixed costs`),
+    metric("Fixed cost / order",gbp(selected.fixedCostPerOrder,true),`${numberFmt.format(selected.orders||0)} orders`),
+    metric("Contribution before fixed",gbp(selected.contributionProfit),pct(selected.contributionMargin),selected.contributionProfit>=0?"good":"bad"),
+    metric("Net profit %",pct(selected.operatingMargin),`${gbp(selected.operatingProfit)} net profit`,selected.operatingProfit>=0?"good":"bad")
+  ].join("");
+  const points=leverage.points||[];
+  const max=Math.max(1,...points.map(point=>Math.abs(Number(point.operatingProfit||0))));
+  const chart=`<div class="chart">${points.map(point=>{
+    const profit=Number(point.operatingProfit||0);
+    const width=Math.max(2,Math.round(Math.abs(profit)/max*100));
+    return `<div class="chart-row"><span class="chart-label">${esc(gbp(point.dailyDespatch))}</span><span class="chart-track"><span class="chart-bar ${profit<0?"bad":""}" style="width:${width}%"></span></span><span class="chart-value ${profit>=0?"good":"bad"}">${gbp(profit)}</span></div>`;
+  }).join("")}</div>`;
+  const rows=points.map(point=>{
+    const selectedMatch=Math.abs(Number(point.dailyDespatch||0)-Number(selected.dailyDespatch||0))<0.01;
+    const breakEvenMatch=breakEven.dailyDespatch!=null&&Math.abs(Number(point.dailyDespatch||0)-Number(breakEven.dailyDespatch||0))<0.01;
+    const lowDragMatch=lowDrag.dailyDespatch!=null&&Math.abs(Number(point.dailyDespatch||0)-Number(lowDrag.dailyDespatch||0))<0.01;
+    const labels=[selectedMatch?"Selected":"",breakEvenMatch?"Breakeven":"",lowDragMatch?"Low drag":""].filter(Boolean).join(", ");
+    return `<tr><td>${gbp(point.dailyDespatch)}${labels?`<span class="delta muted">${esc(labels)}</span>`:""}</td><td class="num">${gbp(point.despatchRevenue)}</td><td class="num">${gbp(point.fixedCostPerOrder,true)}</td><td class="num">${pct(point.fixedCostImpact)}</td><td class="num">${gbp(point.contributionProfit)}</td><td class="num ${point.operatingProfit>=0?"good":"bad"}">${gbp(point.operatingProfit)}</td><td class="num">${pct(point.operatingMargin)}</td></tr>`;
+  }).join("");
+  table.innerHTML=`${chart}<table><thead><tr><th>Daily despatch</th><th class="num">Despatch</th><th class="num">Fixed / order</th><th class="num">Fixed drag</th><th class="num">Contribution</th><th class="num">Net profit</th><th class="num">Net profit %</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
 function renderAll(){
-  renderMetrics();renderSalesBridge();renderPnl();renderWarnings();renderRules();renderSpend();renderScenario();renderSensitivity();updateScalerOutputs();setScenarioControlsEnabled(Boolean(state.statement));setWriteMode();
+  renderMetrics();renderSalesBridge();renderPnl();renderWarnings();renderRules();renderSpend();renderScenario();renderScenarioComparison();renderLeverage();renderSensitivity();updateScalerOutputs();setScenarioControlsEnabled(Boolean(state.statement));setWriteMode();
 }
 function setWriteMode(){
   const can=Boolean(state.settings.canWrite);
@@ -558,9 +858,18 @@ function applyStatementDefaults(){
   const marketingSpend=Number(s.marketingSpend||0);
   const marketingMax=Math.ceil(Math.max(marketingSpend*2,marketingSpend+5000,1000)/100)*100;
   setScaler("sc-marketing",{min:0,max:marketingMax,step:0.01,value:marketingSpend.toFixed(2)});
+  const googleSpend=baseChannelSpend("Google");
+  const metaSpend=baseChannelSpend("Meta");
+  setScaler("sc-google-spend",{min:0,max:Math.ceil(Math.max(googleSpend*2,googleSpend+2500,1000)/100)*100,step:0.01,value:googleSpend.toFixed(2)});
+  setScaler("sc-meta-spend",{min:0,max:Math.ceil(Math.max(metaSpend*2,metaSpend+2500,1000)/100)*100,step:0.01,value:metaSpend.toFixed(2)});
   const marketingReturn=Number(s.marketingSpend||0)>0?s.despatchRevenue/s.marketingSpend:0;
+  const googleReturn=Number(channelForecast("Google").attributedRoas||channelForecast("Google").scenarioReturn||channelForecast("Google").calibratedReturn||marketingReturn||0);
+  const metaReturn=Number(channelForecast("Meta").attributedRoas||channelForecast("Meta").scenarioReturn||channelForecast("Meta").calibratedReturn||marketingReturn||0);
+  setScaler("sc-google-roas",{min:0,max:Math.ceil(Math.max(googleReturn*2,marketingReturn*2,10)),step:0.01,value:googleReturn.toFixed(2)});
+  setScaler("sc-meta-roas",{min:0,max:Math.ceil(Math.max(metaReturn*2,marketingReturn*2,10)),step:0.01,value:metaReturn.toFixed(2)});
   setScaler("sc-marketing-return",{min:0,max:Math.ceil(Math.max(marketingReturn*2,10)),step:0.01,value:marketingReturn?marketingReturn.toFixed(2):0});
   el("sc-marketing-drives").checked=Boolean(marketingReturn);
+  linkedDailyBaseline=baseDaily;
   const marginPct=Number(s.grossMargin||0)*100;
   setScaler("sc-margin",{min:Math.max(0,Math.floor(marginPct-25)),max:Math.min(95,Math.ceil(marginPct+25)),step:0.1,value:marginPct.toFixed(1)});
   const itemsPerOrder=Number(s.itemsPerOrder||0);
@@ -576,10 +885,19 @@ async function loadActuals(){
     if(!data.configured){state.statement=null;setStatus(data.message||"Shopify is not configured.","warn");renderAll();return;}
     state.statement=data.statement;
     state.scenario=null;state.sensitivity=null;
+    state.scenarioComparisons=[];
     const sourceType=data.source?.type==="shopifyql_sales"?"ShopifyQL report actuals":`${Number(data.source?.orderCount||0).toLocaleString("en-GB")} Shopify orders`;
     el("source-note").textContent=`${sourceType} fetched for ${data.range?.startDate||val("date-from")} to ${data.range?.endDate||val("date-to")} ${data.source?.fetchedAt?`at ${new Date(data.source.fetchedAt).toLocaleString("en-GB")}`:""}`;
     applyStatementDefaults();
-    setStatus("P&L actuals loaded.","ok");
+    const autoSync=data.windsorSync||{};
+    if(autoSync.status==="synced"){
+      const parts=(autoSync.channels||[]).map(item=>`${item.channel} ${gbp(item.amount)}`).join(", ");
+      setStatus(`P&L actuals loaded. Windsor auto-synced ${parts||"marketing spend"}.`,"ok");
+    }else if(autoSync.status==="error"){
+      setStatus(`P&L actuals loaded, but Windsor auto-sync failed: ${autoSync.error}`,"warn");
+    }else{
+      setStatus("P&L actuals loaded.","ok");
+    }
     renderAll();
     await runScenario({auto:true});
   }catch(error){setStatus(error.message,"err");}
@@ -595,11 +913,19 @@ async function runScenario(options={}){
     const baseMarginPct=Number(state.statement.grossMargin||0)*100;
     const itemsInput=Number(val("sc-items-order")||state.statement.itemsPerOrder||0);
     const baseItems=Number(state.statement.itemsPerOrder||0);
+    const googleSpend=channelScenarioSpend("Google");
+    const metaSpend=channelScenarioSpend("Meta");
+    const googleReturn=channelScenarioReturn("Google");
+    const metaReturn=channelScenarioReturn("Meta");
+    const marketingSpend=scenarioMarketingSpendFromChannels();
     const drivers={
       targetDailySales:Math.abs(dailyInput-baseDaily)<0.01?baseDaily:dailyInput,
       aovDelta:Number(val("sc-aov-delta")||0),
-      marketingSpend:val("sc-marketing")===""?"":Number(val("sc-marketing")||0),
+      marketingSpend,
+      channelMarketingSpend:{Google:googleSpend,Meta:metaSpend},
+      channelMarketingReturn:{Google:googleReturn,Meta:metaReturn},
       marketingDrivesSales:el("sc-marketing-drives").checked,
+      targetDailySalesIncludesMarketing:el("sc-marketing-drives").checked,
       marketingReturn:val("sc-marketing-return")===""?"":Number(val("sc-marketing-return")||0),
       grossMarginOverride:Math.abs(marginInput-baseMarginPct)<0.05?"":marginInput,
       itemsPerOrder:Math.abs(itemsInput-baseItems)<0.01?baseItems:itemsInput
@@ -607,9 +933,37 @@ async function runScenario(options={}){
     const data=await apiJson("/api/pnl/scenario",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({actuals:state.statement,drivers})});
     if(requestId!==scenarioRequestId)return;
     state.scenario=data;state.sensitivity=data.sensitivity;
-    el("scenario-note").textContent=`Scenario net profit ${gbp(data.scenario.operatingProfit)} (${pct(data.scenario.operatingMargin)} margin).`;
+    el("scenario-note").textContent=`Scenario net profit ${gbp(data.scenario.operatingProfit)} (${pct(data.scenario.operatingMargin)} net profit).`;
     renderAll();
+    return data;
   }catch(error){el("scenario-note").textContent=error.message;}
+}
+async function saveScenarioComparison(){
+  if(!state.statement){setStatus("Load actuals before adding a scenario comparison.","warn");return;}
+  if(!state.scenario)await runScenario({auto:true});
+  if(!state.scenario)return;
+  const nextNumber=(state.scenarioComparisons||[]).length+1;
+  const name=val("scenario-name")||`Scenario ${nextNumber}`;
+  state.scenarioComparisons.push({
+    id:`scenario-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name,
+    result:snapshot(state.scenario)
+  });
+  el("scenario-name").value="";
+  el("scenario-note").textContent=`Added ${name} to comparison.`;
+  renderScenarioComparison();
+}
+function removeScenarioComparison(id){
+  state.scenarioComparisons=(state.scenarioComparisons||[]).filter(item=>item.id!==id);
+  renderScenarioComparison();
+}
+async function resetScenarioControls(){
+  if(!state.statement){setStatus("Load actuals before resetting scenario drivers.","warn");return;}
+  state.scenario=null;
+  state.sensitivity=null;
+  applyStatementDefaults();
+  renderAll();
+  await runScenario({auto:true});
 }
 function clearRule(){["rule-id","rule-name","rule-amount","rule-rate","rule-first","rule-additional","rule-start","rule-end","rule-notes"].forEach(id=>el(id).value="");el("rule-category").value="Fulfilment";el("rule-status").value="Active";el("rule-type").value="fixed_monthly";}
 function editRule(id){const rule=state.settings.costRules.find(item=>item.id===id);if(!rule)return;el("rule-id").value=rule.id;el("rule-name").value=rule.name;el("rule-category").value=rule.category;el("rule-status").value=rule.status;el("rule-type").value=rule.costType;el("rule-amount").value=rule.amount||"";el("rule-rate").value=rule.rate?Number(rule.rate*100).toFixed(2):"";el("rule-first").value=rule.firstItemRate||"";el("rule-additional").value=rule.additionalItemRate||"";el("rule-start").value=rule.effectiveStart||"";el("rule-end").value=rule.effectiveEnd||"";el("rule-notes").value=rule.notes||"";window.scrollTo({top:document.getElementById("rule-form").getBoundingClientRect().top+window.scrollY-80,behavior:"smooth"});}
@@ -646,7 +1000,7 @@ async function syncWindsorSpend(){
     renderAll();
   }
 }
-window.editRule=editRule;window.deleteRule=deleteRule;window.editSpend=editSpend;window.deleteSpend=deleteSpend;
+window.editRule=editRule;window.deleteRule=deleteRule;window.editSpend=editSpend;window.deleteSpend=deleteSpend;window.removeScenarioComparison=removeScenarioComparison;
 
 document.getElementById("apply-quick-btn").addEventListener("click",()=>{setQuick(val("quick-period"));clearSpend();setStatus(val("quick-period")==="custom"?"Custom period unchanged. Click Load actuals to fetch it.":"Period dates updated. Click Load actuals.","ok");});
 document.getElementById("quick-period").addEventListener("change",()=>{setQuick(val("quick-period"));clearSpend();setStatus(val("quick-period")==="custom"?"Custom period selected. Enter dates, then click Load actuals.":"Period dates updated. Click Load actuals.","ok");});
@@ -655,12 +1009,14 @@ document.getElementById("date-to").addEventListener("change",markCustomPeriod);
 document.getElementById("load-btn").addEventListener("click",loadActuals);
 document.getElementById("settings-btn").addEventListener("click",async()=>{await loadSettings();setStatus("Settings refreshed.","ok");});
 document.getElementById("scenario-btn").addEventListener("click",runScenario);
+document.getElementById("save-scenario-btn").addEventListener("click",()=>saveScenarioComparison().catch(error=>setStatus(error.message,"err")));
+document.getElementById("reset-scenario-btn").addEventListener("click",()=>resetScenarioControls().catch(error=>setStatus(error.message,"err")));
 SCALERS.forEach(id=>{
   const pair=controlPair(id);
   pair.range?.addEventListener("input",()=>syncScaler(id,"range"));
   pair.number?.addEventListener("input",()=>syncScaler(id,"number"));
 });
-document.getElementById("sc-marketing-drives").addEventListener("change",queueScenario);
+document.getElementById("sc-marketing-drives").addEventListener("change",()=>{updateLinkedDailyFromMarketing();updateScalerOutputs();queueScenario();});
 document.getElementById("save-rule-btn").addEventListener("click",()=>saveRule().catch(error=>setStatus(error.message,"err")));
 document.getElementById("clear-rule-btn").addEventListener("click",clearRule);
 document.getElementById("save-spend-btn").addEventListener("click",()=>saveSpend().catch(error=>setStatus(error.message,"err")));
