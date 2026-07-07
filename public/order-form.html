@@ -54,6 +54,12 @@ textarea{min-height:72px;resize:vertical}
 .empty{font-size:12px;color:var(--soft);line-height:1.5}
 .notice{display:none;margin-bottom:14px;border:.5px solid var(--line);border-radius:var(--r);padding:10px 12px;font-size:13px;line-height:1.5;background:var(--bg2);color:var(--muted)}
 .notice.show{display:block}.notice.ok{color:var(--good);border-color:rgba(21,128,61,.4)}.notice.err{color:var(--bad);border-color:rgba(185,28,28,.4)}
+.supplier-credit{display:none;margin:-2px 0 12px;border:.5px solid rgba(180,83,9,.35);border-radius:var(--r);background:#fff8eb;color:#7c4a03;padding:10px 12px;font-size:12px;line-height:1.45}
+.supplier-credit.show{display:block}
+.supplier-credit strong{display:block;color:#172033;font-size:13px;margin-bottom:3px}
+.supplier-credit span{display:block}
+.supplier-credit ul{margin:7px 0 0;padding-left:18px}
+.supplier-credit li{margin:2px 0}
 .checks{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .check{display:flex;gap:8px;align-items:flex-start;color:var(--muted);font-size:13px;line-height:1.4}
 .check input{width:auto;margin-top:2px}
@@ -106,6 +112,7 @@ textarea{min-height:72px;resize:vertical}
           <div class="field"><label>Saved supplier</label><select id="supplier-picker"><option value="">Select saved supplier</option></select></div>
           <div class="field"><label>Supplier reference / code</label><input id="sup-ref" placeholder="SUP-00142"></div>
         </div>
+        <div class="supplier-credit" id="supplier-credit-summary"></div>
         <div class="grid3" style="margin-bottom:12px">
           <div class="field"><label>Supplier name</label><input id="sup-name" placeholder="Company or trader name"></div>
           <div class="field"><label>Contact name</label><input id="sup-contact" placeholder="Account manager"></div>
@@ -275,6 +282,36 @@ function savedOrderSupplierTotal(order){
   return Number(lineTotal||order?.totals?.subtotal||order?.totals?.grand||0);
 }
 
+function supplierByName(name){
+  const needle=String(name||"").trim().toLowerCase();
+  if(!needle)return null;
+  return (bootstrap.suppliers||[]).find(supplier=>String(supplier.name||"").trim().toLowerCase()===needle)||null;
+}
+
+function renderSupplierCreditSummary(supplierOrName){
+  const box=el("supplier-credit-summary");
+  if(!box)return;
+  const supplier=typeof supplierOrName==="object"?supplierOrName:supplierByName(supplierOrName);
+  const credit=supplier?.creditBalance||null;
+  const due=Number(credit?.creditDueGbp||0);
+  const count=Number(credit?.openCreditCount||0);
+  if(!due){
+    box.className="supplier-credit";
+    box.innerHTML="";
+    return;
+  }
+  const items=(credit.items||[]).slice(0,3).map(item=>{
+    const order=item.orderNumber||item.orderId||"Previous order";
+    const line=[item.sku,item.style].filter(Boolean).join(" / ");
+    return `<li>${escapeHtml(order)}: ${money.format(Number(item.valueGbp||0))}${line?` - ${escapeHtml(line)}`:""}</li>`;
+  }).join("");
+  box.className="supplier-credit show";
+  box.innerHTML=`
+    <strong>Supplier credit balance: ${money.format(due)}</strong>
+    <span>${count.toLocaleString("en-GB")} open credit ${count===1?"note is":"notes are"} due. Finance should deduct this from the next supplier invoice.</span>
+    ${items?`<ul>${items}</ul>`:""}`;
+}
+
 async function loadBootstrap(){
   const response=await apiFetch("/api/order-form/bootstrap");
   bootstrap=await response.json();
@@ -321,6 +358,7 @@ function newOrder(){
   set("del-postcode",bootstrap.delivery.postcode);
   set("del-country",bootstrap.delivery.country);
   el("lines-wrap").innerHTML="";
+  renderSupplierCreditSummary("");
   addLine();
   calc();
 }
@@ -345,6 +383,7 @@ function applySupplier(){
   set("sup-sort-code",supplier.sortCode);
   set("sup-account-number",supplier.accountNumber);
   set("sup-payment-notes",supplier.paymentNotes);
+  renderSupplierCreditSummary(supplier);
 }
 
 function loadSavedOrder(id){
@@ -367,6 +406,7 @@ function loadSavedOrder(id){
   set("sup-sort-code",order.supplier?.sortCode);
   set("sup-account-number",order.supplier?.accountNumber);
   set("sup-payment-notes",order.supplier?.paymentNotes);
+  renderSupplierCreditSummary(order.supplier?.name);
   set("co-name",order.company?.name);
   set("co-department",order.company?.department);
   set("co-email",order.company?.buyerEmail);
@@ -910,6 +950,9 @@ el("order-form").addEventListener("submit",async event=>{
   await loadBootstrap();
   loadSavedOrder(result.order.id);
 });
+
+el("supplier-picker").addEventListener("change",()=>renderSupplierCreditSummary(val("supplier-picker")));
+el("sup-name").addEventListener("input",()=>renderSupplierCreditSummary(val("sup-name")));
 
 loadBootstrap().catch(error=>notice(error.message,"err"));
 </script>

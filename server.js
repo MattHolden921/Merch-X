@@ -6,6 +6,7 @@ const path = require("node:path");
 const Database = require("better-sqlite3");
 const { createEmailCampaignService } = require("./lib/email-campaign-service");
 const { buildLabelJobSnapshot, normalizeDoubleBarcodeSnapshot } = require("./lib/label-jobs");
+const orderActuals = require("./lib/order-actuals");
 const { DEFAULT_PAH_SETTINGS, buildPahReport, safeSettings: safePahSettings } = require("./lib/pah-report");
 const pnl = require("./lib/pnl");
 const salePlanner = require("./lib/sale-planner");
@@ -736,6 +737,52 @@ async function fetchGaMetrics(range) {
   return { available: true, message: "", metrics };
 }
 
+async function fetchGaDailyMetrics(range) {
+  const { propertyId, oauthRefreshToken, credentials } = gaConfig();
+  if (!propertyId || (!oauthRefreshToken && !credentials)) {
+    return { available: false, message: "Set GA4_PROPERTY_ID and connect Google OAuth to add Analytics ecommerce metrics.", metrics: [] };
+  }
+
+  const response = await requestJson(`https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${await googleAccessToken()}`
+    },
+    body: JSON.stringify({
+      dateRanges: [{ startDate: range.startDate, endDate: range.endDate }],
+      dimensions: [{ name: "date" }, { name: "itemId" }, { name: "itemName" }],
+      metrics: [
+        { name: "itemsViewed" },
+        { name: "itemsAddedToCart" },
+        { name: "itemsPurchased" },
+        { name: "itemRevenue" }
+      ],
+      limit: "100000"
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(response.json.error?.message || `Google Analytics API error: ${response.status}`);
+  }
+
+  const metrics = (response.json.rows || []).map((row) => {
+    const rawDate = row.dimensionValues?.[0]?.value || "";
+    const date = /^\d{8}$/.test(rawDate) ? `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}` : "";
+    return {
+      date,
+      itemId: row.dimensionValues?.[1]?.value || "",
+      itemName: row.dimensionValues?.[2]?.value || "",
+      views: Number(row.metricValues?.[0]?.value || 0),
+      adds: Number(row.metricValues?.[1]?.value || 0),
+      purchases: Number(row.metricValues?.[2]?.value || 0),
+      revenue: Number(row.metricValues?.[3]?.value || 0)
+    };
+  }).filter(row => row.date);
+
+  return { available: true, message: "", metrics };
+}
+
 function mergeGaMetrics(products, gaRows) {
   const byKey = new Map();
   gaRows.forEach((row, index) => {
@@ -779,6 +826,47 @@ function mergeGaMetrics(products, gaRows) {
   });
 }
 
+function mapGaDailyMetrics(products, gaRows) {
+  const byKey = new Map();
+  gaRows.forEach((row, index) => {
+    const keys = [row.itemId, row.itemName].map(normalizedKey).filter(Boolean);
+    for (const key of keys) {
+      const current = byKey.get(key) || [];
+      current.push({ index, row });
+      byKey.set(key, current);
+    }
+  });
+
+  const result = new Map();
+  for (const product of products || []) {
+    const keys = [
+      product.id,
+      product.legacyResourceId,
+      product.handle,
+      product.title,
+      ...(product.skus || []),
+      ...(product.variantIds || [])
+    ].map(normalizedKey).filter(Boolean);
+    const seen = new Set();
+    const byDate = new Map();
+    for (const key of keys) {
+      const matches = byKey.get(key) || [];
+      for (const match of matches) {
+        if (seen.has(match.index)) continue;
+        seen.add(match.index);
+        const metric = byDate.get(match.row.date) || { views: 0, adds: 0, purchases: 0, gaRevenue: 0 };
+        metric.views += match.row.views;
+        metric.adds += match.row.adds;
+        metric.purchases += match.row.purchases;
+        metric.gaRevenue += match.row.revenue;
+        byDate.set(match.row.date, metric);
+      }
+    }
+    if (byDate.size) result.set(product.id, byDate);
+  }
+  return result;
+}
+
 async function fetchOrderMetrics(range) {
   const metrics = new Map();
   let cursor = null;
@@ -810,6 +898,50 @@ async function fetchOrderMetrics(range) {
         current.revenue += Number(item.discountedTotalSet?.shopMoney?.amount || 0);
         current.units += Number(item.quantity || 0);
         metrics.set(item.product.id, current);
+      }
+    }
+    hasNextPage = orders.pageInfo.hasNextPage;
+    cursor = orders.pageInfo.endCursor;
+  }
+  return metrics;
+}
+
+async function fetchOrderDailyMetrics(range) {
+  const metrics = new Map();
+  let cursor = null;
+  let hasNextPage = true;
+  const orderQuery = orderQueryForRange(range);
+  const query = `
+    query MerchDailyOrders($cursor: String, $query: String!) {
+      orders(first: 100, after: $cursor, query: $query, sortKey: CREATED_AT, reverse: true) {
+        nodes {
+          createdAt
+          lineItems(first: 100) {
+            nodes {
+              quantity
+              discountedTotalSet { shopMoney { amount } }
+              product { id }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  `;
+  while (hasNextPage) {
+    const data = await shopifyGraphql(query, { cursor, query: orderQuery });
+    const orders = data.orders;
+    for (const order of orders.nodes) {
+      const day = dateOnlyFromIso(order.createdAt);
+      if (!day) continue;
+      for (const item of order.lineItems.nodes) {
+        if (!item.product?.id) continue;
+        const byDate = metrics.get(item.product.id) || new Map();
+        const current = byDate.get(day) || { revenue: 0, units: 0 };
+        current.revenue += Number(item.discountedTotalSet?.shopMoney?.amount || 0);
+        current.units += Number(item.quantity || 0);
+        byDate.set(day, current);
+        metrics.set(item.product.id, byDate);
       }
     }
     hasNextPage = orders.pageInfo.hasNextPage;
@@ -955,6 +1087,8 @@ async function fetchShopifyMerchandising(req, res) {
   const limitParam = url.searchParams.get("limit") || "all";
   const fetchAllProducts = limitParam === "all";
   const productLimit = fetchAllProducts ? Infinity : Math.max(12, Math.min(250, Number(limitParam || 120)));
+  const updatedSinceDate = dateOnlyFromIso(url.searchParams.get("updatedSince") || "");
+  const updatedSinceTime = updatedSinceDate ? new Date(`${updatedSinceDate}T00:00:00.000Z`).getTime() : 0;
   let orderMetrics = new Map();
   let ordersAvailable = true;
   try {
@@ -980,6 +1114,14 @@ async function fetchShopifyMerchandising(req, res) {
           tags
           seasonMetafield: metafield(namespace: "custom", key: "season") { value }
           productStatusMetafield: metafield(namespace: "custom", key: "product_status") { value }
+          featuredMedia {
+            ... on MediaImage {
+              id
+              createdAt
+              updatedAt
+              image { url altText }
+            }
+          }
           featuredImage { url altText }
           images(first: 1) { nodes { url altText } }
           variants(first: 100) {
@@ -1011,7 +1153,24 @@ async function fetchShopifyMerchandising(req, res) {
     while (hasNextPage && rawProducts.length < productLimit) {
       const remaining = fetchAllProducts ? 250 : Math.min(250, productLimit - rawProducts.length);
       const data = await shopifyGraphql(query, { limit: remaining, cursor, productQuery });
-      rawProducts.push(...data.products.nodes);
+      const pageProducts = data.products.nodes || [];
+      if (updatedSinceTime) {
+        let reachedCutoff = false;
+        for (const product of pageProducts) {
+          const updatedTime = product.updatedAt ? new Date(product.updatedAt).getTime() : 0;
+          if (Number.isFinite(updatedTime) && updatedTime >= updatedSinceTime) {
+            rawProducts.push(product);
+          } else {
+            reachedCutoff = true;
+          }
+        }
+        if (reachedCutoff) {
+          hasNextPage = false;
+          break;
+        }
+      } else {
+        rawProducts.push(...pageProducts);
+      }
       hasNextPage = Boolean(data.products.pageInfo.hasNextPage);
       cursor = data.products.pageInfo.endCursor;
     }
@@ -3510,6 +3669,8 @@ function openOrderSqliteDb() {
       due_date TEXT,
       amount REAL DEFAULT 0,
       currency TEXT,
+      document_kind TEXT NOT NULL DEFAULT 'invoice',
+      linked_discrepancy_id TEXT,
       is_received INTEGER DEFAULT 0,
       sent_to_fd INTEGER DEFAULT 0,
       status TEXT,
@@ -3554,6 +3715,53 @@ function openOrderSqliteDb() {
       buying_code TEXT,
       style TEXT,
       quantity REAL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS order_receipt_lines (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      batch_id TEXT NOT NULL,
+      line_index INTEGER NOT NULL,
+      sku TEXT,
+      buying_code TEXT,
+      style TEXT,
+      expected_quantity REAL DEFAULT 0,
+      received_quantity REAL DEFAULT 0,
+      damaged_quantity REAL DEFAULT 0,
+      accepted_quantity REAL DEFAULT 0,
+      short_quantity REAL DEFAULT 0,
+      over_quantity REAL DEFAULT 0,
+      received_date TEXT,
+      notes TEXT,
+      actor_name TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(order_id, batch_id, line_index)
+    );
+
+    CREATE TABLE IF NOT EXISTS order_discrepancies (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      batch_id TEXT,
+      line_index INTEGER,
+      receipt_line_id TEXT,
+      source_key TEXT,
+      discrepancy_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Open',
+      resolution_type TEXT,
+      sku TEXT,
+      buying_code TEXT,
+      style TEXT,
+      quantity REAL DEFAULT 0,
+      value_gbp REAL DEFAULT 0,
+      currency TEXT,
+      linked_invoice_id TEXT,
+      notes TEXT,
+      actor_name TEXT,
+      resolved_at TEXT,
+      data TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -4040,6 +4248,9 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_order_invoices_order ON order_invoices(order_id, updated_at);
     CREATE INDEX IF NOT EXISTS idx_order_batches_order ON order_batches(order_id, updated_at);
     CREATE INDEX IF NOT EXISTS idx_order_batch_lines_order ON order_batch_lines(order_id, batch_id, line_index);
+    CREATE INDEX IF NOT EXISTS idx_order_receipt_lines_order ON order_receipt_lines(order_id, batch_id, line_index);
+    CREATE INDEX IF NOT EXISTS idx_order_discrepancies_order ON order_discrepancies(order_id, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_order_discrepancies_source ON order_discrepancies(source_key, status);
     CREATE INDEX IF NOT EXISTS idx_report_sources_lookup ON report_sources(report_type, source_type, start_date, end_date);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_report_periods_unique ON report_periods(report_type, source_type, start_date, end_date);
     CREATE INDEX IF NOT EXISTS idx_report_periods_dates ON report_periods(report_type, start_date, end_date);
@@ -4091,6 +4302,17 @@ function openOrderSqliteDb() {
   if (!invoiceColumns.includes("file_size")) {
     orderSqliteDb.prepare("ALTER TABLE order_invoices ADD COLUMN file_size INTEGER DEFAULT 0").run();
   }
+  if (!invoiceColumns.includes("document_kind")) {
+    orderSqliteDb.prepare("ALTER TABLE order_invoices ADD COLUMN document_kind TEXT NOT NULL DEFAULT 'invoice'").run();
+  }
+  if (!invoiceColumns.includes("linked_discrepancy_id")) {
+    orderSqliteDb.prepare("ALTER TABLE order_invoices ADD COLUMN linked_discrepancy_id TEXT").run();
+  }
+  orderSqliteDb.prepare(`
+    UPDATE order_invoices
+    SET document_kind = 'credit_note'
+    WHERE LOWER(COALESCE(invoice_type, '')) = 'credit note'
+  `).run();
   const pnlMarketingColumns = orderSqliteDb.prepare("PRAGMA table_info(pnl_marketing_spend)").all().map(column => column.name);
   if (!pnlMarketingColumns.includes("source")) {
     orderSqliteDb.prepare("ALTER TABLE pnl_marketing_spend ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'").run();
@@ -4801,7 +5023,7 @@ function orderStatusFromWorkflow(workflow) {
   return "";
 }
 
-function nextActionForWorkflow(order, workflow) {
+function nextActionForWorkflow(order, workflow, supplierCredits = null) {
   const approvalStatus = workflow?.approvalStatus || "Not requested";
   const paymentStatus = workflow?.paymentStatus || "Not due";
   const intakeStatus = workflow?.intakeStatus || "Not confirmed";
@@ -4810,10 +5032,19 @@ function nextActionForWorkflow(order, workflow) {
   if (approvalStatus === "Changes requested") return { nextActionOwner: "Buyer", nextAction: "Update order and resubmit" };
   if (approvalStatus === "Rejected") return { nextActionOwner: "Buyer", nextAction: "Review rejected order" };
   if (approvalStatus !== "Approved") return { nextActionOwner: "Buyer", nextAction: "Prepare or submit order" };
-  if (paymentStatus === "Awaiting invoice") return { nextActionOwner: "Buyer", nextAction: "Awaiting supplier invoice" };
-  if (paymentStatus === "Ready to pay") return { nextActionOwner: "FD / Finance", nextAction: "Pay supplier invoice" };
-  if (paymentStatus === "Part paid") return { nextActionOwner: "Buyer", nextAction: "Awaiting next supplier invoice" };
-  if (paymentStatus === "Overdue") return { nextActionOwner: "FD / Finance", nextAction: "Resolve overdue supplier payment" };
+  const supplierCreditDue = Number(supplierCreditSummary(order?.supplier?.name || order?.supplierName, supplierCredits).creditDueGbp || 0);
+  if (paymentStatus === "Awaiting invoice") return supplierCreditDue > 0
+    ? { nextActionOwner: "FD / Finance", nextAction: "Apply supplier credit to next invoice" }
+    : { nextActionOwner: "Buyer", nextAction: "Awaiting supplier invoice" };
+  if (paymentStatus === "Ready to pay") return supplierCreditDue > 0
+    ? { nextActionOwner: "FD / Finance", nextAction: "Apply supplier credit to next invoice" }
+    : { nextActionOwner: "FD / Finance", nextAction: "Pay supplier invoice" };
+  if (paymentStatus === "Part paid") return supplierCreditDue > 0
+    ? { nextActionOwner: "FD / Finance", nextAction: "Apply supplier credit to next invoice" }
+    : { nextActionOwner: "Buyer", nextAction: "Awaiting next supplier invoice" };
+  if (paymentStatus === "Overdue") return supplierCreditDue > 0
+    ? { nextActionOwner: "FD / Finance", nextAction: "Apply supplier credit to next invoice" }
+    : { nextActionOwner: "FD / Finance", nextAction: "Resolve overdue supplier payment" };
   if (paymentStatus !== "Paid") return { nextActionOwner: "Buyer", nextAction: "Confirm invoice and payment plan" };
   if (intakeStatus === "Not confirmed" && !orderProductCompletion(order).complete) {
     return { nextActionOwner: "Buyer", nextAction: productCompletionNextAction };
@@ -5005,7 +5236,7 @@ function assertOrderProductsCompleteForWarehouse(order) {
 
 const productCompletionNextAction = "Complete Shopify product sync before warehouse booking";
 
-function workflowWithProductCompletionGate(order, workflow, completion) {
+function workflowWithProductCompletionGate(order, workflow, completion, supplierCredits = null) {
   const productCompletion = completion || orderProductCompletion(order);
   if (workflow.approvalStatus !== "Approved" || workflow.paymentStatus !== "Paid" || workflow.intakeStatus !== "Not confirmed") {
     return workflow;
@@ -5019,7 +5250,7 @@ function workflowWithProductCompletionGate(order, workflow, completion) {
     };
   }
   if (workflow.nextAction === productCompletionNextAction) {
-    const next = nextActionForWorkflow(order, workflow);
+    const next = nextActionForWorkflow(order, workflow, supplierCredits);
     return { ...workflow, ...next, nextActionUserId: "" };
   }
   return workflow;
@@ -5037,7 +5268,7 @@ function workflowWithInvoicePaymentState(order, workflow, totals) {
   };
 }
 
-function publicManagedOrder(order, workflowRow, productMap = null) {
+function publicManagedOrder(order, workflowRow, productMap = null, supplierCredits = null) {
   const baseWorkflow = workflowFromRow(workflowRow, order);
   const lines = order.lines || [];
   const units = lines.reduce((total, line) => total + Number(line.quantity || 0), 0);
@@ -5047,7 +5278,7 @@ function publicManagedOrder(order, workflowRow, productMap = null) {
   const productCompletion = orderProductCompletion(order, productMap);
   const invoices = invoiceSummary(order);
   const paymentWorkflow = workflowWithInvoicePaymentState(order, baseWorkflow, invoices);
-  const workflow = workflowWithProductCompletionGate(order, paymentWorkflow, productCompletion);
+  const workflow = workflowWithProductCompletionGate(order, paymentWorkflow, productCompletion, supplierCredits);
   return {
     id: String(order.id || ""),
     orderNumber: order.orderNumber || "",
@@ -5076,6 +5307,7 @@ function publicManagedOrder(order, workflowRow, productMap = null) {
     categories,
     productCompletion,
     invoices,
+    supplierCredit: supplierCreditSummary(order.supplier?.name || order.supplierName, supplierCredits),
     batchSummary: batchSummary(order),
     canDelete: canDeleteOrder(order),
     canArchive: canArchiveOrder(order),
@@ -5369,7 +5601,7 @@ function arrivalSignalForOrder(order, workflow) {
   return { date: "", source: "Missing date" };
 }
 
-function orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invoices) {
+function orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invoices, receiptLines = [], discrepancies = []) {
   const order = managedOrder.order || {};
   const batchLinesByBatch = batchLineQuantityMap(batchLines);
   const lineStats = reportOrderLineStats(order);
@@ -5383,6 +5615,18 @@ function orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invo
   const batchesWithoutLines = batches.filter(batch => !Number(batchLinesByBatch.get(batch.id) || 0)).length;
   const batchedUnits = [...batchLinesByBatch.values()].reduce((total, quantity) => total + Number(quantity || 0), 0);
   const unbatchedUnits = Math.max(0, Number(managedOrder.units || 0) - batchedUnits);
+  const batchSummaryData = managedOrder.batchSummary || {};
+  const actuals = {
+    expectedQuantity: Number(batchSummaryData.expectedUnits || managedOrder.units || 0),
+    receivedQuantity: Number(batchSummaryData.receivedUnits || 0),
+    acceptedQuantity: Number(batchSummaryData.acceptedUnits || 0),
+    damagedQuantity: Number(batchSummaryData.damagedUnits || 0),
+    shortQuantity: Number(batchSummaryData.shortUnits || 0),
+    overQuantity: Number(batchSummaryData.overUnits || 0),
+    fillRate: Number(batchSummaryData.fillRate || 0),
+    receiptLineCount: receiptLines.length
+  };
+  const discrepancySummary = orderActuals.summarizeDiscrepancies(discrepancies);
   return {
     id: managedOrder.id,
     orderNumber: managedOrder.orderNumber,
@@ -5426,12 +5670,14 @@ function orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invo
       invoiceWithoutBatch
     },
     batches: {
-      ...managedOrder.batchSummary,
+      ...batchSummaryData,
       batchedUnits,
       unbatchedUnits,
       batchesWithoutLines,
       nextBatchEta
     },
+    actuals,
+    discrepancies: discrepancySummary,
     categoryBreakdown: lineStats.categories,
     openUrl: `orders.html?id=${encodeURIComponent(managedOrder.id)}`
   };
@@ -5448,6 +5694,7 @@ function buildOrderReports(params = {}) {
   const db = readOrderDb();
   const workflows = readOrderWorkflowMap();
   const products = catalogProductMap();
+  const supplierCredits = supplierCreditSummaries();
   const supplierGroups = new Map();
   const seasonGroups = new Map();
   const categoryGroups = new Map();
@@ -5467,13 +5714,15 @@ function buildOrderReports(params = {}) {
   for (const savedOrder of db.orders) {
     const workflowRow = workflows.get(String(savedOrder.id));
     const syncedOrder = syncOrderStatusFromWorkflowRow(savedOrder, workflowRow);
-    const managedOrder = publicManagedOrder(syncedOrder, workflowRow, products);
+    const managedOrder = publicManagedOrder(syncedOrder, workflowRow, products, supplierCredits);
     if (!includeArchived && managedOrder.archivedAt) continue;
     const workflow = managedOrder.workflow || workflowFromRow(workflowRow, syncedOrder);
     const batches = readOrderBatches(managedOrder.id);
     const batchLines = readOrderBatchLines(managedOrder.id);
     const invoices = readOrderInvoices(managedOrder.id, false);
-    const row = orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invoices);
+    const receiptLines = readOrderReceiptLines(managedOrder.id);
+    const discrepancies = readOrderDiscrepancies(managedOrder.id);
+    const row = orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invoices, receiptLines, discrepancies);
     const portions = orderReportPortions(row, managedOrder.order, batches, batchLines);
     orders.push(row);
 
@@ -5497,6 +5746,7 @@ function buildOrderReports(params = {}) {
     if (["Shipped", "Part shipped"].includes(workflow.intakeStatus) && !row.arrivalDate) exceptionReasons.push("Shipped with no ETA");
     if (workflow.intakeStatus === "In production" && !row.arrivalDate) exceptionReasons.push("In production with no ETA");
     if (row.batches.outstandingUnits > 0 && workflow.intakeStatus === "Received") exceptionReasons.push("Received status with outstanding units");
+    if (row.discrepancies.openCount > 0) exceptionReasons.push("Open receipt discrepancy");
     if (exceptionReasons.length) exceptions.push({ ...row, reason: exceptionReasons.join(", ") });
 
     const actionReason = [];
@@ -5504,6 +5754,8 @@ function buildOrderReports(params = {}) {
     if (["Ready to pay", "Overdue"].includes(workflow.paymentStatus)) actionReason.push("Finance waiting");
     if (workflow.paymentStatus === "Part paid") actionReason.push("Part paid");
     if (["Confirmed", "In production", "Part shipped", "Shipped", "Delayed", "Part received"].includes(workflow.intakeStatus)) actionReason.push("Intake follow-up");
+    if (row.discrepancies.openCount > 0) actionReason.push("Receipt discrepancy");
+    if (row.discrepancies.creditDueGbp > 0) actionReason.push("Credit note due");
     if (!row.productCompletion?.complete) actionReason.push("Product completion block");
     if (!workflow.nextActionOwner) actionReason.push("Unassigned next action");
     nextActions.push({ ...row, reason: actionReason.join(", ") || "Next action" });
@@ -5520,6 +5772,10 @@ function buildOrderReports(params = {}) {
     if (row.batches.count > 0 && row.batches.unbatchedUnits > 0) qualityReasons.push("Unbatched units");
     if (row.batches.count > 0 && row.invoices.invoiceWithoutBatch > 0) qualityReasons.push("Invoice without batch");
     if (row.batches.batchesWithoutLines > 0) qualityReasons.push("Batch without line allocations");
+    const receiptBatchIds = new Set(receiptLines.map(line => line.batchId));
+    if (batches.some(batch => batch.intakeStatus === "Received" && !receiptBatchIds.has(batch.id))) qualityReasons.push("Received batch without actuals");
+    if (invoices.some(invoice => invoice.documentKind === "credit_note" && !invoice.linkedDiscrepancyId)) qualityReasons.push("Credit note without discrepancy");
+    if (discrepancies.some(item => !terminalDiscrepancyStatuses.has(item.status) && !item.resolutionType)) qualityReasons.push("Open discrepancy without resolution");
     if (qualityReasons.length) dataQuality.push({ ...row, reason: qualityReasons.join(", ") });
   }
 
@@ -5540,11 +5796,17 @@ function buildOrderReports(params = {}) {
     total.outstandingInvoicedGbp += Number(order.invoices.outstandingInvoiced || 0);
     total.uninvoicedBalanceGbp += Number(order.invoices.uninvoicedBalance || 0);
     total.outstandingGbp += Number(order.invoices.outstanding || 0);
+    total.acceptedUnits += Number(order.actuals.acceptedQuantity || 0);
+    total.shortUnits += Number(order.actuals.shortQuantity || 0);
+    total.damagedUnits += Number(order.actuals.damagedQuantity || 0);
+    total.openDiscrepancies += Number(order.discrepancies.openCount || 0);
+    total.openCreditValueGbp += Number(order.discrepancies.creditDueGbp || 0);
+    total.creditReceivedGbp += Number(order.discrepancies.creditReceivedGbp || 0);
     total.exceptionOrders = exceptions.length;
     total.nextActionOrders = nextActions.length;
     total.dataQualityOrders = dataQuality.length;
     return total;
-  }, { orders: 0, units: 0, arrivalUnits: 0, orderValueGbp: 0, invoicedGbp: 0, paidGbp: 0, outstandingInvoicedGbp: 0, uninvoicedBalanceGbp: 0, outstandingGbp: 0, exceptionOrders: 0, nextActionOrders: 0, dataQualityOrders: 0 });
+  }, { orders: 0, units: 0, arrivalUnits: 0, orderValueGbp: 0, invoicedGbp: 0, paidGbp: 0, outstandingInvoicedGbp: 0, uninvoicedBalanceGbp: 0, outstandingGbp: 0, acceptedUnits: 0, shortUnits: 0, damagedUnits: 0, openDiscrepancies: 0, openCreditValueGbp: 0, creditReceivedGbp: 0, exceptionOrders: 0, nextActionOrders: 0, dataQualityOrders: 0 });
   metrics.arrivalUnits = arrivals.reduce((sum, portion) => sum + Number(portion.units || 0), 0);
 
   return {
@@ -5579,6 +5841,7 @@ function buildOrderReports(params = {}) {
         currencies: sortedReportGroups(currencyGroups),
         topOrders: [...orders].sort((a, b) => Number(b.totalGbp || 0) - Number(a.totalGbp || 0)).slice(0, 30)
       },
+      supplierPerformance: orderActuals.summarizeSupplierPerformance(orders),
       grouped: {
         owners: sortedReportGroups(ownerGroups, "orders"),
         paymentStatuses: sortedReportGroups(paymentGroups, "orders"),
@@ -5723,6 +5986,8 @@ function deleteStoredOrder(orderId, actorName = "") {
   const invoiceFiles = db.prepare("SELECT file_path FROM order_invoices WHERE order_id = ?").all(String(orderId));
   const remove = db.transaction(() => {
     db.prepare("DELETE FROM order_invoices WHERE order_id = ?").run(String(orderId));
+    db.prepare("DELETE FROM order_discrepancies WHERE order_id = ?").run(String(orderId));
+    db.prepare("DELETE FROM order_receipt_lines WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_batch_lines WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_batches WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_label_jobs WHERE order_id = ?").run(String(orderId));
@@ -5807,6 +6072,118 @@ function readOrderBatchLines(orderId) {
     WHERE order_id = ?
     ORDER BY batch_id, line_index
   `).all(String(orderId)).map(batchLineFromRow);
+}
+
+const discrepancyStatuses = ["Open", "Credit requested", "Credit received", "Replacement expected", "Replacement received", "Accepted variance", "Written off", "Resolved"];
+const discrepancyResolutionTypes = ["", "credit_note", "replacement", "accepted_variance", "write_off", "corrected_receipt"];
+const terminalDiscrepancyStatuses = new Set(["Credit received", "Replacement received", "Accepted variance", "Written off", "Resolved"]);
+
+function receiptLineFromRow(row) {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    batchId: row.batch_id,
+    lineIndex: Number(row.line_index || 0),
+    sku: row.sku || "",
+    buyingCode: row.buying_code || "",
+    style: row.style || "",
+    expectedQuantity: Number(row.expected_quantity || 0),
+    receivedQuantity: Number(row.received_quantity || 0),
+    damagedQuantity: Number(row.damaged_quantity || 0),
+    acceptedQuantity: Number(row.accepted_quantity || 0),
+    shortQuantity: Number(row.short_quantity || 0),
+    overQuantity: Number(row.over_quantity || 0),
+    receivedDate: row.received_date || "",
+    notes: row.notes || "",
+    actorName: row.actor_name || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readOrderReceiptLines(orderId) {
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM order_receipt_lines
+    WHERE order_id = ?
+    ORDER BY batch_id, line_index
+  `).all(String(orderId)).map(receiptLineFromRow);
+}
+
+function discrepancyFromRow(row) {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    batchId: row.batch_id || "",
+    lineIndex: Number(row.line_index || 0),
+    receiptLineId: row.receipt_line_id || "",
+    sourceKey: row.source_key || "",
+    discrepancyType: row.discrepancy_type || "shortage",
+    status: row.status || "Open",
+    resolutionType: row.resolution_type || "",
+    sku: row.sku || "",
+    buyingCode: row.buying_code || "",
+    style: row.style || "",
+    quantity: Number(row.quantity || 0),
+    valueGbp: Number(row.value_gbp || 0),
+    currency: row.currency || "GBP",
+    linkedInvoiceId: row.linked_invoice_id || "",
+    notes: row.notes || "",
+    actorName: row.actor_name || "",
+    resolvedAt: row.resolved_at || "",
+    data: parseJson(row.data, {}),
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readOrderDiscrepancies(orderId) {
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM order_discrepancies
+    WHERE order_id = ?
+    ORDER BY
+      CASE WHEN status IN ('Credit received', 'Replacement received', 'Accepted variance', 'Written off', 'Resolved') THEN 1 ELSE 0 END,
+      updated_at DESC,
+      created_at DESC
+  `).all(String(orderId)).map(discrepancyFromRow);
+}
+
+function emptySupplierCreditSummary(name = "") {
+  return {
+    supplierName: cleanText(name) || "No supplier",
+    creditDueGbp: 0,
+    creditReceivedGbp: 0,
+    openCreditCount: 0,
+    receivedCreditCount: 0,
+    items: []
+  };
+}
+
+function supplierCreditSummaries() {
+  const dbData = readOrderDb();
+  const ordersById = new Map((dbData.orders || []).map(order => [String(order.id), order]));
+  const rows = openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM order_discrepancies
+    ORDER BY updated_at DESC, created_at DESC
+  `).all().map(row => {
+    const discrepancy = discrepancyFromRow(row);
+    const order = ordersById.get(String(discrepancy.orderId)) || {};
+    return {
+      ...discrepancy,
+      supplierName: cleanText(order.supplier?.name || order.supplierName),
+      orderNumber: cleanText(order.orderNumber)
+    };
+  });
+  return new Map(orderActuals.summarizeSupplierCredits(rows).map(summary => [cleanText(summary.supplierName).toLowerCase(), summary]));
+}
+
+function supplierCreditSummary(name = "", summaries = null) {
+  const supplierName = cleanText(name);
+  if (!supplierName) return emptySupplierCreditSummary("");
+  const summaryMap = summaries || supplierCreditSummaries();
+  return summaryMap.get(supplierName.toLowerCase()) || emptySupplierCreditSummary(supplierName);
 }
 
 function labelJobFromRow(row) {
@@ -5986,17 +6363,49 @@ function batchSummary(orderOrId) {
   const order = resolveOrderForInvoiceSummary(orderOrId);
   const orderId = String(order?.id || orderOrId || "");
   const batches = readOrderBatches(orderId);
+  const receiptLines = readOrderReceiptLines(orderId);
+  const receiptByBatch = new Map();
+  for (const receipt of receiptLines) {
+    const key = String(receipt.batchId || "");
+    if (!receiptByBatch.has(key)) receiptByBatch.set(key, []);
+    receiptByBatch.get(key).push(receipt);
+  }
   const orderUnits = (order?.lines || []).reduce((total, line) => total + Number(line.quantity || 0), 0);
   const expectedUnits = batches.reduce((total, batch) => total + Number(batch.units || 0), 0);
   const expectedStyles = batches.reduce((total, batch) => total + Number(batch.styleCount || 0), 0);
-  const receivedUnits = batches
-    .filter(batch => batch.intakeStatus === "Received")
-    .reduce((total, batch) => total + Number(batch.units || 0), 0);
+  let receivedUnits = 0;
+  let acceptedUnits = 0;
+  let damagedUnits = 0;
+  let shortUnits = 0;
+  let overUnits = 0;
+  let onTime = 0;
+  let late = 0;
+  let batchesWithActuals = 0;
+  for (const batch of batches) {
+    const receipts = receiptByBatch.get(String(batch.id)) || [];
+    if (receipts.length) {
+      const totals = orderActuals.receiptTotals(receipts);
+      batchesWithActuals += 1;
+      receivedUnits += totals.receivedQuantity;
+      acceptedUnits += totals.acceptedQuantity;
+      damagedUnits += totals.damagedQuantity;
+      shortUnits += totals.shortQuantity;
+      overUnits += totals.overQuantity;
+    } else if (batch.intakeStatus === "Received") {
+      receivedUnits += Number(batch.units || 0);
+      acceptedUnits += Number(batch.units || 0);
+    }
+    if (batch.intakeStatus === "Received" && batch.receivedDate) {
+      if (batch.etaDate && batch.receivedDate > batch.etaDate) late += 1;
+      else onTime += 1;
+    }
+  }
   const shippedUnits = batches
-    .filter(batch => ["Shipped", "Received"].includes(batch.intakeStatus))
+    .filter(batch => ["Shipped", "Part received", "Received"].includes(batch.intakeStatus))
     .reduce((total, batch) => total + Number(batch.units || 0), 0);
   const openBatches = batches.filter(batch => batch.intakeStatus !== "Received").length;
   const received = batches.filter(batch => batch.intakeStatus === "Received").length;
+  const partReceived = batches.filter(batch => batch.intakeStatus === "Part received").length;
   const shipped = batches.filter(batch => batch.intakeStatus === "Shipped").length;
   const delayed = batches.filter(batch => batch.intakeStatus === "Delayed").length;
   const inProduction = batches.filter(batch => batch.intakeStatus === "In production").length;
@@ -6007,28 +6416,42 @@ function batchSummary(orderOrId) {
     expectedStyles,
     orderUnits,
     receivedUnits,
+    acceptedUnits,
+    damagedUnits,
+    shortUnits,
+    overUnits,
     shippedUnits,
-    outstandingUnits: Math.max(0, (orderUnits || expectedUnits) - receivedUnits),
+    outstandingUnits: Math.max(0, (orderUnits || expectedUnits) - acceptedUnits),
+    fillRate: (expectedUnits || orderUnits) > 0 ? acceptedUnits / (expectedUnits || orderUnits) : 0,
+    batchesWithActuals,
     openBatches,
     received,
+    partReceived,
     shipped,
     delayed,
     inProduction,
-    confirmed
+    confirmed,
+    onTime,
+    late
   };
 }
 
 function invoiceFromRow(row, includeFile = true) {
   const filePath = row.file_path || "";
+  const documentKind = orderActuals.normalizeDocumentKind({ document_kind: row.document_kind, invoice_type: row.invoice_type });
+  const amount = Number(row.amount || 0);
   return {
     id: row.id,
     orderId: row.order_id,
     batchId: row.batch_id || "",
+    linkedDiscrepancyId: row.linked_discrepancy_id || "",
+    documentKind,
     invoiceType: row.invoice_type || "",
     invoiceNumber: row.invoice_number || "",
     invoiceDate: row.invoice_date || "",
     dueDate: row.due_date || "",
-    amount: Number(row.amount || 0),
+    amount,
+    signedAmount: orderActuals.signedInvoiceAmount({ amount, documentKind }),
     currency: row.currency || "GBP",
     isReceived: Boolean(row.is_received),
     sentToFd: Boolean(row.sent_to_fd),
@@ -6097,13 +6520,25 @@ function invoiceSummary(orderOrId) {
   const order = resolveOrderForInvoiceSummary(orderOrId);
   const orderId = String(order?.id || orderOrId || "");
   const invoices = readOrderInvoices(orderId, false);
-  const unpaidActionable = invoices.filter(invoice => invoice.status !== "Paid" && (invoice.sentToFd || invoice.isReceived));
-  const totalDue = invoices.reduce((total, invoice) => total + amountToGbp(invoice.amount, invoice.currency, order), 0);
-  const totalDueEur = invoices.reduce((total, invoice) => total + amountToEur(invoice.amount, invoice.currency, order), 0);
-  const totalPaid = invoices
+  const regularInvoices = invoices.filter(invoice => invoice.documentKind !== "credit_note");
+  const creditNotes = invoices.filter(invoice => invoice.documentKind === "credit_note");
+  const unpaidActionable = regularInvoices.filter(invoice => invoice.status !== "Paid" && (invoice.sentToFd || invoice.isReceived));
+  const grossInvoiceDue = regularInvoices.reduce((total, invoice) => total + amountToGbp(invoice.amount, invoice.currency, order), 0);
+  const grossInvoiceDueEur = regularInvoices.reduce((total, invoice) => total + amountToEur(invoice.amount, invoice.currency, order), 0);
+  const creditNoteTotal = creditNotes.reduce((total, invoice) => total + amountToGbp(invoice.amount, invoice.currency, order), 0);
+  const creditNoteTotalEur = creditNotes.reduce((total, invoice) => total + amountToEur(invoice.amount, invoice.currency, order), 0);
+  const creditReceived = creditNotes
+    .filter(invoice => invoice.status === "Paid" || invoice.status === "Credit received")
+    .reduce((total, invoice) => total + amountToGbp(invoice.amount, invoice.currency, order), 0);
+  const creditReceivedEur = creditNotes
+    .filter(invoice => invoice.status === "Paid" || invoice.status === "Credit received")
+    .reduce((total, invoice) => total + amountToEur(invoice.amount, invoice.currency, order), 0);
+  const totalDue = grossInvoiceDue - creditNoteTotal;
+  const totalDueEur = grossInvoiceDueEur - creditNoteTotalEur;
+  const totalPaid = regularInvoices
     .filter(invoice => invoice.status === "Paid")
     .reduce((total, invoice) => total + amountToGbp(invoice.amount, invoice.currency, order), 0);
-  const totalPaidEur = invoices
+  const totalPaidEur = regularInvoices
     .filter(invoice => invoice.status === "Paid")
     .reduce((total, invoice) => total + amountToEur(invoice.amount, invoice.currency, order), 0);
   const orderTotal = orderTotalGbp(order);
@@ -6120,14 +6555,29 @@ function invoiceSummary(orderOrId) {
   const outstandingEur = outstandingInvoicedEur + uninvoicedBalanceEur;
   const invoiceVariance = totalDue - orderTotal;
   const invoiceVarianceEur = totalDueEur - orderTotalEur;
+  const supplierCreditDue = Math.max(0, creditNoteTotal - creditReceived);
+  const supplierCreditDueEur = Math.max(0, creditNoteTotalEur - creditReceivedEur);
   return {
     count: invoices.length,
+    invoiceCount: regularInvoices.length,
+    creditNoteCount: creditNotes.length,
     sentToFd: invoices.filter(invoice => invoice.sentToFd).length,
     received: invoices.filter(invoice => invoice.isReceived).length,
-    paid: invoices.filter(invoice => invoice.status === "Paid").length,
+    paid: regularInvoices.filter(invoice => invoice.status === "Paid").length,
+    creditReceivedCount: creditNotes.filter(invoice => invoice.status === "Paid" || invoice.status === "Credit received").length,
     unpaidActionable: unpaidActionable.length,
     orderTotal,
     orderTotalEur,
+    grossInvoiceDue,
+    grossInvoiceDueEur,
+    creditNoteTotal,
+    creditNoteTotalEur,
+    creditReceived,
+    creditReceivedEur,
+    supplierCreditDue,
+    supplierCreditDueEur,
+    netInvoiced: totalDue,
+    netInvoicedEur: totalDueEur,
     totalDue,
     totalDueEur,
     totalPaid,
@@ -6157,9 +6607,11 @@ function invoiceSummaryIsFullyPaid(totals) {
 function paymentStatusForBatchInvoices(invoices) {
   if (!invoices.length) return "Awaiting invoice";
   if (invoices.some(invoice => invoice.status === "Query")) return "Query";
-  const paid = invoices.filter(invoice => invoice.status === "Paid").length;
-  const actionable = invoices.filter(invoice => invoice.status !== "Paid" && (invoice.sentToFd || invoice.isReceived)).length;
-  if (paid === invoices.length) return "Paid";
+  const paymentInvoices = invoices.filter(invoice => invoice.documentKind !== "credit_note");
+  if (!paymentInvoices.length) return "Awaiting invoice";
+  const paid = paymentInvoices.filter(invoice => invoice.status === "Paid").length;
+  const actionable = paymentInvoices.filter(invoice => invoice.status !== "Paid" && (invoice.sentToFd || invoice.isReceived)).length;
+  if (paid === paymentInvoices.length) return "Paid";
   if (paid > 0 && actionable > 0) return "Part paid";
   if (actionable > 0) return "Ready to pay";
   if (paid > 0) return "Paid";
@@ -6207,16 +6659,20 @@ function saveOrderInvoice(order, body, options = {}) {
   const fileSize = uploadedFile?.fileSize || existingInvoice.fileSize || 0;
   const fileName = uploadedFile?.fileName || invoice.fileName || existingInvoice.fileName || "";
   const mimeType = uploadedFile?.mimeType || invoice.mimeType || existingInvoice.mimeType || "";
+  const documentKind = orderActuals.normalizeDocumentKind(invoice);
+  const linkedDiscrepancyId = String(invoice.linkedDiscrepancyId || existingInvoice.linkedDiscrepancyId || "").trim();
   db.prepare(`
     INSERT INTO order_invoices (
-      id, order_id, batch_id, invoice_type, invoice_number, invoice_date, due_date, amount, currency,
+      id, order_id, batch_id, linked_discrepancy_id, document_kind, invoice_type, invoice_number, invoice_date, due_date, amount, currency,
       is_received, sent_to_fd, status, file_name, mime_type, file_path, file_size, file_data, notes, uploaded_by, uploaded_at, updated_at
     ) VALUES (
-      @id, @orderId, @batchId, @invoiceType, @invoiceNumber, @invoiceDate, @dueDate, @amount, @currency,
+      @id, @orderId, @batchId, @linkedDiscrepancyId, @documentKind, @invoiceType, @invoiceNumber, @invoiceDate, @dueDate, @amount, @currency,
       @isReceived, @sentToFd, @status, @fileName, @mimeType, @filePath, @fileSize, '', @notes, @uploadedBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
     )
     ON CONFLICT(id) DO UPDATE SET
       batch_id = excluded.batch_id,
+      linked_discrepancy_id = excluded.linked_discrepancy_id,
+      document_kind = excluded.document_kind,
       invoice_type = excluded.invoice_type,
       invoice_number = excluded.invoice_number,
       invoice_date = excluded.invoice_date,
@@ -6238,11 +6694,13 @@ function saveOrderInvoice(order, body, options = {}) {
     id,
     orderId: String(order.id),
     batchId: String(invoice.batchId || "").trim(),
-    invoiceType: String(invoice.invoiceType || "").trim(),
+    linkedDiscrepancyId,
+    documentKind,
+    invoiceType: String(invoice.invoiceType || (documentKind === "credit_note" ? "Credit note" : "")).trim(),
     invoiceNumber: String(invoice.invoiceNumber || "").trim(),
     invoiceDate: String(invoice.invoiceDate || "").trim(),
     dueDate: String(invoice.dueDate || "").trim(),
-    amount: Number(invoice.amount || 0),
+    amount: Math.abs(Number(invoice.amount || 0)),
     currency: String(invoice.currency || order.terms?.currency || "GBP").trim(),
     isReceived: invoice.isReceived ? 1 : 0,
     sentToFd: canManagePayment && invoice.sentToFd ? 1 : existingInvoice.sentToFd ? 1 : 0,
@@ -6260,7 +6718,20 @@ function saveOrderInvoice(order, body, options = {}) {
     removeUploadFile(existingInvoice.filePath);
   }
 
-  const action = canManagePayment && invoice.sentToFd ? "Invoice uploaded and sent to FD" : "Invoice uploaded";
+  if (documentKind === "credit_note" && linkedDiscrepancyId) {
+    const status = String(invoice.status || "").trim() === "Paid" ? "Credit received" : "Credit requested";
+    db.prepare(`
+      UPDATE order_discrepancies
+      SET linked_invoice_id = ?, status = ?, resolution_type = 'credit_note',
+          resolved_at = CASE WHEN ? = 'Credit received' THEN COALESCE(resolved_at, ?) ELSE resolved_at END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND order_id = ?
+    `).run(id, status, status, todayIsoDate(), linkedDiscrepancyId, String(order.id));
+  }
+
+  const action = documentKind === "credit_note"
+    ? "Credit note uploaded"
+    : canManagePayment && invoice.sentToFd ? "Invoice uploaded and sent to FD" : "Invoice uploaded";
   recordOrderEvent(order.id, "invoice", body.actorName || "", action, { invoiceId: id, invoiceNumber: invoice.invoiceNumber || "", fileName });
   syncBatchPaymentStatusesFromInvoices(order.id);
   syncPaymentWorkflowFromInvoices(order, body.actorName || "", { invoiceUploaded: true });
@@ -6287,11 +6758,23 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
   }
 
   const totals = invoiceSummary(order);
+  const paymentInvoices = invoices.filter(invoice => invoice.documentKind !== "credit_note");
+  if (!paymentInvoices.length) {
+    if (totals.supplierCreditDue > 0) {
+      writeOrderWorkflow(order, {
+        paymentStatus: current.paymentStatus === "Paid" ? "Paid" : "Awaiting invoice",
+        paymentAmount: totals.orderTotal || 0,
+        nextActionOwner: "FD / Finance",
+        nextAction: "Track supplier credit note"
+      }, actorName, "invoice");
+    }
+    return;
+  }
   const allPaid = invoiceSummaryIsFullyPaid(totals);
   const somePaid = totals.totalPaid > 0;
   const hasUnpaidActionableInvoice = totals.unpaidActionable > 0;
-  const anySent = totals.sentToFd > 0;
-  const anyReceived = totals.received > 0;
+  const anySent = paymentInvoices.some(invoice => invoice.sentToFd);
+  const anyReceived = paymentInvoices.some(invoice => invoice.isReceived);
   if (allPaid) {
     writeOrderWorkflow(order, {
       paymentStatus: "Paid",
@@ -6346,7 +6829,7 @@ function intakePatchForBatchSummary(summary, current) {
   if (summary.received === summary.count) {
     return { intakeStatus: "Received", intakeActualDate: current.intakeActualDate || todayIsoDate() };
   }
-  if (summary.received > 0) return { intakeStatus: "Part received" };
+  if (summary.received > 0 || summary.partReceived > 0) return { intakeStatus: "Part received" };
   if (summary.delayed > 0) return { intakeStatus: "Delayed" };
   if (summary.shipped > 0) return { intakeStatus: summary.shipped === summary.count ? "Shipped" : "Part shipped" };
   if (summary.inProduction > 0) return { intakeStatus: "In production" };
@@ -6456,6 +6939,9 @@ function deleteOrderBatch(order, body) {
   const batch = db.prepare("SELECT * FROM order_batches WHERE id = ? AND order_id = ?").get(batchId, String(order.id));
   if (!batch) throw new Error("Batch not found");
   db.prepare("UPDATE order_invoices SET batch_id = '' WHERE order_id = ? AND batch_id = ?").run(String(order.id), batchId);
+  db.prepare("UPDATE order_invoices SET linked_discrepancy_id = '' WHERE order_id = ? AND linked_discrepancy_id IN (SELECT id FROM order_discrepancies WHERE order_id = ? AND batch_id = ?)").run(String(order.id), String(order.id), batchId);
+  db.prepare("DELETE FROM order_discrepancies WHERE order_id = ? AND batch_id = ?").run(String(order.id), batchId);
+  db.prepare("DELETE FROM order_receipt_lines WHERE order_id = ? AND batch_id = ?").run(String(order.id), batchId);
   db.prepare("DELETE FROM order_batch_lines WHERE order_id = ? AND batch_id = ?").run(String(order.id), batchId);
   db.prepare("DELETE FROM order_batches WHERE id = ? AND order_id = ?").run(batchId, String(order.id));
   recordOrderEvent(order.id, "batch", body.actorName || "", "Batch deleted", { batchId, batchNumber: batch.batch_number || "" });
@@ -6465,6 +6951,256 @@ function deleteOrderBatch(order, body) {
   return readOrderBatches(order.id);
 }
 
+function ensureFullOrderBatchForReceipt(order, actorName = "") {
+  const existing = readOrderBatches(order.id);
+  if (existing.length) throw new Error("Choose a supplier batch to receive.");
+  const allocations = (order.lines || [])
+    .map((line, lineIndex) => ({ lineIndex, quantity: Number(line.quantity || 0) }))
+    .filter(allocation => allocation.quantity > 0);
+  if (!allocations.length) throw new Error("This order has no lines to receive.");
+  const cleanAllocations = normalizeBatchLineAllocations(order, allocations, "");
+  const totals = batchTotalsFromAllocations(order, cleanAllocations);
+  const id = crypto.randomUUID();
+  const db = openOrderSqliteDb();
+  db.prepare(`
+    INSERT INTO order_batches (
+      id, order_id, batch_number, title, style_count, units, value, currency,
+      payment_status, intake_status, eta_date, shipped_date, received_date, tracking_reference,
+      style_notes, notes, created_at, updated_at
+    ) VALUES (?, ?, 'Full order', 'Full order receipt', ?, ?, ?, ?, 'Awaiting invoice', 'Not confirmed', ?, '', '', '', 'Auto-created for receiving', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).run(id, String(order.id), totals.styleCount, totals.units, totals.value, order.terms?.currency || "GBP", order.delivery?.requiredDate || "");
+  replaceBatchLineAllocations(order, id, cleanAllocations);
+  recordOrderEvent(order.id, "batch", actorName, "Full-order batch created for receiving", { batchId: id, lineAllocations: cleanAllocations.length });
+  return batchFromRow(db.prepare("SELECT * FROM order_batches WHERE id = ?").get(id));
+}
+
+function sourceKeyForDiscrepancy(orderId, batchId, lineIndex, type) {
+  return [String(orderId || ""), String(batchId || ""), Number(lineIndex || 0), String(type || "")].join(":");
+}
+
+function syncDiscrepanciesFromReceipts(order, batch, receiptLines, actorName = "") {
+  const db = openOrderSqliteDb();
+  const drafts = orderActuals.discrepancyDraftsForReceipt({ order, batch, receiptLines });
+  const draftKeys = new Set(drafts.map(draft => draft.sourceKey));
+  const allKeys = new Set();
+  for (const receipt of receiptLines || []) {
+    for (const type of ["shortage", "damage", "overage"]) {
+      allKeys.add(sourceKeyForDiscrepancy(order.id, batch.id, receipt.lineIndex, type));
+    }
+  }
+  const activeByKey = new Map();
+  for (const key of allKeys) {
+    const row = db.prepare(`
+      SELECT *
+      FROM order_discrepancies
+      WHERE order_id = ? AND source_key = ?
+        AND status NOT IN ('Credit received', 'Replacement received', 'Accepted variance', 'Written off', 'Resolved')
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `).get(String(order.id), key);
+    if (row) activeByKey.set(key, discrepancyFromRow(row));
+  }
+  const insert = db.prepare(`
+    INSERT INTO order_discrepancies (
+      id, order_id, batch_id, line_index, receipt_line_id, source_key, discrepancy_type,
+      status, resolution_type, sku, buying_code, style, quantity, value_gbp, currency,
+      linked_invoice_id, notes, actor_name, resolved_at, data, created_at, updated_at
+    ) VALUES (
+      @id, @orderId, @batchId, @lineIndex, @receiptLineId, @sourceKey, @discrepancyType,
+      'Open', '', @sku, @buyingCode, @style, @quantity, @valueGbp, @currency,
+      '', @notes, @actorName, '', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+  `);
+  const update = db.prepare(`
+    UPDATE order_discrepancies
+    SET receipt_line_id = @receiptLineId,
+        sku = @sku,
+        buying_code = @buyingCode,
+        style = @style,
+        quantity = @quantity,
+        value_gbp = @valueGbp,
+        currency = @currency,
+        notes = CASE WHEN COALESCE(notes, '') = '' THEN @notes ELSE notes END,
+        actor_name = @actorName,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `);
+  for (const draft of drafts) {
+    const existing = activeByKey.get(draft.sourceKey);
+    const params = { ...draft, id: existing?.id || crypto.randomUUID(), actorName };
+    if (existing) update.run(params);
+    else insert.run(params);
+  }
+  for (const [key, discrepancy] of activeByKey) {
+    if (draftKeys.has(key)) continue;
+    db.prepare(`
+      UPDATE order_discrepancies
+      SET status = 'Resolved',
+          resolution_type = 'corrected_receipt',
+          resolved_at = COALESCE(NULLIF(resolved_at, ''), ?),
+          actor_name = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(todayIsoDate(), actorName, discrepancy.id);
+  }
+}
+
+function syncBatchIntakeFromReceipts(order, batchId, receivedDate, actorName = "") {
+  const db = openOrderSqliteDb();
+  const batch = readOrderBatches(order.id).find(item => item.id === batchId);
+  if (!batch) return;
+  const allocations = readOrderBatchLines(order.id).filter(line => line.batchId === batchId);
+  const receipts = readOrderReceiptLines(order.id).filter(line => line.batchId === batchId);
+  const totals = orderActuals.receiptTotals(receipts);
+  const countedLines = new Set(receipts.map(line => Number(line.lineIndex)));
+  const allLinesCounted = allocations.length > 0 && allocations.every(line => countedLines.has(Number(line.lineIndex)));
+  const hasAnyActual = totals.receivedQuantity > 0 || totals.shortQuantity > 0 || totals.damagedQuantity > 0 || totals.overQuantity > 0 || totals.acceptedQuantity > 0;
+  if (!hasAnyActual) return;
+  const status = allLinesCounted ? "Received" : "Part received";
+  db.prepare(`
+    UPDATE order_batches
+    SET intake_status = ?,
+        received_date = CASE WHEN ? != '' THEN ? ELSE received_date END,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND order_id = ?
+  `).run(status, receivedDate || "", receivedDate || "", batchId, String(order.id));
+  syncBatchWorkflow(order, actorName);
+}
+
+function saveOrderReceipts(order, body) {
+  assertOrderProductsCompleteForWarehouse(order);
+  const db = openOrderSqliteDb();
+  let batchId = String(body.batchId || "").trim();
+  if (!batchId) {
+    const batch = ensureFullOrderBatchForReceipt(order, body.actorName || "");
+    batchId = batch.id;
+  }
+  const batch = readOrderBatches(order.id).find(item => item.id === batchId);
+  if (!batch) throw new Error("Batch not found");
+  const allocations = readOrderBatchLines(order.id).filter(line => line.batchId === batchId);
+  if (!allocations.length) throw new Error("Add line allocations to this batch before receiving actuals.");
+  const lines = order.lines || [];
+  const receivedDate = String(body.receivedDate || todayIsoDate()).trim();
+  const inputs = new Map((body.lines || []).map(line => [Number(line.lineIndex), line]));
+  const existing = new Map(readOrderReceiptLines(order.id).filter(line => line.batchId === batchId).map(line => [Number(line.lineIndex), line]));
+  const upsert = db.prepare(`
+    INSERT INTO order_receipt_lines (
+      id, order_id, batch_id, line_index, sku, buying_code, style,
+      expected_quantity, received_quantity, damaged_quantity, accepted_quantity, short_quantity, over_quantity,
+      received_date, notes, actor_name, created_at, updated_at
+    ) VALUES (
+      @id, @orderId, @batchId, @lineIndex, @sku, @buyingCode, @style,
+      @expectedQuantity, @receivedQuantity, @damagedQuantity, @acceptedQuantity, @shortQuantity, @overQuantity,
+      @receivedDate, @notes, @actorName, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(order_id, batch_id, line_index) DO UPDATE SET
+      sku = excluded.sku,
+      buying_code = excluded.buying_code,
+      style = excluded.style,
+      expected_quantity = excluded.expected_quantity,
+      received_quantity = excluded.received_quantity,
+      damaged_quantity = excluded.damaged_quantity,
+      accepted_quantity = excluded.accepted_quantity,
+      short_quantity = excluded.short_quantity,
+      over_quantity = excluded.over_quantity,
+      received_date = excluded.received_date,
+      notes = excluded.notes,
+      actor_name = excluded.actor_name,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  const saved = [];
+  for (const allocation of allocations) {
+    const lineIndex = Number(allocation.lineIndex || 0);
+    const input = inputs.get(lineIndex) || existing.get(lineIndex) || {};
+    const orderLine = lines[lineIndex] || {};
+    const calculated = orderActuals.calculateReceiptLine({
+      expectedQuantity: allocation.quantity,
+      receivedQuantity: input.receivedQuantity ?? input.received ?? 0,
+      damagedQuantity: input.damagedQuantity ?? input.damaged ?? 0,
+      acceptedQuantity: input.acceptedQuantity
+    });
+    const row = {
+      id: existing.get(lineIndex)?.id || crypto.randomUUID(),
+      orderId: String(order.id),
+      batchId,
+      lineIndex,
+      sku: String(allocation.sku || orderLine.sku || "").trim(),
+      buyingCode: String(allocation.buyingCode || orderLine.buyingCode || orderLine.supplierSku || "").trim(),
+      style: String(allocation.style || orderLine.style || orderLine.description || "").trim(),
+      ...calculated,
+      receivedDate,
+      notes: String(input.notes || "").trim(),
+      actorName: String(body.actorName || "").trim()
+    };
+    upsert.run(row);
+    saved.push(row);
+  }
+  const receiptLines = readOrderReceiptLines(order.id).filter(line => line.batchId === batchId);
+  syncDiscrepanciesFromReceipts(order, batch, receiptLines, body.actorName || "");
+  syncBatchIntakeFromReceipts(order, batchId, receivedDate, body.actorName || "");
+  const totals = orderActuals.receiptTotals(receiptLines);
+  recordOrderEvent(order.id, "receipt", body.actorName || "", "Receipt actuals saved", {
+    batchId,
+    receivedDate,
+    expectedUnits: totals.expectedQuantity,
+    receivedUnits: totals.receivedQuantity,
+    acceptedUnits: totals.acceptedQuantity,
+    shortUnits: totals.shortQuantity,
+    damagedUnits: totals.damagedQuantity
+  });
+  return { batchId, receiptLines: readOrderReceiptLines(order.id), discrepancies: readOrderDiscrepancies(order.id) };
+}
+
+function updateOrderDiscrepancy(order, body, req) {
+  const db = openOrderSqliteDb();
+  const id = String(body.discrepancyId || body.id || "").trim();
+  if (!id) throw new Error("Missing discrepancy");
+  const existing = db.prepare("SELECT * FROM order_discrepancies WHERE id = ? AND order_id = ?").get(id, String(order.id));
+  if (!existing) throw new Error("Discrepancy not found");
+  const patch = body.patch || body.discrepancy || {};
+  const canFinance = userHasRole(req.currentUser, ["Finance", "Admin"]);
+  const status = String(patch.status || existing.status || "Open").trim();
+  if (!discrepancyStatuses.includes(status)) throw new Error("Choose a valid discrepancy status.");
+  if (["Credit received", "Written off"].includes(status) && !canFinance) {
+    throw new Error("Only Finance or Admin users can mark supplier credits received or written off.");
+  }
+  const resolutionType = String(patch.resolutionType ?? patch.resolution_type ?? existing.resolution_type ?? "").trim();
+  if (!discrepancyResolutionTypes.includes(resolutionType)) throw new Error("Choose a valid discrepancy resolution.");
+  const linkedInvoiceId = String(patch.linkedInvoiceId || patch.linked_invoice_id || existing.linked_invoice_id || "").trim();
+  if (linkedInvoiceId !== String(existing.linked_invoice_id || "").trim() && !canFinance) {
+    throw new Error("Only Finance or Admin users can link credit notes to discrepancies.");
+  }
+  if (linkedInvoiceId) {
+    const invoice = db.prepare("SELECT id FROM order_invoices WHERE id = ? AND order_id = ?").get(linkedInvoiceId, String(order.id));
+    if (!invoice) throw new Error("Linked credit note not found on this order.");
+  }
+  const resolvedAt = terminalDiscrepancyStatuses.has(status)
+    ? String(patch.resolvedAt || existing.resolved_at || todayIsoDate()).trim()
+    : "";
+  db.prepare(`
+    UPDATE order_discrepancies
+    SET status = ?,
+        resolution_type = ?,
+        linked_invoice_id = ?,
+        notes = ?,
+        actor_name = ?,
+        resolved_at = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND order_id = ?
+  `).run(
+    status,
+    resolutionType,
+    linkedInvoiceId,
+    String(patch.notes ?? existing.notes ?? "").trim(),
+    actorName(req),
+    resolvedAt,
+    id,
+    String(order.id)
+  );
+  recordOrderEvent(order.id, "discrepancy", actorName(req), `Discrepancy ${status.toLowerCase()}`, { discrepancyId: id, status, resolutionType, linkedInvoiceId });
+  return readOrderDiscrepancies(order.id);
+}
+
 function deleteOrderInvoice(order, body) {
   const invoiceId = String(body.invoiceId || "");
   if (!invoiceId) throw new Error("Missing invoice");
@@ -6472,6 +7208,16 @@ function deleteOrderInvoice(order, body) {
   const invoice = db.prepare("SELECT * FROM order_invoices WHERE id = ? AND order_id = ?").get(invoiceId, String(order.id));
   if (!invoice) throw new Error("Invoice not found");
   db.prepare("DELETE FROM order_invoices WHERE id = ? AND order_id = ?").run(invoiceId, String(order.id));
+  if (invoice.linked_discrepancy_id) {
+    db.prepare(`
+      UPDATE order_discrepancies
+      SET linked_invoice_id = '',
+          status = CASE WHEN status = 'Credit received' THEN 'Credit requested' ELSE status END,
+          resolved_at = CASE WHEN status = 'Credit received' THEN '' ELSE resolved_at END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND order_id = ?
+    `).run(invoice.linked_discrepancy_id, String(order.id));
+  }
   removeUploadFile(invoice.file_path || "");
   recordOrderEvent(order.id, "invoice", body.actorName || "", "Invoice deleted", { invoiceId, invoiceNumber: invoice.invoice_number || "", fileName: invoice.file_name || "" });
   syncBatchPaymentStatusesFromInvoices(order.id);
@@ -9814,6 +10560,8 @@ function migrateOrderRelations(sqlite, fromId, toId) {
   sqlite.prepare("UPDATE order_invoices SET order_id = ? WHERE order_id = ?").run(to, from);
   sqlite.prepare("UPDATE order_batches SET order_id = ? WHERE order_id = ?").run(to, from);
   sqlite.prepare("UPDATE order_batch_lines SET order_id = ? WHERE order_id = ?").run(to, from);
+  sqlite.prepare("UPDATE order_receipt_lines SET order_id = ? WHERE order_id = ?").run(to, from);
+  sqlite.prepare("UPDATE order_discrepancies SET order_id = ? WHERE order_id = ?").run(to, from);
   sqlite.prepare("UPDATE work_handoffs SET entity_id = ? WHERE entity_type = 'order' AND entity_id = ?").run(to, from);
   sqlite.prepare("UPDATE notifications SET entity_id = ? WHERE entity_type = 'order' AND entity_id = ?").run(to, from);
 }
@@ -9887,6 +10635,8 @@ function migrateReissuedOrderLineSkus(sqlite, storedOrder) {
       updateOrder.run(JSON.stringify(order), orderRow.id);
     }
     sqlite.prepare("UPDATE order_batch_lines SET sku = ? WHERE sku = ?").run(toSku, fromSku);
+    sqlite.prepare("UPDATE order_receipt_lines SET sku = ? WHERE sku = ?").run(toSku, fromSku);
+    sqlite.prepare("UPDATE order_discrepancies SET sku = ? WHERE sku = ?").run(toSku, fromSku);
     sqlite.prepare(`
       INSERT INTO issued_skus (sku, data, issued_at, updated_at)
       VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -10541,11 +11291,13 @@ function deleteCatalogProduct(identifier) {
   const sku = normalizeSku(product.sku);
   const orderReferences = readOrderDb().orders.filter(order => orderContainsSku(order, sku));
   const batchReferenceCount = sqlite.prepare("SELECT COUNT(*) AS count FROM order_batch_lines WHERE sku = ?").get(sku).count;
-  if (orderReferences.length || batchReferenceCount) {
+  const receiptReferenceCount = sqlite.prepare("SELECT COUNT(*) AS count FROM order_receipt_lines WHERE sku = ?").get(sku).count;
+  const discrepancyReferenceCount = sqlite.prepare("SELECT COUNT(*) AS count FROM order_discrepancies WHERE sku = ?").get(sku).count;
+  if (orderReferences.length || batchReferenceCount || receiptReferenceCount || discrepancyReferenceCount) {
     const orderNumbers = orderReferences.slice(0, 4).map(order => order.orderNumber).filter(Boolean);
     const suffix = orderReferences.length > orderNumbers.length ? ", …" : "";
     const detail = orderNumbers.length ? ` Order${orderNumbers.length === 1 ? "" : "s"}: ${orderNumbers.join(", ")}${suffix}.` : "";
-    const error = new Error(`SKU ${sku} is still referenced by an order or supplier batch and cannot be deleted.${detail}`);
+    const error = new Error(`SKU ${sku} is still referenced by an order, supplier batch, receipt, or discrepancy and cannot be deleted.${detail}`);
     error.code = "product_referenced";
     throw error;
   }
@@ -10644,10 +11396,11 @@ function supplierHistory(name) {
 
 function readCatalogSuppliers() {
   const sqlite = openOrderSqliteDb();
+  const creditSummaries = supplierCreditSummaries();
   return sqlite.prepare("SELECT * FROM suppliers ORDER BY name COLLATE NOCASE").all()
     .map(row => {
       const supplier = supplierFromRow(row);
-      return { ...supplier, history: supplierHistory(supplier.name) };
+      return { ...supplier, history: supplierHistory(supplier.name), creditBalance: supplierCreditSummary(supplier.name, creditSummaries) };
     });
 }
 
@@ -11012,10 +11765,12 @@ async function reconcileOrderProductsFromShopify(order, req) {
   return { order: afterOrder, before, after, results };
 }
 
-function captureShopifyMerchandising(range) {
+function captureShopifyMerchandising(range, options = {}) {
   return new Promise((resolve, reject) => {
     let statusCode = 200;
-    const req = { url: `/api/shopify-merchandising?startDate=${encodeURIComponent(range.startDate)}&endDate=${encodeURIComponent(range.endDate)}&limit=all`, headers: { host: "localhost" } };
+    const limit = options.limit || "all";
+    const updatedSince = options.updatedSince ? `&updatedSince=${encodeURIComponent(options.updatedSince)}` : "";
+    const req = { url: `/api/shopify-merchandising?startDate=${encodeURIComponent(range.startDate)}&endDate=${encodeURIComponent(range.endDate)}&limit=${encodeURIComponent(limit)}${updatedSince}`, headers: { host: "localhost" } };
     const res = {
       writeHead(status) { statusCode = status; },
       end(body) {
@@ -11026,6 +11781,346 @@ function captureShopifyMerchandising(range) {
     };
     fetchShopifyMerchandising(req, res).catch(reject);
   });
+}
+
+function parseNamedDateRange(url, startParam, endParam, fallbackDays = 30) {
+  const requestedStart = url.searchParams.get(startParam) || "";
+  const requestedEnd = url.searchParams.get(endParam) || "";
+  if (validReportDate(requestedStart) && validReportDate(requestedEnd)) {
+    const start = new Date(`${requestedStart}T00:00:00.000Z`);
+    const end = new Date(`${requestedEnd}T00:00:00.000Z`);
+    if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) && start <= end) {
+      const maxEnd = new Date(start);
+      maxEnd.setUTCDate(maxEnd.getUTCDate() + 366);
+      if (end > maxEnd) end.setTime(maxEnd.getTime());
+      return { startDate: isoDateOnly(start), endDate: isoDateOnly(end) };
+    }
+  }
+  return dateRangeFromDays(fallbackDays);
+}
+
+function dateOnlyFromIso(value) {
+  const raw = String(value || "").trim();
+  if (validReportDate(raw)) return raw;
+  const date = raw ? new Date(raw) : null;
+  return date && Number.isFinite(date.getTime()) ? isoDateOnly(date) : "";
+}
+
+function dateInRange(dateValue, range) {
+  const day = dateOnlyFromIso(dateValue);
+  return Boolean(day && day >= range.startDate && day <= range.endDate);
+}
+
+function daysBetweenDateOnly(startValue, endValue) {
+  const startDate = dateOnlyFromIso(startValue);
+  const endDate = dateOnlyFromIso(endValue);
+  if (!startDate || !endDate) return 0;
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start) return 0;
+  return Math.floor((end - start) / 864e5);
+}
+
+function activeDaysInPerformance(liveAt, range) {
+  const liveDate = dateOnlyFromIso(liveAt);
+  if (!liveDate || liveDate > range.endDate) return 0;
+  const startDate = liveDate > range.startDate ? liveDate : range.startDate;
+  return daysBetweenDateOnly(startDate, range.endDate) + 1;
+}
+
+function addDaysDateOnly(dateValue, days) {
+  const day = dateOnlyFromIso(dateValue);
+  if (!day) return "";
+  const date = new Date(`${day}T00:00:00.000Z`);
+  if (!Number.isFinite(date.getTime())) return "";
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
+  return isoDateOnly(date);
+}
+
+function minDateOnly(...values) {
+  return values.map(dateOnlyFromIso).filter(Boolean).sort()[0] || "";
+}
+
+function maxDateOnly(...values) {
+  return values.map(dateOnlyFromIso).filter(Boolean).sort().pop() || "";
+}
+
+function roundMetric(value, places = 2) {
+  const factor = 10 ** places;
+  return Math.round(Number(value || 0) * factor) / factor;
+}
+
+function summarizeDailyProductMetrics(orderDailyMetrics, gaDailyMetrics, productId, range) {
+  const days = reportDaysInclusive(range);
+  const orderByDate = orderDailyMetrics?.get(productId) || new Map();
+  const gaByDate = gaDailyMetrics?.get(productId) || new Map();
+  const summary = {
+    range,
+    days,
+    revenue: 0,
+    units: 0,
+    revenuePerDay: 0,
+    unitsPerDay: 0,
+    views: 0,
+    adds: 0,
+    purchases: 0,
+    gaRevenue: 0,
+    viewsPerDay: 0,
+    addsPerDay: 0,
+    cvr: 0
+  };
+  if (!days) return summary;
+  const cursor = new Date(`${range.startDate}T00:00:00.000Z`);
+  const end = new Date(`${range.endDate}T00:00:00.000Z`);
+  while (cursor <= end) {
+    const day = isoDateOnly(cursor);
+    const orderMetric = orderByDate.get(day) || {};
+    const gaMetric = gaByDate.get(day) || {};
+    summary.revenue += Number(orderMetric.revenue || 0);
+    summary.units += Number(orderMetric.units || 0);
+    summary.views += Number(gaMetric.views || 0);
+    summary.adds += Number(gaMetric.adds || 0);
+    summary.purchases += Number(gaMetric.purchases || 0);
+    summary.gaRevenue += Number(gaMetric.gaRevenue || 0);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  summary.revenue = roundMetric(summary.revenue, 2);
+  summary.revenuePerDay = roundMetric(summary.revenue / days, 2);
+  summary.unitsPerDay = roundMetric(summary.units / days, 2);
+  summary.viewsPerDay = roundMetric(summary.views / days, 2);
+  summary.addsPerDay = roundMetric(summary.adds / days, 2);
+  summary.gaRevenue = roundMetric(summary.gaRevenue, 2);
+  summary.cvr = summary.views > 0 ? roundMetric(summary.units / summary.views, 4) : 0;
+  return summary;
+}
+
+function imageImpactForProduct(product, imageDate, options) {
+  const impactDays = Math.max(1, Number(options.impactDays || 14));
+  const afterStart = dateOnlyFromIso(imageDate);
+  const afterHardEnd = addDaysDateOnly(afterStart, impactDays - 1);
+  const afterEnd = minDateOnly(afterHardEnd, options.performanceRange.endDate);
+  const beforeEnd = addDaysDateOnly(afterStart, -1);
+  const beforeStart = addDaysDateOnly(afterStart, -impactDays);
+  if (!afterStart || !afterEnd || afterEnd < afterStart || beforeEnd < beforeStart) {
+    return { available: false, windowDays: impactDays };
+  }
+  const beforeRange = { startDate: beforeStart, endDate: beforeEnd };
+  const afterRange = { startDate: afterStart, endDate: afterEnd };
+  const before = summarizeDailyProductMetrics(options.orderDailyMetrics, options.gaDailyMetrics, product.id, beforeRange);
+  const after = summarizeDailyProductMetrics(options.orderDailyMetrics, options.gaDailyMetrics, product.id, afterRange);
+  const revenuePerDayDelta = roundMetric(after.revenuePerDay - before.revenuePerDay, 2);
+  const unitsPerDayDelta = roundMetric(after.unitsPerDay - before.unitsPerDay, 2);
+  const viewsPerDayDelta = roundMetric(after.viewsPerDay - before.viewsPerDay, 2);
+  const cvrDelta = roundMetric(after.cvr - before.cvr, 4);
+  const revenuePerDayLift = before.revenuePerDay ? roundMetric(revenuePerDayDelta / before.revenuePerDay, 4) : (after.revenuePerDay > 0 ? 1 : 0);
+  const unitsPerDayLift = before.unitsPerDay ? roundMetric(unitsPerDayDelta / before.unitsPerDay, 4) : (after.unitsPerDay > 0 ? 1 : 0);
+  return {
+    available: true,
+    windowDays: impactDays,
+    beforeRange,
+    afterRange,
+    before,
+    after,
+    delta: {
+      revenuePerDay: revenuePerDayDelta,
+      revenuePerDayLift,
+      unitsPerDay: unitsPerDayDelta,
+      unitsPerDayLift,
+      viewsPerDay: viewsPerDayDelta,
+      cvr: cvrDelta
+    },
+    direction: revenuePerDayDelta > 0 || unitsPerDayDelta > 0 ? "up" : revenuePerDayDelta < 0 || unitsPerDayDelta < 0 ? "down" : "flat"
+  };
+}
+
+function newInMarketingAction(row) {
+  if (row.status === "DRAFT") return "Draft pipeline";
+  if (Number(row.stock || 0) <= 0 && Number(row.units || 0) > 0) return "Sold out";
+  if (Number(row.units || 0) > 0 && Number(row.stock || 0) <= Math.max(3, Number(row.units || 0) * 0.5)) return "Stock watch";
+  if (Number(row.gaViews || 0) <= 5 && Number(row.stock || 0) > 0) return "Needs exposure";
+  if (Number(row.gaViews || 0) >= 50 && Number(row.cvr || 0) < 0.03 && Number(row.units || 0) <= 1) return "Content check";
+  if (Number(row.unitsPerLiveDay || 0) >= 1 || Number(row.revenuePerLiveDay || 0) >= 75) return "Push";
+  if (row.cohorts.includes("Updated image") && Number(row.gaViews || 0) > 0) return "Image test";
+  return "Watch";
+}
+
+function buildNewInPerformance(products, options) {
+  const performanceRange = options.performanceRange;
+  const launchRange = options.launchRange;
+  const imageRange = options.imageRange;
+  const includeDrafts = options.includeDrafts !== false;
+  const rows = [];
+
+  for (const product of products || []) {
+    const status = product.status || "";
+    const liveAt = product.publishedAt || (status === "ACTIVE" ? product.createdAt : "");
+    const createdDate = dateOnlyFromIso(product.createdAt);
+    const liveDate = dateOnlyFromIso(liveAt);
+    const imageDate = dateOnlyFromIso(product.imageUpdatedAt);
+    const isNewLaunch = status === "ACTIVE" && dateInRange(liveAt, launchRange);
+    const isImageRefresh = dateInRange(product.imageUpdatedAt, imageRange);
+    const isDraftPipeline = includeDrafts && status === "DRAFT" && dateInRange(product.createdAt, launchRange);
+    if (!isNewLaunch && !isImageRefresh && !isDraftPipeline) continue;
+
+    const cohorts = [];
+    if (isNewLaunch) cohorts.push("New launch");
+    if (isImageRefresh) cohorts.push("Updated image");
+    if (isDraftPipeline) cohorts.push("Draft pipeline");
+    const activeDays = activeDaysInPerformance(liveAt, performanceRange);
+    const revenue = Number(product.revenue || 0);
+    const units = Number(product.units || 0);
+    const gaViews = Number(product.gaViews || 0);
+    const stock = Number(product.stock || 0);
+    const cvr = gaViews > 0 ? units / gaViews : 0;
+    const sellThroughBase = units + Math.max(0, stock);
+    const row = {
+      id: product.id || "",
+      title: product.title || "",
+      handle: product.handle || "",
+      onlineStoreUrl: product.onlineStoreUrl || "",
+      status,
+      productStatusCode: product.productStatusCode || "",
+      vendor: product.vendor || "",
+      productType: product.productType || "",
+      season: product.season || "",
+      color: product.color || "",
+      tags: product.tags || [],
+      skus: product.skus || [],
+      variants: product.variants || [],
+      imageUrl: product.imageUrl || "",
+      imageAlt: product.imageAlt || product.title || "",
+      imageUpdatedAt: product.imageUpdatedAt || "",
+      imageUpdatedDate: imageDate,
+      imageMediaId: product.imageMediaId || "",
+      createdAt: product.createdAt || "",
+      createdDate,
+      publishedAt: product.publishedAt || "",
+      liveAt,
+      liveDate,
+      launchBasis: product.publishedAt ? "publishedAt" : status === "ACTIVE" && product.createdAt ? "createdAt fallback" : "",
+      draftLeadDays: createdDate && liveDate ? daysBetweenDateOnly(createdDate, liveDate) : 0,
+      imageAgeDays: imageDate ? daysBetweenDateOnly(imageDate, performanceRange.endDate) : null,
+      activeDays,
+      cohorts,
+      cohort: cohorts.join(" + "),
+      price: Number(product.price || 0),
+      compareAtPrice: product.compareAtPrice,
+      cost: product.cost,
+      margin: product.margin,
+      stock,
+      revenue: Math.round(revenue * 100) / 100,
+      units,
+      revenuePerLiveDay: activeDays ? Math.round((revenue / activeDays) * 100) / 100 : 0,
+      unitsPerLiveDay: activeDays ? Math.round((units / activeDays) * 100) / 100 : 0,
+      gaViews,
+      gaAdds: Number(product.gaAdds || 0),
+      gaPurchases: Number(product.gaPurchases || 0),
+      gaRevenue: Number(product.gaRevenue || 0),
+      cvr: Math.round(cvr * 10000) / 10000,
+      sellThrough: sellThroughBase > 0 ? Math.round((units / sellThroughBase) * 10000) / 10000 : 0,
+      isNewLaunch,
+      isImageRefresh,
+      isDraftPipeline,
+      imageImpact: null
+    };
+    if (isImageRefresh && imageDate && options.orderDailyMetrics) {
+      row.imageImpact = imageImpactForProduct(product, imageDate, options);
+    }
+    row.action = newInMarketingAction(row);
+    rows.push(row);
+  }
+
+  const summary = rows.reduce((acc, row) => {
+    acc.products += 1;
+    if (row.isNewLaunch) acc.newLaunches += 1;
+    if (row.isImageRefresh) acc.imageUpdates += 1;
+    if (row.isDraftPipeline) acc.draftPipeline += 1;
+    if (row.action === "Push") acc.pushCandidates += 1;
+    if (row.action === "Needs exposure") acc.exposureCandidates += 1;
+    acc.revenue += Number(row.revenue || 0);
+    acc.units += Number(row.units || 0);
+    acc.views += Number(row.gaViews || 0);
+    acc.adds += Number(row.gaAdds || 0);
+    acc.stock += Number(row.stock || 0);
+    return acc;
+  }, { products: 0, newLaunches: 0, imageUpdates: 0, draftPipeline: 0, pushCandidates: 0, exposureCandidates: 0, revenue: 0, units: 0, views: 0, adds: 0, stock: 0 });
+  summary.revenue = Math.round(summary.revenue * 100) / 100;
+  summary.cvr = summary.views > 0 ? Math.round((summary.units / summary.views) * 10000) / 10000 : 0;
+  return { rows, summary };
+}
+
+async function fetchNewInPerformance(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const performanceDays = Math.max(1, Math.min(90, Number(url.searchParams.get("days") || 14)));
+  const launchDays = Math.max(1, Math.min(180, Number(url.searchParams.get("launchDays") || 30)));
+  const imageDays = Math.max(1, Math.min(180, Number(url.searchParams.get("imageDays") || 30)));
+  const performanceRange = parseDateRange(url, performanceDays);
+  const launchRange = parseNamedDateRange(url, "launchStartDate", "launchEndDate", launchDays);
+  const imageRange = parseNamedDateRange(url, "imageStartDate", "imageEndDate", imageDays);
+  const includeDrafts = url.searchParams.get("includeDrafts") !== "0";
+  const limit = url.searchParams.get("limit") || "all";
+  const impactDays = Math.max(1, Math.min(60, Number(url.searchParams.get("impactDays") || 14)));
+  const updatedSince = launchRange.startDate < imageRange.startDate ? launchRange.startDate : imageRange.startDate;
+  try {
+    const snapshot = await captureShopifyMerchandising(performanceRange, { limit, updatedSince });
+    if (!snapshot.configured) {
+      sendJson(res, 200, snapshot);
+      return;
+    }
+    const impactStartDate = addDaysDateOnly(imageRange.startDate, -impactDays);
+    const impactRange = impactStartDate && impactStartDate <= performanceRange.endDate ? { startDate: impactStartDate, endDate: performanceRange.endDate } : null;
+    const hasImageUpdates = (snapshot.products || []).some(product => dateInRange(product.imageUpdatedAt, imageRange));
+    let orderDailyMetrics = null;
+    let gaDailyMetrics = null;
+    let imageImpactAvailable = false;
+    let imageImpactGaAvailable = false;
+    let imageImpactMessage = "";
+    if (impactRange && hasImageUpdates) {
+      try {
+        orderDailyMetrics = await fetchOrderDailyMetrics(impactRange);
+        imageImpactAvailable = true;
+      } catch (error) {
+        imageImpactMessage = error.message || "Could not load daily order metrics for image impact.";
+      }
+      try {
+        const dailyGa = await fetchGaDailyMetrics(impactRange);
+        imageImpactGaAvailable = dailyGa.available;
+        gaDailyMetrics = mapGaDailyMetrics(snapshot.products || [], dailyGa.metrics || []);
+      } catch (error) {
+        if (!imageImpactMessage) imageImpactMessage = error.message || "Could not load daily GA4 metrics for image impact.";
+      }
+    }
+    const report = buildNewInPerformance(snapshot.products || [], {
+      performanceRange,
+      launchRange,
+      imageRange,
+      includeDrafts,
+      impactDays,
+      orderDailyMetrics,
+      gaDailyMetrics
+    });
+    sendJson(res, 200, {
+      configured: true,
+      syncedAt: snapshot.syncedAt || new Date().toISOString(),
+      performanceRange,
+      launchRange,
+      imageRange,
+      imageImpactRange: impactRange,
+      impactDays,
+      imageImpactAvailable,
+      imageImpactGaAvailable,
+      imageImpactMessage,
+      includeDrafts,
+      ordersAvailable: Boolean(snapshot.ordersAvailable),
+      gaAvailable: Boolean(snapshot.gaAvailable),
+      gaMessage: snapshot.gaMessage || "",
+      totalProducts: Number(snapshot.totalProducts || (snapshot.products || []).length),
+      products: report.rows,
+      summary: report.summary
+    });
+  } catch (error) {
+    sendJson(res, 502, { configured: true, message: error.message || "Could not load New In performance." });
+  }
 }
 
 const emailCampaignService = createEmailCampaignService({
@@ -12365,9 +13460,10 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/suppliers") {
+    const suppliers = readCatalogSuppliers();
     sendJson(res, 200, {
-      suppliers: readCatalogSuppliers(),
-      count: readCatalogSuppliers().length,
+      suppliers,
+      count: suppliers.length,
       generatedAt: new Date().toISOString()
     });
     return true;
@@ -12696,7 +13792,7 @@ async function handleApi(req, res) {
     const orders = db.orders.map(order => syncOrderStatusFromWorkflowRow(order, workflows.get(String(order.id))));
     const activeOrders = orders.filter(order => !order.archivedAt);
     sendJson(res, 200, {
-      suppliers: db.suppliers,
+      suppliers: readCatalogSuppliers(),
       products: [],
       orders: activeOrders.slice(-20).reverse(),
       company: db.company,
@@ -12847,10 +13943,11 @@ async function handleApi(req, res) {
     const db = readOrderDb();
     const workflows = readOrderWorkflowMap();
     const products = catalogProductMap();
+    const supplierCredits = supplierCreditSummaries();
     const orders = db.orders
       .map(order => {
         const workflow = workflows.get(String(order.id));
-        return publicManagedOrder(syncOrderStatusFromWorkflowRow(order, workflow), workflow, products);
+        return publicManagedOrder(syncOrderStatusFromWorkflowRow(order, workflow), workflow, products, supplierCredits);
       })
       .sort((a, b) => String(b.orderDate || b.savedAt).localeCompare(String(a.orderDate || a.savedAt)));
     sendJson(res, 200, {
@@ -12889,12 +13986,15 @@ async function handleApi(req, res) {
     }
     const workflow = readOrderWorkflowMap().get(orderId);
     const syncedOrder = syncOrderStatusFromWorkflowRow(order, workflow);
+    const supplierCredits = supplierCreditSummaries();
     sendJson(res, 200, {
-      order: publicManagedOrder(syncedOrder, workflow),
+      order: publicManagedOrder(syncedOrder, workflow, null, supplierCredits),
       events: readOrderEvents(orderId),
       invoices: readOrderInvoices(orderId),
       batches: readOrderBatches(orderId),
       batchLines: readOrderBatchLines(orderId),
+      receiptLines: readOrderReceiptLines(orderId),
+      discrepancies: readOrderDiscrepancies(orderId),
       labelJobs: readOrderLabelJobs(orderId),
       pahSettings: readPahSettings(),
       users: publicAssignableUsers()
@@ -12988,7 +14088,9 @@ async function handleApi(req, res) {
         events: readOrderEvents(orderId),
         invoices: readOrderInvoices(orderId),
         batches: readOrderBatches(orderId),
-        batchLines: readOrderBatchLines(orderId)
+        batchLines: readOrderBatchLines(orderId),
+        receiptLines: readOrderReceiptLines(orderId),
+        discrepancies: readOrderDiscrepancies(orderId)
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not check order products against Shopify" });
@@ -13022,7 +14124,9 @@ async function handleApi(req, res) {
         events: readOrderEvents(orderId),
         invoices: readOrderInvoices(orderId),
         batches: readOrderBatches(orderId),
-        batchLines: readOrderBatchLines(orderId)
+        batchLines: readOrderBatchLines(orderId),
+        receiptLines: readOrderReceiptLines(orderId),
+        discrepancies: readOrderDiscrepancies(orderId)
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not update order workflow" });
@@ -13057,6 +14161,8 @@ async function handleApi(req, res) {
         invoices,
         batches: readOrderBatches(orderId),
         batchLines: readOrderBatchLines(orderId),
+        receiptLines: readOrderReceiptLines(orderId),
+        discrepancies: readOrderDiscrepancies(orderId),
         events: readOrderEvents(orderId)
       });
     } catch (error) {
@@ -13088,6 +14194,8 @@ async function handleApi(req, res) {
         invoices,
         batches: readOrderBatches(orderId),
         batchLines: readOrderBatchLines(orderId),
+        receiptLines: readOrderReceiptLines(orderId),
+        discrepancies: readOrderDiscrepancies(orderId),
         events: readOrderEvents(orderId)
       });
     } catch (error) {
@@ -13119,6 +14227,8 @@ async function handleApi(req, res) {
         batches,
         invoices: readOrderInvoices(orderId),
         batchLines: readOrderBatchLines(orderId),
+        receiptLines: readOrderReceiptLines(orderId),
+        discrepancies: readOrderDiscrepancies(orderId),
         events: readOrderEvents(orderId)
       });
     } catch (error) {
@@ -13150,10 +14260,75 @@ async function handleApi(req, res) {
         batches,
         invoices: readOrderInvoices(orderId),
         batchLines: readOrderBatchLines(orderId),
+        receiptLines: readOrderReceiptLines(orderId),
+        discrepancies: readOrderDiscrepancies(orderId),
         events: readOrderEvents(orderId)
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not delete batch" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/receipts") {
+    if (!requireRoles(req, res, ["Merchandising", "Admin"], "Only Merchandising or Admin users can save receipt actuals.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      body.actorName = actorName(req);
+      const orderId = String(body.orderId || "");
+      const db = readOrderDb();
+      const order = db.orders.find(item => String(item.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      const previousWorkflow = workflowFromRow(readOrderWorkflowMap().get(orderId), order);
+      const result = saveOrderReceipts(order, body);
+      const refreshedOrder = readOrderDb().orders.find(item => String(item.id) === orderId) || order;
+      const workflow = readOrderWorkflowMap().get(orderId);
+      await notifyOrderHandoffIfChanged(req, order, refreshedOrder, previousWorkflow, workflowFromRow(workflow, refreshedOrder), { notifyRoleActionChange: true });
+      sendJson(res, 200, {
+        ok: true,
+        order: publicManagedOrder(refreshedOrder, workflow),
+        batchId: result.batchId,
+        batches: readOrderBatches(orderId),
+        invoices: readOrderInvoices(orderId),
+        batchLines: readOrderBatchLines(orderId),
+        receiptLines: result.receiptLines,
+        discrepancies: result.discrepancies,
+        events: readOrderEvents(orderId)
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save receipt actuals" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/discrepancies") {
+    if (!requireRoles(req, res, ["Merchandising", "Finance", "Admin"], "Only Merchandising, Finance, or Admin users can update discrepancies.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const orderId = String(body.orderId || "");
+      const db = readOrderDb();
+      const order = db.orders.find(item => String(item.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      const discrepancies = updateOrderDiscrepancy(order, body, req);
+      const workflow = readOrderWorkflowMap().get(orderId);
+      sendJson(res, 200, {
+        ok: true,
+        order: publicManagedOrder(order, workflow),
+        invoices: readOrderInvoices(orderId),
+        batches: readOrderBatches(orderId),
+        batchLines: readOrderBatchLines(orderId),
+        receiptLines: readOrderReceiptLines(orderId),
+        discrepancies,
+        events: readOrderEvents(orderId)
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not update discrepancy" });
     }
     return true;
   }
@@ -13171,7 +14346,9 @@ async function handleApi(req, res) {
         events: readOrderEvents(orderId),
         invoices: readOrderInvoices(orderId),
         batches: readOrderBatches(orderId),
-        batchLines: readOrderBatchLines(orderId)
+        batchLines: readOrderBatchLines(orderId),
+        receiptLines: readOrderReceiptLines(orderId),
+        discrepancies: readOrderDiscrepancies(orderId)
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not archive order" });
@@ -13327,6 +14504,13 @@ const server = http.createServer(async (req, res) => {
   const requestPath = new URL(req.url, `http://${req.headers.host}`).pathname;
   if (requestPath === "/sku-register.html" && !requireRoles(req, res, skuRegisterRoles(), "You do not have access to the SKU register.")) return;
   if (requestPath === "/pnl.html" && !requireRoles(req, res, pnlViewRoles, "You do not have access to the P&L planner.")) return;
+
+  if (req.url.startsWith("/api/new-in-performance")) {
+    fetchNewInPerformance(req, res).catch((error) => {
+      sendJson(res, 500, { message: error.message });
+    });
+    return;
+  }
 
   if (req.url.startsWith("/api/shopify-merchandising")) {
     fetchShopifyMerchandising(req, res).catch((error) => {

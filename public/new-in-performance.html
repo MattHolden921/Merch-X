@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>New In Performance</title>
+<link rel="stylesheet" href="design-system.css">
+<style>
+.sub{max-width:860px}
+.connect{display:grid;grid-template-columns:1.2fr 1fr;gap:12px;align-items:start}
+.toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;align-items:end}
+.cards{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.table-panel{padding:0;overflow:hidden}
+.table-scroll{overflow:auto}
+table{width:100%;border-collapse:collapse;min-width:1340px}
+th,td{padding:10px 12px;border-bottom:.5px solid var(--line);text-align:left;vertical-align:middle}
+th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);background:var(--bg2);font-weight:650}
+td{font-size:12px;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+.product-cell{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:center;min-width:280px}
+.thumb{width:52px;height:68px;background:var(--bg2);border-radius:var(--r);overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--soft);font-size:10px;border:.5px solid var(--line)}
+.thumb img{width:100%;height:100%;object-fit:contain;display:block}
+.title{display:block;color:var(--ink);font-size:13px;font-weight:650;line-height:1.3;margin-bottom:5px}
+.meta{display:flex;flex-wrap:wrap;gap:4px}
+.badge{display:inline-flex;align-items:center;min-height:22px;border-radius:var(--r);padding:3px 7px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#fff;background:var(--info);white-space:nowrap}
+.badge.new{background:var(--good)}
+.badge.image{background:var(--gold)}
+.badge.draft{background:#64748b}
+.badge.watch{background:var(--info)}
+.badge.push{background:var(--good)}
+.badge.exposure{background:#7c3aed}
+.badge.stock{background:var(--warn)}
+.badge.sold{background:var(--bad)}
+.badge.content{background:#0f766e}
+.date-list,.perf-list,.engage-list,.impact-list{display:grid;gap:5px;min-width:140px}
+.date-list b,.perf-list b,.engage-list b,.impact-list b{color:var(--ink);font-weight:650}
+.date-list span,.perf-list span,.engage-list span,.impact-list span{display:block}
+.impact-up{color:var(--good)}
+.impact-down{color:var(--bad)}
+.impact-flat{color:var(--muted)}
+.links{display:flex;flex-wrap:wrap;gap:6px;min-width:120px}
+.links a{font-size:11px;text-decoration:none}
+.empty-state{padding:34px 18px;text-align:center;color:var(--muted);font-size:13px;line-height:1.55}
+.hidden{display:none!important}
+@media(max-width:1280px){.cards{grid-template-columns:repeat(5,1fr)}}
+@media(max-width:900px){.head{grid-template-columns:1fr}.actions{justify-content:flex-start}.connect{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){body{padding:18px 10px 36px}.toolbar,.cards{grid-template-columns:1fr}h1{font-size:22px}}
+@media print{body{background:#fff;padding:10mm}.home,.actions,.connect-panel,.toolbar-panel{display:none}.wrap{max-width:none}.head{display:block;margin-bottom:10px}.sub{font-size:10px}.cards{grid-template-columns:repeat(5,1fr);gap:6px}.metric{padding:7px}.metric span{font-size:14px}th,td{padding:7px 8px}.thumb{width:34px;height:46px}.title{font-size:10px}td{font-size:9px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>New In performance</h1>
+      <p class="sub">Launch and image-refresh performance for products that have recently gone live, recently had featured imagery changed, or are still in draft pipeline.</p>
+    </div>
+    <div class="actions">
+      <button class="btn" id="printBtn" type="button">Print</button>
+      <button class="btn" id="copyLinkBtn" type="button">Copy link</button>
+      <button class="btn" id="exportBtn" type="button">Export CSV</button>
+      <button class="btn primary" id="syncBtn" type="button">Sync Shopify</button>
+    </div>
+  </section>
+
+  <section class="panel connect-panel connect">
+    <p class="notes"><b>Data sources</b><br>Shopify products, order-line sales, current stock, featured image media dates, and optional GA4 item metrics are merged server-side. Launch date uses Shopify <code>publishedAt</code> before product creation date, so early draft creation does not make an old draft look newly launched.</p>
+    <p class="status" id="connectionStatus">Using sample products until Shopify environment variables are configured.</p>
+  </section>
+
+  <section class="panel toolbar-panel">
+    <div class="toolbar">
+      <div class="field"><label for="searchInput">Search</label><input id="searchInput" type="search" placeholder="Product, SKU, type"></div>
+      <div class="field"><label for="cohortFilter">Cohort</label><select class="select" id="cohortFilter"><option value="">All cohorts</option><option value="new">New launches</option><option value="image">Updated images</option><option value="draft">Draft pipeline</option></select></div>
+      <div class="field"><label for="actionFilter">Action</label><select class="select" id="actionFilter"><option value="">All actions</option><option>Push</option><option>Needs exposure</option><option>Image test</option><option>Content check</option><option>Stock watch</option><option>Sold out</option><option>Draft pipeline</option><option>Watch</option></select></div>
+      <div class="field"><label for="statusFilter">Status</label><select class="select" id="statusFilter"><option value="">All statuses</option><option value="ACTIVE">Active</option><option value="DRAFT">Draft</option></select></div>
+      <div class="field"><label for="typeFilter">Category</label><select class="select" id="typeFilter"></select></div>
+      <div class="field"><label for="sortSelect">Sort</label><select class="select" id="sortSelect"><option value="revenue">Sales</option><option value="units">Units</option><option value="revenuePerLiveDay">Sales per day</option><option value="impactRevenue">Image sales lift</option><option value="gaViews">Views</option><option value="stock">Stock</option><option value="liveDate">Live date</option><option value="imageUpdatedDate">Image date</option></select></div>
+      <div class="field"><label for="impactDays">Impact</label><select class="select" id="impactDays"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="21">21 days</option><option value="30">30 days</option></select></div>
+      <div class="field"><label for="startDate">Sales start</label><input id="startDate" type="date"></div>
+      <div class="field"><label for="endDate">Sales end</label><input id="endDate" type="date"></div>
+      <div class="field"><label for="launchStartDate">Launch start</label><input id="launchStartDate" type="date"></div>
+      <div class="field"><label for="launchEndDate">Launch end</label><input id="launchEndDate" type="date"></div>
+      <div class="field"><label for="imageStartDate">Image start</label><input id="imageStartDate" type="date"></div>
+      <div class="field"><label for="imageEndDate">Image end</label><input id="imageEndDate" type="date"></div>
+    </div>
+  </section>
+
+  <section class="cards" aria-label="New In performance summary">
+    <div class="metric"><label>Products</label><span id="metricProducts">0</span><small>filtered rows</small></div>
+    <div class="metric"><label>New</label><span id="metricNew">0</span><small>launched</small></div>
+    <div class="metric"><label>Images</label><span id="metricImages">0</span><small>updated</small></div>
+    <div class="metric"><label>Drafts</label><span id="metricDrafts">0</span><small>pipeline</small></div>
+    <div class="metric"><label>Sales</label><span id="metricRevenue">GBP 0</span><small id="metricWindow">selected period</small></div>
+    <div class="metric"><label>Units</label><span id="metricUnits">0</span><small>sold</small></div>
+    <div class="metric"><label>Views</label><span id="metricViews">0</span><small>GA4 items viewed</small></div>
+    <div class="metric"><label>CVR</label><span id="metricCvr">0%</span><small>units / views</small></div>
+    <div class="metric"><label>Stock</label><span id="metricStock">0</span><small>available units</small></div>
+    <div class="metric"><label>Push</label><span id="metricPush">0</span><small>candidates</small></div>
+  </section>
+
+  <section class="panel table-panel">
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Cohort</th>
+            <th>Launch/Image</th>
+            <th>Performance</th>
+            <th>Engagement</th>
+            <th>Image impact</th>
+            <th>Marketing action</th>
+            <th>Links</th>
+          </tr>
+        </thead>
+        <tbody id="reportBody"></tbody>
+      </table>
+    </div>
+    <div class="empty-state" id="emptyState">No products match the current report window.</div>
+  </section>
+</main>
+<script>
+const sampleProducts=[
+{id:"sample-1",title:"Meredith Linen Pinafore Navy",status:"ACTIVE",cohorts:["New launch"],cohort:"New launch",productType:"Dresses",season:"SS26",color:"Navy",skus:["16101"],imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/IMG_0207_b653c30b-5010-4a72-a0c3-414d5161a4b1.jpg?v=1773859647",onlineStoreUrl:"",createdAt:"2026-05-20T09:00:00Z",createdDate:"2026-05-20",publishedAt:"2026-06-24T09:00:00Z",liveAt:"2026-06-24T09:00:00Z",liveDate:"2026-06-24",imageUpdatedAt:"2026-06-24T09:00:00Z",imageUpdatedDate:"2026-06-24",draftLeadDays:35,activeDays:14,price:59,margin:84,stock:26,revenue:363,units:7,revenuePerLiveDay:25.93,unitsPerLiveDay:.5,gaViews:64,gaAdds:9,cvr:.1094,sellThrough:.2121,isNewLaunch:true,isImageRefresh:false,isDraftPipeline:false,action:"Push"},
+{id:"sample-2",title:"Solange Pocket Linen Dress Fuchsia",status:"ACTIVE",cohorts:["Updated image"],cohort:"Updated image",productType:"Dresses",season:"SS26",color:"Fuchsia",skus:["16102"],imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/Solange_Pink_A.png?v=1779458803",onlineStoreUrl:"",createdAt:"2026-04-30T09:00:00Z",createdDate:"2026-04-30",publishedAt:"2026-05-05T09:00:00Z",liveAt:"2026-05-05T09:00:00Z",liveDate:"2026-05-05",imageUpdatedAt:"2026-06-30T09:00:00Z",imageUpdatedDate:"2026-06-30",draftLeadDays:5,activeDays:14,price:58,margin:87,stock:8,revenue:144,units:3,revenuePerLiveDay:10.29,unitsPerLiveDay:.21,gaViews:22,gaAdds:7,cvr:.1364,sellThrough:.2727,isNewLaunch:false,isImageRefresh:true,isDraftPipeline:false,imageImpact:{available:true,windowDays:14,beforeRange:{startDate:"2026-06-16",endDate:"2026-06-29"},afterRange:{startDate:"2026-06-30",endDate:"2026-07-07"},before:{days:14,revenuePerDay:4.2,unitsPerDay:.08,views:10,adds:1,cvr:.1},after:{days:8,revenuePerDay:10.29,unitsPerDay:.21,views:22,adds:7,cvr:.1364},delta:{revenuePerDay:6.09,revenuePerDayLift:1.45,unitsPerDay:.13,unitsPerDayLift:1.63,viewsPerDay:2.04,cvr:.0364},direction:"up"},action:"Image test"},
+{id:"sample-3",title:"Cesca Strap Linen Dress Stone",status:"ACTIVE",cohorts:["New launch","Updated image"],cohort:"New launch + Updated image",productType:"Dresses",season:"SS26",color:"Stone",skus:["16103"],imageUrl:"https://cdn.shopify.com/s/files/1/1003/0117/7179/files/Cesca_Strap_Linen_Dress_Navy_D.png?v=1779293309",onlineStoreUrl:"",createdAt:"2026-05-16T09:00:00Z",createdDate:"2026-05-16",publishedAt:"2026-06-29T09:00:00Z",liveAt:"2026-06-29T09:00:00Z",liveDate:"2026-06-29",imageUpdatedAt:"2026-07-01T09:00:00Z",imageUpdatedDate:"2026-07-01",draftLeadDays:44,activeDays:9,price:52,margin:86,stock:3,revenue:124,units:3,revenuePerLiveDay:13.78,unitsPerLiveDay:.33,gaViews:44,gaAdds:5,cvr:.0682,sellThrough:.5,isNewLaunch:true,isImageRefresh:true,isDraftPipeline:false,imageImpact:{available:true,windowDays:14,beforeRange:{startDate:"2026-06-17",endDate:"2026-06-30"},afterRange:{startDate:"2026-07-01",endDate:"2026-07-07"},before:{days:14,revenuePerDay:6.1,unitsPerDay:.12,views:18,adds:2,cvr:.1111},after:{days:7,revenuePerDay:13.78,unitsPerDay:.33,views:26,adds:3,cvr:.0769},delta:{revenuePerDay:7.68,revenuePerDayLift:1.26,unitsPerDay:.21,unitsPerDayLift:1.75,viewsPerDay:2.43,cvr:-.0342},direction:"up"},action:"Stock watch"},
+{id:"sample-4",title:"Aster Cotton Tunic Fern",status:"DRAFT",cohorts:["Draft pipeline"],cohort:"Draft pipeline",productType:"Tunics",season:"SS26",color:"Green",skus:["16104"],imageUrl:"",onlineStoreUrl:"",createdAt:"2026-06-25T09:00:00Z",createdDate:"2026-06-25",publishedAt:"",liveAt:"",liveDate:"",imageUpdatedAt:"",imageUpdatedDate:"",draftLeadDays:0,activeDays:0,price:48,margin:null,stock:0,revenue:0,units:0,revenuePerLiveDay:0,unitsPerLiveDay:0,gaViews:0,gaAdds:0,cvr:0,sellThrough:0,isNewLaunch:false,isImageRefresh:false,isDraftPipeline:true,action:"Draft pipeline"}
+];
+let products=sampleProducts;
+let lastSyncMeta={configured:false,ordersAvailable:false,gaAvailable:false,gaMessage:""};
+const fmtMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
+const fmtOne=new Intl.NumberFormat("en-GB",{maximumFractionDigits:1});
+const API_ORIGINS=location.protocol==="file:"?["http://localhost:3010","http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
+async function apiFetch(path,options){let lastError;for(const origin of API_ORIGINS){try{const response=await fetch(`${origin}${path}`,options);if(response.ok||response.status>=400)return response;lastError=new Error(`API returned ${response.status}`)}catch(error){lastError=error}}throw lastError||new Error("API unavailable")}
+const els={status:document.getElementById("connectionStatus"),sync:document.getElementById("syncBtn"),export:document.getElementById("exportBtn"),copy:document.getElementById("copyLinkBtn"),body:document.getElementById("reportBody"),empty:document.getElementById("emptyState"),search:document.getElementById("searchInput"),cohort:document.getElementById("cohortFilter"),action:document.getElementById("actionFilter"),statusFilter:document.getElementById("statusFilter"),type:document.getElementById("typeFilter"),sort:document.getElementById("sortSelect"),impactDays:document.getElementById("impactDays"),start:document.getElementById("startDate"),end:document.getElementById("endDate"),launchStart:document.getElementById("launchStartDate"),launchEnd:document.getElementById("launchEndDate"),imageStart:document.getElementById("imageStartDate"),imageEnd:document.getElementById("imageEndDate")};
+function escapeHtml(value){return String(value||"").replace(/[&<>"']/g,(char)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]))}
+function escapeAttr(value){return escapeHtml(value).replace(/`/g,"&#96;")}
+function iso(date){return date.toISOString().slice(0,10)}
+function shiftDays(days){const date=new Date();date.setDate(date.getDate()+days);return iso(date)}
+function setDefaultDates(){els.end.value=shiftDays(0);els.start.value=shiftDays(-14);els.launchEnd.value=shiftDays(0);els.launchStart.value=shiftDays(-30);els.imageEnd.value=shiftDays(0);els.imageStart.value=shiftDays(-30)}
+function dateText(value){if(!value)return"-";const date=new Date(`${String(value).slice(0,10)}T00:00:00`);return Number.isFinite(date.getTime())?date.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"2-digit"}):"-"}
+function pct(value){return `${fmtOne.format(Number(value||0)*100)}%`}
+function actionClass(action){const clean=String(action||"watch").toLowerCase();if(clean==="needs exposure")return"exposure";if(clean==="stock watch")return"stock";if(clean==="sold out")return"sold";if(clean==="content check")return"content";if(clean==="draft pipeline")return"draft";if(clean==="push")return"push";return"watch"}
+function cohortBadges(product){return(product.cohorts||[]).map((cohort)=>{const cls=cohort==="New launch"?"new":cohort==="Updated image"?"image":"draft";return`<span class="badge ${cls}">${escapeHtml(cohort)}</span>`}).join(" ")}
+function signedMoney(value){const number=Number(value||0);const sign=number>0?"+":"";return`${sign}${fmtMoney.format(number)}`}
+function signedNumber(value){const number=Number(value||0);const sign=number>0?"+":"";return`${sign}${fmtOne.format(number)}`}
+function impactClass(impact){return impact?.direction==="up"?"impact-up":impact?.direction==="down"?"impact-down":"impact-flat"}
+function impactHtml(product){const impact=product.imageImpact;if(!product.isImageRefresh)return`<span>-</span>`;if(!impact||!impact.available)return`<div class="impact-list"><span>No comparison yet</span><span>${escapeHtml(product.imageUpdatedDate?`Image ${dateText(product.imageUpdatedDate)}`:"")}</span></div>`;return`<div class="impact-list"><span><b>${fmtMoney.format(impact.before?.revenuePerDay||0)}</b> to <b>${fmtMoney.format(impact.after?.revenuePerDay||0)}</b> / day</span><span class="${impactClass(impact)}">${signedMoney(impact.delta?.revenuePerDay||0)} sales/day</span><span>${fmtOne.format(impact.before?.unitsPerDay||0)} to ${fmtOne.format(impact.after?.unitsPerDay||0)} units/day</span><span>CVR ${pct(impact.before?.cvr||0)} to ${pct(impact.after?.cvr||0)}</span><span>${dateText(impact.beforeRange?.startDate)}-${dateText(impact.beforeRange?.endDate)} vs ${dateText(impact.afterRange?.startDate)}-${dateText(impact.afterRange?.endDate)}</span></div>`}
+function setTypeFilter(){const current=els.type.value;const types=[...new Set(products.map((product)=>product.productType).filter(Boolean))].sort();els.type.innerHTML=`<option value="">All categories</option>${types.map((value)=>`<option>${escapeHtml(value)}</option>`).join("")}`;if(types.includes(current))els.type.value=current}
+function matchesCohort(product){const value=els.cohort.value;if(value==="new")return product.isNewLaunch;if(value==="image")return product.isImageRefresh;if(value==="draft")return product.isDraftPipeline;return true}
+function filteredRows(){const q=els.search.value.trim().toLowerCase();const type=els.type.value;const status=els.statusFilter.value;const action=els.action.value;const rows=products.filter((product)=>matchesCohort(product)).filter((product)=>!type||product.productType===type).filter((product)=>!status||product.status===status).filter((product)=>!action||product.action===action).filter((product)=>!q||`${product.title} ${(product.skus||[]).join(" ")} ${product.productType||""} ${product.color||""} ${product.season||""}`.toLowerCase().includes(q));const key=els.sort.value;return rows.sort((a,b)=>{if(key==="liveDate"||key==="imageUpdatedDate")return String(b[key]||"").localeCompare(String(a[key]||""));if(key==="impactRevenue")return Number(b.imageImpact?.delta?.revenuePerDay||-999999)-Number(a.imageImpact?.delta?.revenuePerDay||-999999);return Number(b[key]||0)-Number(a[key]||0)})}
+function renderMetrics(rows){const summary=rows.reduce((acc,row)=>{acc.products+=1;if(row.isNewLaunch)acc.new+=1;if(row.isImageRefresh)acc.images+=1;if(row.isDraftPipeline)acc.drafts+=1;if(row.action==="Push")acc.push+=1;acc.revenue+=Number(row.revenue||0);acc.units+=Number(row.units||0);acc.views+=Number(row.gaViews||0);acc.stock+=Number(row.stock||0);return acc},{products:0,new:0,images:0,drafts:0,push:0,revenue:0,units:0,views:0,stock:0});document.getElementById("metricProducts").textContent=summary.products.toLocaleString("en-GB");document.getElementById("metricNew").textContent=summary.new.toLocaleString("en-GB");document.getElementById("metricImages").textContent=summary.images.toLocaleString("en-GB");document.getElementById("metricDrafts").textContent=summary.drafts.toLocaleString("en-GB");document.getElementById("metricRevenue").textContent=fmtMoney.format(summary.revenue);document.getElementById("metricUnits").textContent=summary.units.toLocaleString("en-GB");document.getElementById("metricViews").textContent=summary.views.toLocaleString("en-GB");document.getElementById("metricCvr").textContent=summary.views?pct(summary.units/summary.views):"0%";document.getElementById("metricStock").textContent=summary.stock.toLocaleString("en-GB");document.getElementById("metricPush").textContent=summary.push.toLocaleString("en-GB");document.getElementById("metricWindow").textContent=`${dateText(els.start.value)} to ${dateText(els.end.value)}`}
+function rowHtml(product){const sku=(product.skus||[]).join(", ");const links=[product.onlineStoreUrl?`<a href="${escapeAttr(product.onlineStoreUrl)}" target="_blank" rel="noreferrer">Storefront</a>`:"",product.imageUrl?`<a href="${escapeAttr(product.imageUrl)}" target="_blank" rel="noreferrer">Image</a>`:""].filter(Boolean).join("");const gp=product.margin==null?"No cost":`${Math.round(product.margin)}% GP`;return`<tr><td><div class="product-cell"><div class="thumb">${product.imageUrl?`<img src="${escapeAttr(product.imageUrl)}" alt="${escapeAttr(product.imageAlt||product.title)}" loading="lazy">`:"No image"}</div><div><span class="title">${escapeHtml(product.title)}</span><div class="meta">${[sku,product.status,product.productType,product.season,product.color].filter(Boolean).map((value)=>`<span class="chip">${escapeHtml(value)}</span>`).join("")}</div></div></div></td><td>${cohortBadges(product)}</td><td><div class="date-list"><span>Live <b>${dateText(product.liveDate)}</b></span><span>Image <b>${dateText(product.imageUpdatedDate)}</b></span><span>Draft lead <b>${Number(product.draftLeadDays||0).toLocaleString("en-GB")}d</b></span></div></td><td><div class="perf-list"><span><b>${fmtMoney.format(product.revenue||0)}</b> / ${Number(product.units||0).toLocaleString("en-GB")} units</span><span>${fmtMoney.format(product.revenuePerLiveDay||0)} per live day</span><span>${Number(product.stock||0).toLocaleString("en-GB")} stock / ${gp}</span></div></td><td><div class="engage-list"><span><b>${Number(product.gaViews||0).toLocaleString("en-GB")}</b> views</span><span>${Number(product.gaAdds||0).toLocaleString("en-GB")} ATC / ${pct(product.cvr)} CVR</span><span>${pct(product.sellThrough)} sell-through</span></div></td><td>${impactHtml(product)}</td><td><span class="badge ${actionClass(product.action)}">${escapeHtml(product.action||"Watch")}</span></td><td><div class="links">${links||"<span>-</span>"}</div></td></tr>`}
+function render(){updateUrl();const rows=filteredRows();renderMetrics(rows);els.body.innerHTML=rows.map(rowHtml).join("");els.empty.classList.toggle("hidden",rows.length>0)}
+function queryParams(){const params=new URLSearchParams();params.set("startDate",els.start.value);params.set("endDate",els.end.value);params.set("launchStartDate",els.launchStart.value);params.set("launchEndDate",els.launchEnd.value);params.set("imageStartDate",els.imageStart.value);params.set("imageEndDate",els.imageEnd.value);if(els.impactDays.value!=="14")params.set("impactDays",els.impactDays.value);if(els.search.value.trim())params.set("q",els.search.value.trim());if(els.cohort.value)params.set("cohort",els.cohort.value);if(els.action.value)params.set("action",els.action.value);if(els.statusFilter.value)params.set("status",els.statusFilter.value);if(els.type.value)params.set("type",els.type.value);if(els.sort.value!=="revenue")params.set("sort",els.sort.value);return params}
+function updateUrl(){const params=queryParams();history.replaceState(null,"",`${location.pathname}?${params.toString()}`)}
+function loadParams(){const params=new URLSearchParams(location.search);for(const [id,param] of [["start","startDate"],["end","endDate"],["launchStart","launchStartDate"],["launchEnd","launchEndDate"],["imageStart","imageStartDate"],["imageEnd","imageEndDate"]]){if(params.get(param))els[id].value=params.get(param)}if(params.get("impactDays"))els.impactDays.value=params.get("impactDays");els.search.value=params.get("q")||"";els.cohort.value=params.get("cohort")||"";els.action.value=params.get("action")||"";els.statusFilter.value=params.get("status")||"";els.sort.value=params.get("sort")||"revenue";return{type:params.get("type")||""}}
+function apiQuery(){const params=new URLSearchParams();params.set("startDate",els.start.value);params.set("endDate",els.end.value);params.set("launchStartDate",els.launchStart.value);params.set("launchEndDate",els.launchEnd.value);params.set("imageStartDate",els.imageStart.value);params.set("imageEndDate",els.imageEnd.value);params.set("impactDays",els.impactDays.value);return params}
+async function syncReport(){if(!els.start.value||!els.end.value||els.start.value>els.end.value){els.status.className="status err";els.status.textContent="Choose a valid sales date range.";return}els.sync.disabled=true;els.sync.textContent="Syncing";els.status.className="status";els.status.textContent="Connecting to Shopify...";try{const response=await apiFetch(`/api/new-in-performance?${apiQuery().toString()}`);const data=await response.json();if(!data.configured){products=sampleProducts;lastSyncMeta={configured:false};els.status.className="status warn";els.status.textContent=data.message||"Shopify is not configured. Showing sample New In performance."}else if(!response.ok){throw new Error(data.message||"New In performance sync failed")}else{products=data.products||[];lastSyncMeta=data;const syncedAt=new Date(data.syncedAt).toLocaleString("en-GB");const orderText=data.ordersAvailable?"Sales included.":"Orders unavailable, so sales show as zero.";const impactText=data.imageImpactAvailable?` Image impact uses ${Number(data.impactDays||els.impactDays.value).toLocaleString("en-GB")} day pre/post windows.`:data.imageImpactMessage?` Image impact unavailable: ${escapeHtml(data.imageImpactMessage)}`:"";const gaText=data.gaAvailable?" GA4 included.":data.gaMessage?` GA4 not connected: ${escapeHtml(data.gaMessage)}`:"";els.status.className=data.ordersAvailable?"status ok":"status warn";els.status.innerHTML=`<strong>Connected.</strong> Synced ${Number(data.totalProducts||0).toLocaleString("en-GB")} Shopify products at ${escapeHtml(syncedAt)}. ${orderText}${impactText}${gaText}`}}catch(error){products=sampleProducts;lastSyncMeta={configured:false};els.status.className="status err";els.status.textContent=`${error.message}. Showing sample New In performance.`}finally{const wantedType=els.type.dataset.pending||els.type.value;setTypeFilter();if([...els.type.options].some((option)=>option.value===wantedType))els.type.value=wantedType;delete els.type.dataset.pending;render();els.sync.disabled=false;els.sync.textContent="Sync Shopify"}}
+function exportCsv(){const rows=filteredRows();const header=["title","sku","status","cohort","action","product_type","season","colour","live_date","image_updated_date","draft_lead_days","sales","units","sales_per_live_day","stock","gp_percent","ga_views","ga_adds","cvr","sell_through","image_impact_days","pre_image_range","post_image_range","pre_image_sales_per_day","post_image_sales_per_day","image_sales_per_day_delta","pre_image_units_per_day","post_image_units_per_day","image_units_per_day_delta","pre_image_views","post_image_views","pre_image_cvr","post_image_cvr","image_cvr_delta","storefront_url","image_url"];const lines=[header.join(",")];for(const row of rows){const impact=row.imageImpact||{};lines.push([row.title,(row.skus||[]).join("|"),row.status,row.cohort,row.action,row.productType,row.season,row.color,row.liveDate,row.imageUpdatedDate,row.draftLeadDays,row.revenue,row.units,row.revenuePerLiveDay,row.stock,row.margin==null?"":row.margin,row.gaViews,row.gaAdds,row.cvr,row.sellThrough,impact.available?impact.windowDays:"",impact.available?`${impact.beforeRange?.startDate||""} to ${impact.beforeRange?.endDate||""}`:"",impact.available?`${impact.afterRange?.startDate||""} to ${impact.afterRange?.endDate||""}`:"",impact.available?impact.before?.revenuePerDay:"",impact.available?impact.after?.revenuePerDay:"",impact.available?impact.delta?.revenuePerDay:"",impact.available?impact.before?.unitsPerDay:"",impact.available?impact.after?.unitsPerDay:"",impact.available?impact.delta?.unitsPerDay:"",impact.available?impact.before?.views:"",impact.available?impact.after?.views:"",impact.available?impact.before?.cvr:"",impact.available?impact.after?.cvr:"",impact.available?impact.delta?.cvr:"",row.onlineStoreUrl,row.imageUrl].map(csvCell).join(","))}const blob=new Blob([lines.join("\n")],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);const link=document.createElement("a");link.href=url;link.download=`new-in-performance-${els.end.value||"export"}.csv`;document.body.appendChild(link);link.click();link.remove();URL.revokeObjectURL(url)}
+function csvCell(value){const text=String(value==null?"":value);return/[",\n]/.test(text)?`"${text.replace(/"/g,'""')}"`:text}
+async function copyLink(){updateUrl();try{await navigator.clipboard.writeText(location.href);els.status.className="status ok";els.status.textContent="Share link copied."}catch{els.status.className="status warn";els.status.textContent=location.href}}
+[els.search,els.cohort,els.action,els.statusFilter,els.type,els.sort].forEach((el)=>el.addEventListener("input",render));
+[els.start,els.end,els.launchStart,els.launchEnd,els.imageStart,els.imageEnd,els.impactDays].forEach((el)=>el.addEventListener("change",()=>{updateUrl();syncReport()}));
+els.sync.addEventListener("click",syncReport);
+els.export.addEventListener("click",exportCsv);
+els.copy.addEventListener("click",copyLink);
+document.getElementById("printBtn").addEventListener("click",()=>window.print());
+setDefaultDates();
+const loaded=loadParams();
+els.type.dataset.pending=loaded.type;
+setTypeFilter();
+render();
+syncReport();
+</script>
+</body>
+</html>

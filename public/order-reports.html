@@ -99,6 +99,7 @@ const tabs=[
   {id:"exceptions",label:"Exceptions"},
   {id:"nextActions",label:"Next actions"},
   {id:"finance",label:"Finance"},
+  {id:"supplierPerformance",label:"Supplier performance"},
   {id:"buyingMix",label:"Buying mix"},
   {id:"dataQuality",label:"Data quality"}
 ];
@@ -128,6 +129,7 @@ function formatDate(value){
   return Number.isNaN(date.getTime())?escapeHtml(value):dateFmt.format(date);
 }
 function formatMoney(value){return money.format(Number(value||0));}
+function formatPercent(value){return `${Math.round(Number(value||0)*100)}%`;}
 function localIsoDate(date){
   const local=new Date(date.getTime()-date.getTimezoneOffset()*60000);
   return local.toISOString().slice(0,10);
@@ -200,6 +202,7 @@ function rowMatches(row,ignoreDate=false){
 function filteredRows(id=state.tab){
   const reports=state.data?.reports||{};
   if(id==="buyingMix")return (reports.orders||[]).filter(row=>rowMatches(row));
+  if(id==="supplierPerformance")return (reports.supplierPerformance||[]).filter(row=>!val("supplier-filter")||row.supplierName===val("supplier-filter"));
   if(id==="withoutDates")return (reports.withoutDates||[]).filter(row=>rowMatches(row,true));
   if(id==="nextActions")return (reports.nextActions||[]).filter(row=>rowMatches(row,true));
   return (reports[id]||[]).filter(row=>rowMatches(row));
@@ -232,6 +235,8 @@ function columnsFor(tab){
     {key:"week",label:"Week",render:row=>escapeHtml(row.weekLabel||"-"),sort:row=>row.weekLabel||"9999-W99"},
     {key:"styles",label:"Styles",className:"num",render:row=>numberFmt.format(Number(row.styleCount||0)),sort:row=>Number(row.styleCount||0)},
     {key:"units",label:"Units",className:"num",render:row=>numberFmt.format(Number(row.units||0)),sort:row=>Number(row.units||0)},
+    {key:"accepted",label:"Accepted",className:"num",render:row=>numberFmt.format(Number(row.actuals?.acceptedQuantity||0)),sort:row=>Number(row.actuals?.acceptedQuantity||0)},
+    {key:"varianceUnits",label:"Short / damaged",className:"num",render:row=>`${numberFmt.format(Number(row.actuals?.shortQuantity||0))} / ${numberFmt.format(Number(row.actuals?.damagedQuantity||0))}`,sort:row=>Number(row.actuals?.shortQuantity||0)+Number(row.actuals?.damagedQuantity||0)},
     {key:"costValueGbp",label:"Cost value",className:"num",render:row=>formatMoney(row.costValueGbp),sort:row=>Number(row.costValueGbp||0)},
     {key:"retailValueGbp",label:"Retail value",className:"num",render:row=>formatMoney(row.retailValueGbp),sort:row=>Number(row.retailValueGbp||0)},
     {key:"intake",label:"Intake",render:row=>statusBadge(row.workflow?.intakeStatus),sort:row=>row.workflow?.intakeStatus||""},
@@ -242,29 +247,45 @@ function columnsFor(tab){
   if(tab==="exceptions")return [
     base[0],base[1],
     {key:"reason",label:"Reason",render:row=>escapeHtml(row.reason),sort:row=>row.reason},
-    base[2],base[3],base[4],base[5],
+    base[2],base[3],base[4],base[5],base[6],base[7],
     {key:"outstanding",label:"Outstanding",className:"num",render:row=>numberFmt.format(Number(row.batches?.outstandingUnits||0)),sort:row=>Number(row.batches?.outstandingUnits||0)},
-    base[8],base[10],base[11]
+    base[10],base[12],base[13]
   ];
   if(tab==="nextActions")return [
     base[0],base[1],
     {key:"reason",label:"Queue",render:row=>escapeHtml(row.reason),sort:row=>row.reason},
-    base[10],
+    base[12],
     {key:"approval",label:"Approval",render:row=>statusBadge(row.workflow?.approvalStatus),sort:row=>row.workflow?.approvalStatus||""},
-    base[9],base[8],base[2],base[3],base[11]
+    base[11],base[10],base[2],base[3],base[13]
   ];
   if(tab==="finance")return [
     base[0],base[1],
     {key:"payment",label:"Payment",render:row=>statusBadge(row.workflow?.paymentStatus),sort:row=>row.workflow?.paymentStatus||""},
     {key:"orderValue",label:"Order value",className:"num",render:row=>formatMoney(row.invoices?.orderTotal||row.totalGbp),sort:row=>Number(row.invoices?.orderTotal||row.totalGbp||0)},
-    {key:"invoiced",label:"Invoiced",className:"num",render:row=>formatMoney(row.invoices?.totalDue),sort:row=>Number(row.invoices?.totalDue||0)},
+    {key:"grossInvoiced",label:"Gross invoiced",className:"num",render:row=>formatMoney(row.invoices?.grossInvoiceDue||row.invoices?.totalDue),sort:row=>Number(row.invoices?.grossInvoiceDue||row.invoices?.totalDue||0)},
+    {key:"credits",label:"Credit notes",className:"num",render:row=>formatMoney(row.invoices?.creditNoteTotal),sort:row=>Number(row.invoices?.creditNoteTotal||0)},
+    {key:"invoiced",label:"Net invoiced",className:"num",render:row=>formatMoney(row.invoices?.totalDue),sort:row=>Number(row.invoices?.totalDue||0)},
     {key:"paid",label:"Paid",className:"num",render:row=>formatMoney(row.invoices?.totalPaid),sort:row=>Number(row.invoices?.totalPaid||0)},
     {key:"outstanding",label:"Outstanding",className:"num",render:financeBalanceCell,sort:row=>Number(row.invoices?.outstanding||0)},
     {key:"outstandingInvoiced",label:"Outstanding invoiced",className:"num",render:row=>formatMoney(row.invoices?.outstandingInvoiced),sort:row=>Number(row.invoices?.outstandingInvoiced||0)},
     {key:"uninvoicedBalance",label:"Uninvoiced balance",className:"num",render:row=>formatMoney(row.invoices?.uninvoicedBalance),sort:row=>Number(row.invoices?.uninvoicedBalance||0)},
     {key:"variance",label:"Variance",className:"num",render:varianceCell,sort:row=>Number(row.invoices?.invoiceVariance||0)},
     {key:"invoices",label:"Invoices",className:"num",render:row=>numberFmt.format(Number(row.invoices?.count||0)),sort:row=>Number(row.invoices?.count||0)},
-    base[11]
+    base[13]
+  ];
+  if(tab==="supplierPerformance")return [
+    {key:"supplier",label:"Supplier",render:row=>`<div class="primary-cell"><strong>${escapeHtml(row.supplierName||"No supplier")}</strong><span>${numberFmt.format(Number(row.orders||0))} orders / ${numberFmt.format(Number(row.units||0))} units</span></div>`,sort:row=>row.supplierName||""},
+    {key:"value",label:"Value",className:"num",render:row=>formatMoney(row.valueGbp),sort:row=>Number(row.valueGbp||0)},
+    {key:"ordered",label:"Ordered",className:"num",render:row=>numberFmt.format(Number(row.orderedUnits||0)),sort:row=>Number(row.orderedUnits||0)},
+    {key:"accepted",label:"Accepted",className:"num",render:row=>numberFmt.format(Number(row.acceptedUnits||0)),sort:row=>Number(row.acceptedUnits||0)},
+    {key:"fill",label:"Fill rate",className:"num",render:row=>formatPercent(row.fillRate),sort:row=>Number(row.fillRate||0)},
+    {key:"short",label:"Short",className:"num",render:row=>numberFmt.format(Number(row.shortUnits||0)),sort:row=>Number(row.shortUnits||0)},
+    {key:"damaged",label:"Damaged",className:"num",render:row=>numberFmt.format(Number(row.damagedUnits||0)),sort:row=>Number(row.damagedUnits||0)},
+    {key:"open",label:"Open issues",className:"num",render:row=>numberFmt.format(Number(row.openDiscrepancies||0)),sort:row=>Number(row.openDiscrepancies||0)},
+    {key:"creditDue",label:"Credit due",className:"num",render:row=>formatMoney(row.openCreditValueGbp),sort:row=>Number(row.openCreditValueGbp||0)},
+    {key:"creditReceived",label:"Credit received",className:"num",render:row=>formatMoney(row.creditReceivedGbp),sort:row=>Number(row.creditReceivedGbp||0)},
+    {key:"outstanding",label:"Outstanding",className:"num",render:row=>formatMoney(row.outstandingGbp),sort:row=>Number(row.outstandingGbp||0)},
+    {key:"onTime",label:"On time",className:"num",render:row=>`${formatPercent(row.onTimeRate)}<span class="subline">${numberFmt.format(Number(row.lateBatches||0))} late / ${numberFmt.format(Number(row.openBatches||0))} open</span>`,sort:row=>Number(row.onTimeRate||0)}
   ];
   if(tab==="dataQuality")return [
     base[0],base[1],
@@ -272,7 +293,7 @@ function columnsFor(tab){
     {key:"unbatched",label:"Unbatched",className:"num",render:row=>numberFmt.format(Number(row.batches?.unbatchedUnits||0)),sort:row=>Number(row.batches?.unbatchedUnits||0)},
     {key:"batchLines",label:"Batches without lines",className:"num",render:row=>numberFmt.format(Number(row.batches?.batchesWithoutLines||0)),sort:row=>Number(row.batches?.batchesWithoutLines||0)},
     {key:"invoiceBatch",label:"Invoices without batch",className:"num",render:row=>numberFmt.format(Number(row.invoices?.invoiceWithoutBatch||0)),sort:row=>Number(row.invoices?.invoiceWithoutBatch||0)},
-    base[2],base[3],base[10],base[11]
+    base[2],base[3],base[12],base[13]
   ];
   return base;
 }
@@ -370,8 +391,8 @@ function setTab(tab){
     el("date-to").disabled=true;
   }
   state.tab=tab;
-  const defaults={arrivals:"arrivalDate",withoutDates:"order",exceptions:"reason",nextActions:"owner",finance:"outstandingInvoiced",buyingMix:"valueGbp",dataQuality:"reason"};
-  state.sort={key:defaults[tab]||"order",dir:tab==="finance"||tab==="buyingMix"?"desc":"asc"};
+  const defaults={arrivals:"arrivalDate",withoutDates:"order",exceptions:"reason",nextActions:"owner",finance:"outstandingInvoiced",supplierPerformance:"value",buyingMix:"valueGbp",dataQuality:"reason"};
+  state.sort={key:defaults[tab]||"order",dir:tab==="finance"||tab==="buyingMix"||tab==="supplierPerformance"?"desc":"asc"};
   render();
 }
 function render(){

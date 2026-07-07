@@ -121,6 +121,23 @@ textarea{min-height:70px;resize:vertical}
 .batch-line-table input[type="number"]{min-height:28px;padding:4px 6px;font-size:11px}
 .batch-line-table th:nth-child(1),.batch-line-table td:nth-child(1){width:34px;text-align:center}
 .batch-line-table th:nth-child(5),.batch-line-table td:nth-child(5),.batch-line-table th:nth-child(6),.batch-line-table td:nth-child(6),.batch-line-table th:nth-child(7),.batch-line-table td:nth-child(7){width:72px}
+.receipt-create{display:none;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px;margin-top:10px}
+.receipt-create.open{display:block}
+.receipt-table-wrap,.discrepancy-table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
+.receipt-table,.discrepancy-table{width:100%;border-collapse:collapse;min-width:920px;table-layout:fixed}
+.receipt-table th,.discrepancy-table th{font-size:9px;text-transform:uppercase;letter-spacing:0;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:6px 4px;border-bottom:1px solid var(--ds-line)}
+.receipt-table td,.discrepancy-table td{font-size:11px;color:var(--ds-text-muted);padding:6px 4px;border-bottom:1px solid var(--ds-line);vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+.receipt-table input,.discrepancy-table input,.discrepancy-table select{min-height:28px;padding:4px 6px;font-size:11px}
+.receipt-table th:nth-child(1),.receipt-table td:nth-child(1){width:190px}
+.receipt-table th:nth-child(n+2),.receipt-table td:nth-child(n+2){width:80px}
+.discrepancy-group{margin-top:14px}
+.discrepancy-table th:nth-child(1),.discrepancy-table td:nth-child(1){width:190px}
+.discrepancy-table th:nth-child(2),.discrepancy-table td:nth-child(2){width:86px}
+.discrepancy-table th:nth-child(3),.discrepancy-table td:nth-child(3){width:78px}
+.discrepancy-table th:nth-child(4),.discrepancy-table td:nth-child(4){width:96px}
+.discrepancy-table th:nth-child(5),.discrepancy-table td:nth-child(5){width:128px}
+.discrepancy-table th:nth-child(6),.discrepancy-table td:nth-child(6){width:124px}
+.discrepancy-table th:nth-child(8),.discrepancy-table td:nth-child(8){width:64px}
 .empty-state{padding:38px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.6}
 .line-table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius)}
 .line-table{width:100%;border-collapse:collapse;min-width:1040px}
@@ -187,13 +204,22 @@ const approvalStatuses=["Not requested","Pending director approval","Approved","
 const paymentStatuses=["Not due","Awaiting invoice","Ready to pay","Part paid","Paid","Overdue"];
 const intakeStatuses=["Not confirmed","Confirmed","In production","Part shipped","Shipped","Delayed","Part received","Received"];
 const batchPaymentStatuses=["Awaiting invoice","Ready to pay","Part paid","Paid","Query"];
-const batchIntakeStatuses=["Not confirmed","Confirmed","In production","Shipped","Delayed","Received"];
+const batchIntakeStatuses=["Not confirmed","Confirmed","In production","Shipped","Delayed","Part received","Received"];
 const invoiceTypes=["Deposit invoice","Balance invoice","Full invoice","Credit note","Other"];
 const invoiceStatuses=["Awaiting FD","Sent to FD","Paid","Query"];
+const discrepancyStatuses=["Open","Credit requested","Credit received","Replacement expected","Replacement received","Accepted variance","Written off","Resolved"];
+const discrepancyResolutionTypes=[
+  {value:"",label:"No resolution"},
+  {value:"credit_note",label:"Credit note"},
+  {value:"replacement",label:"Replacement"},
+  {value:"accepted_variance",label:"Accepted variance"},
+  {value:"write_off",label:"Write-off"},
+  {value:"corrected_receipt",label:"Corrected receipt"}
+];
 const currencyOptions=["EUR","GBP","USD","Other"];
 const owners=["Buyer","Buying Director","FD / Finance","Merchandising","Supplier"];
 const INVOICE_BALANCE_TOLERANCE_GBP=10;
-let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],labelJobs:[],labelValidation:null,labelSettings:{sparePerSku:0,placementInstructions:""},pahSettings:{},metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,lineBatchFilter:"all",authMode:"none",currentUser:null};
+let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],receiptLines:[],discrepancies:[],labelJobs:[],labelValidation:null,labelSettings:{sparePerSku:0,placementInstructions:""},pahSettings:{},metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,receivingBatchId:"",lineBatchFilter:"all",authMode:"none",currentUser:null};
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
@@ -283,6 +309,24 @@ function invoiceAmountEur(invoice,order){
   return String(invoice?.currency||"GBP").toUpperCase()==="EUR"?amount:gbpToEur(amount,order);
 }
 
+function invoiceDocumentKind(invoice){
+  const raw=String(invoice?.documentKind||"").trim();
+  if(raw==="credit_note")return"credit_note";
+  return String(invoice?.invoiceType||"").trim().toLowerCase()==="credit note"?"credit_note":"invoice";
+}
+
+function invoiceSign(invoice){
+  return invoiceDocumentKind(invoice)==="credit_note"?-1:1;
+}
+
+function signedInvoiceAmountGbp(invoice,order){
+  return invoiceAmountGbp(invoice,order)*invoiceSign(invoice);
+}
+
+function signedInvoiceAmountEur(invoice,order){
+  return invoiceAmountEur(invoice,order)*invoiceSign(invoice);
+}
+
 function invoiceDefaultAmount(order,currency){
   const code=String(currency||order?.currency||"GBP").toUpperCase();
   return code==="EUR"&&orderFxRate(order)?gbpToEur(orderTotalGbp(order),order):orderTotalGbp(order);
@@ -337,9 +381,9 @@ function userHasAppRole(role){
 }
 
 function badgeClass(value){
-  if(["Approved","Paid","Received","Payment complete","Complete"].includes(value))return"good";
-  if(["Pending director approval","Ready to pay","Part paid","Part shipped","Part received","Shipped","Confirmed","In production","Awaiting approval","Sent to FD","Shopify linked","Synced draft","Shopify draft","Live"].includes(value))return"info";
-  if(["Changes requested","Awaiting invoice","Delayed","Overdue","Rejected","Query","Product sync","Needs Shopify","Missing SKU","Product hold"].includes(value))return value==="Overdue"||value==="Rejected"?"bad":"warn";
+  if(["Approved","Paid","Received","Payment complete","Complete","Credit received","Replacement received","Accepted variance","Written off","Resolved"].includes(value))return"good";
+  if(["Pending director approval","Ready to pay","Part paid","Part shipped","Part received","Shipped","Confirmed","In production","Awaiting approval","Sent to FD","Shopify linked","Synced draft","Shopify draft","Live","Credit requested","Replacement expected"].includes(value))return"info";
+  if(["Changes requested","Awaiting invoice","Delayed","Overdue","Rejected","Query","Product sync","Needs Shopify","Missing SKU","Product hold","Open"].includes(value))return value==="Overdue"||value==="Rejected"?"bad":"warn";
   return "";
 }
 
@@ -1056,18 +1100,65 @@ function batchSelectOptions(value){
   return valueOptions(items,value,"No batch");
 }
 
+function discrepancySelectOptions(value){
+  const items=(state.discrepancies||[]).map(item=>({
+    value:item.id,
+    label:`${item.sku||item.buyingCode||"Discrepancy"} ${item.discrepancyType||""} ${money.format(Number(item.valueGbp||0))}`
+  }));
+  return valueOptions(items,value,"No linked discrepancy");
+}
+
 function batchTotals(order,batches){
   const orderUnits=Number(order.units||0);
   const expectedUnits=batches.reduce((total,batch)=>total+Number(batch.units||0),0);
   const expectedStyles=batches.reduce((total,batch)=>total+Number(batch.styleCount||0),0);
-  const receivedUnits=batches.filter(batch=>batch.intakeStatus==="Received").reduce((total,batch)=>total+Number(batch.units||0),0);
+  let receivedUnits=0;
+  let acceptedUnits=0;
+  let damagedUnits=0;
+  let shortUnits=0;
+  for(const batch of batches){
+    const receipts=receiptLinesForBatch(batch.id);
+    if(receipts.length){
+      const totals=receiptTotals(receipts);
+      receivedUnits+=totals.receivedQuantity;
+      acceptedUnits+=totals.acceptedQuantity;
+      damagedUnits+=totals.damagedQuantity;
+      shortUnits+=totals.shortQuantity;
+    }else if(batch.intakeStatus==="Received"){
+      receivedUnits+=Number(batch.units||0);
+      acceptedUnits+=Number(batch.units||0);
+    }
+  }
   return {
     count:batches.length,
     expectedUnits,
     expectedStyles,
     receivedUnits,
-    outstandingUnits:Math.max(0,(orderUnits||expectedUnits)-receivedUnits)
+    acceptedUnits,
+    damagedUnits,
+    shortUnits,
+    outstandingUnits:Math.max(0,(orderUnits||expectedUnits)-acceptedUnits)
   };
+}
+
+function receiptLinesForBatch(batchId){
+  return (state.receiptLines||[]).filter(line=>line.batchId===batchId);
+}
+
+function receiptLineFor(batchId,lineIndex){
+  return receiptLinesForBatch(batchId).find(line=>Number(line.lineIndex)===Number(lineIndex))||null;
+}
+
+function receiptTotals(lines){
+  return (lines||[]).reduce((sum,line)=>{
+    sum.expectedQuantity+=Number(line.expectedQuantity||0);
+    sum.receivedQuantity+=Number(line.receivedQuantity||0);
+    sum.damagedQuantity+=Number(line.damagedQuantity||0);
+    sum.acceptedQuantity+=Number(line.acceptedQuantity||0);
+    sum.shortQuantity+=Number(line.shortQuantity||0);
+    sum.overQuantity+=Number(line.overQuantity||0);
+    return sum;
+  },{expectedQuantity:0,receivedQuantity:0,damagedQuantity:0,acceptedQuantity:0,shortQuantity:0,overQuantity:0});
 }
 
 function batchAllocationForLine(batchId,lineIndex){
@@ -1128,13 +1219,15 @@ function renderBatchGroup(order){
   const canBook=canManage&&productsReady;
   const formAttrs=canBook?"":"disabled";
   const holdNotice=productsReady?"":`<div class="status warn" style="margin-bottom:10px">Check Shopify SKUs to link existing Shopify products without pushing or overwriting product data.</div>`;
+  const receiveButton=canSaveReceipt()&&!batches.length?`<button type="button" class="btn" onclick="receiveFullOrder()" ${productsReady?"":"disabled"}>Receive full order</button>`:"";
   return `<section class="work-panel batch-group">
-    <div class="work-head"><h3>Supplier batches</h3><div class="actions"><span class="pill">${batches.length} batch${batches.length===1?"":"es"}</span><button type="button" class="btn" onclick="toggleCreateBatch()" ${canBook?"":"disabled"}>${editing?"Edit batch":"Create batch"}</button></div></div>
+    <div class="work-head"><h3>Supplier batches</h3><div class="actions"><span class="pill">${batches.length} batch${batches.length===1?"":"es"}</span>${receiveButton}<button type="button" class="btn" onclick="toggleCreateBatch()" ${canBook?"":"disabled"}>${editing?"Edit batch":"Create batch"}</button></div></div>
     ${holdNotice}
     <div class="batch-totals">
       <div class="invoice-total"><label>Planned</label><strong>${totals.count.toLocaleString("en-GB")}</strong><span class="money-sub">batches</span></div>
       <div class="invoice-total"><label>Styles</label><strong>${totals.expectedStyles.toLocaleString("en-GB")}</strong><span class="money-sub">batch total</span></div>
-      <div class="invoice-total"><label>Received units</label><strong>${totals.receivedUnits.toLocaleString("en-GB")}</strong><span class="money-sub">of ${Number(order.units||0).toLocaleString("en-GB")}</span></div>
+      <div class="invoice-total"><label>Received units</label><strong>${totals.receivedUnits.toLocaleString("en-GB")}</strong><span class="money-sub">${totals.acceptedUnits.toLocaleString("en-GB")} accepted</span></div>
+      <div class="invoice-total"><label>Damaged / short</label><strong>${totals.damagedUnits.toLocaleString("en-GB")} / ${totals.shortUnits.toLocaleString("en-GB")}</strong><span class="money-sub">units</span></div>
       <div class="invoice-total"><label>Outstanding units</label><strong>${totals.outstandingUnits.toLocaleString("en-GB")}</strong><span class="money-sub">remaining</span></div>
     </div>
     <div class="batch-table-wrap">${renderBatchTable(order,batches)}</div>
@@ -1158,6 +1251,7 @@ function renderBatchGroup(order){
       </div>
       <div class="actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn primary" onclick="saveBatch()" ${canBook?"":"disabled"}>${editing?"Save batch":"Add batch"}</button>${editing?`<button type="button" class="btn" onclick="cancelBatchEdit()">Cancel</button>`:""}</div>
     </div>
+    ${renderReceiptEditor(order)}
   </section>`;
 }
 
@@ -1171,11 +1265,14 @@ function renderBatchTable(order,batches){
 
 function renderBatchRow(order,batch){
   const canManage=canManageBatches();
+  const canReceive=canSaveReceipt()&&productCompletion(order).complete;
   const deleteButton=canDeleteBatches()?`<button type="button" class="mini-btn danger" onclick="deleteBatch('${attr(batch.id)}')">Delete</button>`:"";
   const dateText=batch.intakeStatus==="Received"?(formatDate(batch.receivedDate)||"-"):(formatDate(batch.etaDate)||"-");
   const value=Number(batch.value||0)?`<span class="money-sub">${formatCurrency(Number(batch.value||0),batch.currency||order.currency)}</span>`:"";
+  const receipts=receiptLinesForBatch(batch.id);
+  const receiptLabel=receipts.length?`<span class="money-sub">${receiptTotals(receipts).acceptedQuantity.toLocaleString("en-GB")} accepted actuals</span>`:"";
   return `<tr>
-    <td><strong title="${attr(batch.styleNotes||"")}">${escapeHtml(batchDisplayName(batch))}</strong>${value}<div class="invoice-row-actions">${canManagePah()?`<button type="button" class="mini-btn" onclick="exportPah('batch','${attr(batch.id)}')">PAH CSV</button>`:""}${canManage?`<button type="button" class="mini-btn" onclick="editBatch('${attr(batch.id)}')">Edit</button>`:""}${deleteButton}</div></td>
+    <td><strong title="${attr(batch.styleNotes||"")}">${escapeHtml(batchDisplayName(batch))}</strong>${value}${receiptLabel}<div class="invoice-row-actions">${canManagePah()?`<button type="button" class="mini-btn" onclick="exportPah('batch','${attr(batch.id)}')">PAH CSV</button>`:""}${canReceive?`<button type="button" class="mini-btn" onclick="receiveBatch('${attr(batch.id)}')">Receive</button>`:""}${canManage?`<button type="button" class="mini-btn" onclick="editBatch('${attr(batch.id)}')">Edit</button>`:""}${deleteButton}</div></td>
     <td class="num">${Number(batch.styleCount||0).toLocaleString("en-GB")}</td>
     <td class="num">${Number(batch.units||0).toLocaleString("en-GB")}</td>
     <td><span class="badge ${badgeClass(batch.paymentStatus)}">${escapeHtml(batch.paymentStatus||"Awaiting invoice")}</span></td>
@@ -1192,6 +1289,186 @@ function canDeleteBatches(){
   return userHasAppRole("Buyer")||userHasAppRole("Merchandising");
 }
 
+function canSaveReceipt(){
+  return userHasAppRole("Merchandising")||userHasAppRole("Admin");
+}
+
+function receiptInputId(prefix,lineIndex){
+  return `receipt-${prefix}-${lineIndex}`;
+}
+
+function receiveBatch(id){
+  state.receivingBatchId=state.receivingBatchId===id?"":id;
+  state.batchEditorOpen=false;
+  state.editingBatchId="";
+  renderDetail();
+}
+
+function receiveFullOrder(){
+  state.receivingBatchId="__full_order";
+  state.batchEditorOpen=false;
+  state.editingBatchId="";
+  renderDetail();
+}
+
+function receiptExpectedLines(order,batchId){
+  const lines=order.order?.lines||[];
+  if(batchId==="__full_order"){
+    return lines.map((line,lineIndex)=>({lineIndex,quantity:Number(line.quantity||0),sku:line.sku||"",buyingCode:line.buyingCode||line.supplierSku||"",style:line.style||line.description||""})).filter(item=>item.quantity>0);
+  }
+  return (state.batchLines||[]).filter(item=>item.batchId===batchId);
+}
+
+function renderReceiptEditor(order){
+  const batchId=state.receivingBatchId;
+  if(!batchId)return"";
+  const batch=(state.batches||[]).find(item=>item.id===batchId)||null;
+  const title=batchId==="__full_order"?"Full order receipt":batchDisplayName(batch||{});
+  const expected=receiptExpectedLines(order,batchId);
+  if(!expected.length)return `<div class="receipt-create open"><p class="empty">Add line allocations before receiving actuals.</p></div>`;
+  return `<div class="receipt-create open">
+    <div class="work-head"><h3>Receive actuals / ${escapeHtml(title)}</h3><button type="button" class="mini-btn" onclick="receiveBatch('${attr(batchId)}')">Close</button></div>
+    <div class="grid3" style="margin-bottom:10px">${input("receipt-date","Received date",today(),"date")}</div>
+    <div class="receipt-table-wrap"><table class="receipt-table">
+      <thead><tr><th>Line</th><th class="num">Expected</th><th class="num">Received</th><th class="num">Damaged</th><th class="num">Accepted</th><th class="num">Short</th><th class="num">Over</th><th>Notes</th></tr></thead>
+      <tbody>${expected.map(allocation=>renderReceiptLineRow(order,batchId,allocation)).join("")}</tbody>
+    </table></div>
+    <div class="actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn primary" onclick="saveReceiptActuals()">Save actuals</button></div>
+  </div>`;
+}
+
+function renderReceiptLineRow(order,batchId,allocation){
+  const lineIndex=Number(allocation.lineIndex||0);
+  const line=(order.order?.lines||[])[lineIndex]||{};
+  const receipt=batchId==="__full_order"?null:receiptLineFor(batchId,lineIndex);
+  const expected=Number(allocation.quantity||0);
+  const received=receipt?Number(receipt.receivedQuantity||0):expected;
+  const damaged=receipt?Number(receipt.damagedQuantity||0):0;
+  const accepted=receipt?Number(receipt.acceptedQuantity||0):Math.max(0,received-damaged);
+  const short=receipt?Number(receipt.shortQuantity||0):Math.max(0,expected-received);
+  const over=receipt?Number(receipt.overQuantity||0):Math.max(0,received-expected);
+  return `<tr>
+    <td><strong>${escapeHtml(line.sku||allocation.sku||"")}</strong><span class="money-sub">${escapeHtml(line.style||allocation.style||"")} ${escapeHtml(line.colour||line.color||"")}</span></td>
+    <td class="num">${expected.toLocaleString("en-GB")}</td>
+    <td class="num"><input id="${receiptInputId("received",lineIndex)}" type="number" min="0" value="${received}"></td>
+    <td class="num"><input id="${receiptInputId("damaged",lineIndex)}" type="number" min="0" value="${damaged}"></td>
+    <td class="num"><input id="${receiptInputId("accepted",lineIndex)}" type="number" min="0" value="${accepted}"></td>
+    <td class="num">${short.toLocaleString("en-GB")}</td>
+    <td class="num">${over.toLocaleString("en-GB")}</td>
+    <td><input id="${receiptInputId("notes",lineIndex)}" type="text" value="${attr(receipt?.notes||"")}"></td>
+  </tr>`;
+}
+
+async function saveReceiptActuals(){
+  if(!state.selectedId||!state.receivingBatchId)return;
+  const batchId=state.receivingBatchId==="__full_order"?"":state.receivingBatchId;
+  const expected=receiptExpectedLines(state.selected,state.receivingBatchId);
+  const lines=expected.map(allocation=>{
+    const lineIndex=Number(allocation.lineIndex||0);
+    return {
+      lineIndex,
+      receivedQuantity:Number(val(receiptInputId("received",lineIndex))||0),
+      damagedQuantity:Number(val(receiptInputId("damaged",lineIndex))||0),
+      acceptedQuantity:Number(val(receiptInputId("accepted",lineIndex))||0),
+      notes:val(receiptInputId("notes",lineIndex))
+    };
+  });
+  localStorage.setItem("ordersActorName",val("actor-name"));
+  const response=await apiFetch("/api/orders/receipts",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,batchId,actorName:val("actor-name"),receivedDate:val("receipt-date")||today(),lines})});
+  const result=await response.json();
+  if(!response.ok||!result.ok){showError(new Error(result.error||"Could not save receipt actuals"));return;}
+  state.selected=result.order;
+  state.batches=result.batches||[];
+  state.invoices=result.invoices||state.invoices||[];
+  state.batchLines=result.batchLines||[];
+  state.receiptLines=result.receiptLines||[];
+  state.discrepancies=result.discrepancies||[];
+  state.events=result.events||[];
+  state.receivingBatchId="";
+  const index=state.orders.findIndex(order=>order.id===result.order.id);
+  if(index!==-1)state.orders[index]=result.order;
+  recalcMetrics();
+  renderFilters();
+  renderMetrics();
+  renderOrders();
+  renderDetail();
+}
+
+function creditNoteOptions(value){
+  const items=(state.invoices||[])
+    .filter(invoice=>invoiceDocumentKind(invoice)==="credit_note")
+    .map(invoice=>({value:invoice.id,label:`${invoice.invoiceNumber||invoice.invoiceType||"Credit note"} ${formatCurrency(Number(invoice.amount||0),invoice.currency||"GBP")}`}));
+  return valueOptions(items,value,"No credit note");
+}
+
+function resolutionOptions(value){
+  return `${discrepancyResolutionTypes.map(item=>`<option value="${attr(item.value)}"${item.value===value?" selected":""}>${escapeHtml(item.label)}</option>`).join("")}`;
+}
+
+function discrepancyControlId(prefix,id){
+  return `disc-${prefix}-${id}`;
+}
+
+function renderDiscrepancyGroup(order){
+  const discrepancies=state.discrepancies||[];
+  const open=discrepancies.filter(item=>!["Credit received","Replacement received","Accepted variance","Written off","Resolved"].includes(item.status)).length;
+  const creditDue=discrepancies.filter(item=>item.status==="Credit requested").reduce((sum,item)=>sum+Number(item.valueGbp||0),0);
+  const creditReceived=discrepancies.filter(item=>item.status==="Credit received").reduce((sum,item)=>sum+Number(item.valueGbp||0),0);
+  return `<section class="work-panel discrepancy-group">
+    <div class="work-head"><h3>Discrepancies & credits</h3><div class="actions"><span class="pill">${open} open</span><span class="pill">${money.format(creditDue)} due</span><span class="pill">${money.format(creditReceived)} received</span></div></div>
+    ${discrepancies.length?renderDiscrepancyTable(discrepancies):`<p class="empty" style="padding:10px">No receipt discrepancies yet.</p>`}
+  </section>`;
+}
+
+function renderDiscrepancyTable(discrepancies){
+  return `<div class="discrepancy-table-wrap"><table class="discrepancy-table">
+    <thead><tr><th>Line</th><th>Type</th><th class="num">Qty</th><th class="num">Value</th><th>Status</th><th>Resolution</th><th>Credit note</th><th></th></tr></thead>
+    <tbody>${discrepancies.map(item=>renderDiscrepancyRow(item)).join("")}</tbody>
+  </table></div>`;
+}
+
+function renderDiscrepancyRow(item){
+  const financeAttrs=canManageInvoicePayment()?"":"disabled";
+  return `<tr>
+    <td><strong>${escapeHtml(item.sku||item.buyingCode||"")}</strong><span class="money-sub">${escapeHtml(item.style||"")} ${escapeHtml(batchDisplayName((state.batches||[]).find(batch=>batch.id===item.batchId)||{}))}</span><input id="${discrepancyControlId("notes",item.id)}" type="text" value="${attr(item.notes||"")}" placeholder="Notes"></td>
+    <td><span class="badge ${badgeClass(item.status)}">${escapeHtml(item.discrepancyType||"")}</span></td>
+    <td class="num">${Number(item.quantity||0).toLocaleString("en-GB")}</td>
+    <td class="num">${money.format(Number(item.valueGbp||0))}</td>
+    <td><select class="select" id="${discrepancyControlId("status",item.id)}">${options(discrepancyStatuses,item.status||"Open")}</select></td>
+    <td><select class="select" id="${discrepancyControlId("resolution",item.id)}">${resolutionOptions(item.resolutionType||"")}</select></td>
+    <td><select class="select" id="${discrepancyControlId("invoice",item.id)}" ${financeAttrs}>${creditNoteOptions(item.linkedInvoiceId||"")}</select></td>
+    <td><button type="button" class="mini-btn" onclick="saveDiscrepancy('${attr(item.id)}')">Save</button></td>
+  </tr>`;
+}
+
+async function saveDiscrepancy(id){
+  if(!state.selectedId)return;
+  localStorage.setItem("ordersActorName",val("actor-name"));
+  const patch={
+    status:val(discrepancyControlId("status",id)),
+    resolutionType:val(discrepancyControlId("resolution",id)),
+    linkedInvoiceId:val(discrepancyControlId("invoice",id)),
+    notes:val(discrepancyControlId("notes",id))
+  };
+  const response=await apiFetch("/api/orders/discrepancies",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,discrepancyId:id,patch})});
+  const result=await response.json();
+  if(!response.ok||!result.ok){showError(new Error(result.error||"Could not update discrepancy"));return;}
+  state.selected=result.order;
+  state.invoices=result.invoices||state.invoices||[];
+  state.batches=result.batches||state.batches||[];
+  state.batchLines=result.batchLines||state.batchLines||[];
+  state.receiptLines=result.receiptLines||state.receiptLines||[];
+  state.discrepancies=result.discrepancies||[];
+  state.events=result.events||state.events||[];
+  const index=state.orders.findIndex(order=>order.id===result.order.id);
+  if(index!==-1)state.orders[index]=result.order;
+  recalcMetrics();
+  renderFilters();
+  renderMetrics();
+  renderOrders();
+  renderDetail();
+}
+
 function renderEvents(){
   const events=state.events||[];
   return events.length?events.map(event=>`
@@ -1199,6 +1476,23 @@ function renderEvents(){
       <strong>${escapeHtml(event.message)}</strong>
       <span>${escapeHtml(event.actorName||"Team")} &middot; ${escapeHtml(new Date(event.createdAt).toLocaleString("en-GB"))}</span>
     </div>`).join(""):`<p class="empty">No activity yet.</p>`;
+}
+
+function renderSupplierCreditBalance(order){
+  const credit=order?.supplierCredit||{};
+  const due=Number(credit.creditDueGbp||0);
+  const count=Number(credit.openCreditCount||0);
+  if(!due)return "";
+  const items=(credit.items||[]).slice(0,3).map(item=>{
+    const source=item.orderNumber||item.orderId||"Previous order";
+    const line=[item.sku,item.style].filter(Boolean).join(" / ");
+    return `<span>${escapeHtml(source)}: ${money.format(Number(item.valueGbp||0))}${line?` - ${escapeHtml(line)}`:""}</span>`;
+  }).join("");
+  return `<div class="status warn" style="margin-bottom:10px">
+    <strong>Supplier credit balance ${money.format(due)}</strong>
+    <span>${count.toLocaleString("en-GB")} open credit ${count===1?"note is":"notes are"} due against ${escapeHtml(order.supplierName||"this supplier")}. Apply it as a reduction on the next supplier invoice.</span>
+    ${items?`<div class="money-sub" style="margin-top:5px">${items}</div>`:""}
+  </div>`;
 }
 
 function renderInvoiceGroup(order){
@@ -1218,12 +1512,17 @@ function renderInvoiceGroup(order){
     <div class="work-head"><h3>Invoices</h3><div class="actions"><span class="pill">${invoices.length} invoice${invoices.length===1?"":"s"}</span><button type="button" class="btn" onclick="toggleCreateInvoice()">${editing?"Edit invoice":"Create invoice"}</button></div></div>
     <div class="invoice-totals">
       <div class="invoice-total"><label>Order total</label><strong>${money.format(totals.orderGbp)}</strong><span class="money-sub">${eurMoney.format(totals.orderEur)}</span></div>
-      <div class="invoice-total"><label>Invoiced</label><strong>${money.format(totals.invoicedGbp)}</strong><span class="money-sub">${eurMoney.format(totals.invoicedEur)}</span></div>
+      <div class="invoice-total"><label>Gross invoices</label><strong>${money.format(totals.grossInvoiceGbp)}</strong><span class="money-sub">${eurMoney.format(totals.grossInvoiceEur)}</span></div>
+      <div class="invoice-total"><label>Credit notes</label><strong>${money.format(totals.creditNoteGbp)}</strong><span class="money-sub">${eurMoney.format(totals.creditNoteEur)}</span></div>
+      <div class="invoice-total"><label>Net invoiced</label><strong>${money.format(totals.invoicedGbp)}</strong><span class="money-sub">${eurMoney.format(totals.invoicedEur)}</span></div>
       <div class="invoice-total"><label>Paid</label><strong>${money.format(totals.paidGbp)}</strong><span class="money-sub">${eurMoney.format(totals.paidEur)}</span></div>
       <div class="invoice-total"><label>Outstanding invoiced</label><strong>${money.format(totals.outstandingInvoicedGbp)}</strong><span class="money-sub">${eurMoney.format(totals.outstandingInvoicedEur)}</span></div>
       <div class="invoice-total"><label>Uninvoiced balance</label><strong>${money.format(totals.uninvoicedBalanceGbp)}</strong><span class="money-sub">${eurMoney.format(totals.uninvoicedBalanceEur)}</span></div>
+      <div class="invoice-total"><label>Order credit due</label><strong>${money.format(totals.supplierCreditDueGbp)}</strong><span class="money-sub">${eurMoney.format(totals.supplierCreditDueEur)}</span></div>
+      <div class="invoice-total"><label>Supplier balance</label><strong>${money.format(Number(order.supplierCredit?.creditDueGbp||0))}</strong><span class="money-sub">${Number(order.supplierCredit?.openCreditCount||0).toLocaleString("en-GB")} open credits</span></div>
       <div class="invoice-total"><label>Variance</label><strong>${money.format(totals.invoiceVarianceGbp)}</strong><span class="money-sub">${escapeHtml(varianceLabel)} · within ${money.format(toleranceGbp)} ignored</span>${varianceButton}</div>
     </div>
+    ${renderSupplierCreditBalance(order)}
     <div class="invoice-table-wrap">${renderInvoiceTable(order,invoices)}</div>
     <div class="invoice-create ${formOpen?"open":""}" id="invoice-create">
       <div class="invoice-form">
@@ -1232,6 +1531,7 @@ function renderInvoiceGroup(order){
         ${input("invoice-amount","Amount",formAmount||0,"number")}
         ${select("invoice-currency","Currency",currencyOptions,formCurrency)}
         <div class="field"><label>Batch</label><select class="select" id="invoice-batch">${batchSelectOptions(formInvoice.batchId||"")}</select></div>
+        <div class="field"><label>Linked discrepancy</label><select class="select" id="invoice-discrepancy">${discrepancySelectOptions(formInvoice.linkedDiscrepancyId||"")}</select></div>
         ${input("invoice-date","Invoice date",formInvoice.invoiceDate||"","date")}
         ${input("invoice-due","Due date",formInvoice.dueDate||"","date")}
         <div class="field"><label>Invoice file</label><input class="file-input" id="invoice-file" type="file" accept=".pdf,image/*"></div>
@@ -1247,11 +1547,21 @@ function renderInvoiceGroup(order){
 function invoiceTotals(order,invoices){
   const orderGbp=orderTotalGbp(order);
   const orderEur=gbpToEur(orderGbp,order);
-  const invoicedGbp=invoices.reduce((total,invoice)=>total+invoiceAmountGbp(invoice,order),0);
-  const invoicedEur=invoices.reduce((total,invoice)=>total+invoiceAmountEur(invoice,order),0);
-  const paidInvoices=invoices.filter(invoice=>invoice.status==="Paid");
+  const paymentInvoices=invoices.filter(invoice=>invoiceDocumentKind(invoice)!=="credit_note");
+  const creditNotes=invoices.filter(invoice=>invoiceDocumentKind(invoice)==="credit_note");
+  const grossInvoiceGbp=paymentInvoices.reduce((total,invoice)=>total+invoiceAmountGbp(invoice,order),0);
+  const grossInvoiceEur=paymentInvoices.reduce((total,invoice)=>total+invoiceAmountEur(invoice,order),0);
+  const creditNoteGbp=creditNotes.reduce((total,invoice)=>total+invoiceAmountGbp(invoice,order),0);
+  const creditNoteEur=creditNotes.reduce((total,invoice)=>total+invoiceAmountEur(invoice,order),0);
+  const invoicedGbp=grossInvoiceGbp-creditNoteGbp;
+  const invoicedEur=grossInvoiceEur-creditNoteEur;
+  const paidInvoices=paymentInvoices.filter(invoice=>invoice.status==="Paid");
   const paidGbp=paidInvoices.reduce((total,invoice)=>total+invoiceAmountGbp(invoice,order),0);
   const paidEur=paidInvoices.reduce((total,invoice)=>total+invoiceAmountEur(invoice,order),0);
+  const creditReceivedGbp=creditNotes.filter(invoice=>invoice.status==="Paid"||invoice.status==="Credit received").reduce((total,invoice)=>total+invoiceAmountGbp(invoice,order),0);
+  const creditReceivedEur=creditNotes.filter(invoice=>invoice.status==="Paid"||invoice.status==="Credit received").reduce((total,invoice)=>total+invoiceAmountEur(invoice,order),0);
+  const supplierCreditDueGbp=Math.max(0,creditNoteGbp-creditReceivedGbp);
+  const supplierCreditDueEur=Math.max(0,creditNoteEur-creditReceivedEur);
   const toleranceGbp=invoiceBalanceToleranceGbp(order);
   const toleranceEur=gbpToEur(toleranceGbp,order);
   const varianceIgnored=Boolean(order?.invoices?.varianceIgnored);
@@ -1263,7 +1573,7 @@ function invoiceTotals(order,invoices){
   const outstandingEur=outstandingInvoicedEur+uninvoicedBalanceEur;
   const invoiceVarianceGbp=invoicedGbp-orderGbp;
   const invoiceVarianceEur=invoicedEur-orderEur;
-  return {orderGbp,orderEur,invoicedGbp,invoicedEur,paidGbp,paidEur,outstandingInvoicedGbp,outstandingInvoicedEur,uninvoicedBalanceGbp,uninvoicedBalanceEur,outstandingGbp,outstandingEur,invoiceVarianceGbp,invoiceVarianceEur,varianceIgnored};
+  return {orderGbp,orderEur,grossInvoiceGbp,grossInvoiceEur,creditNoteGbp,creditNoteEur,creditReceivedGbp,creditReceivedEur,supplierCreditDueGbp,supplierCreditDueEur,invoicedGbp,invoicedEur,paidGbp,paidEur,outstandingInvoicedGbp,outstandingInvoicedEur,uninvoicedBalanceGbp,uninvoicedBalanceEur,outstandingGbp,outstandingEur,invoiceVarianceGbp,invoiceVarianceEur,varianceIgnored};
 }
 
 function renderInvoiceTable(order,invoices){
@@ -1277,15 +1587,17 @@ function renderInvoiceTable(order,invoices){
 function renderInvoiceRow(order,invoice){
   const fileLink=invoice.fileUrl?`<a class="file-icon" href="${attr(invoice.fileUrl)}" download="${attr(invoice.fileName||"invoice")}" target="_blank" title="${attr(invoice.fileName||"Open invoice")}" aria-label="Open invoice"></a>`:`<span class="file-icon empty" title="No file attached" aria-label="No file attached"></span>`;
   const code=String(invoice.currency||"GBP").toUpperCase();
-  const equivalent=code==="EUR"?money.format(invoiceAmountGbp(invoice,order)):eurMoney.format(invoiceAmountEur(invoice,order));
+  const signedAmount=Number(invoice.amount||0)*invoiceSign(invoice);
+  const equivalent=code==="EUR"?money.format(signedInvoiceAmountGbp(invoice,order)):eurMoney.format(signedInvoiceAmountEur(invoice,order));
   const canManagePayment=canManageInvoicePayment();
   const deleteButton=canDeleteInvoice()?`<button type="button" class="mini-btn danger" onclick="deleteInvoice('${attr(invoice.id)}')">Delete</button>`:"";
   const batch=(state.batches||[]).find(item=>item.id===invoice.batchId);
   const batchLabel=batch?`<span class="money-sub">${escapeHtml(batchDisplayName(batch))}</span>`:"";
+  const creditLabel=invoiceDocumentKind(invoice)==="credit_note"?`<span class="money-sub">Credit note</span>`:"";
   return `<tr>
-    <td><strong title="${attr(invoice.invoiceType||"")}">${escapeHtml(invoice.invoiceNumber||invoice.invoiceType||"Invoice")}</strong>${batchLabel}<div class="invoice-row-actions"><button type="button" class="mini-btn" onclick="editInvoice('${attr(invoice.id)}')">Edit</button>${deleteButton}</div></td>
+    <td><strong title="${attr(invoice.invoiceType||"")}">${escapeHtml(invoice.invoiceNumber||invoice.invoiceType||"Invoice")}</strong>${creditLabel}${batchLabel}<div class="invoice-row-actions"><button type="button" class="mini-btn" onclick="editInvoice('${attr(invoice.id)}')">Edit</button>${deleteButton}</div></td>
     <td>${fileLink}</td>
-    <td class="num">${formatCurrency(Number(invoice.amount||0),code)}<span class="money-sub">${equivalent}</span></td>
+    <td class="num">${formatCurrency(signedAmount,code)}<span class="money-sub">${equivalent}</span></td>
     <td>${formatDate(invoice.dueDate)||"-"}</td>
     <td><span class="badge ${badgeClass(invoice.status)}">${escapeHtml(invoice.status||"Awaiting FD")}</span></td>
     <td><input type="checkbox" ${invoice.isReceived?"checked":""} onchange="toggleInvoice('${attr(invoice.id)}','isReceived',this.checked)" aria-label="Received"></td>
@@ -1322,16 +1634,20 @@ function suggestedNextAction(workflow,order){
   const approval=workflow?.approvalStatus||"Not requested";
   const payment=workflow?.paymentStatus||"Not due";
   const intake=workflow?.intakeStatus||"Not confirmed";
+  const supplierCreditDue=Number(order?.supplierCredit?.creditDueGbp||0);
   if(String(order?.status||"").toLowerCase()==="cancelled")return {owner:"Buyer",action:"Review cancelled order"};
   if(approval==="Pending director approval")return {owner:"Buying Director",action:"Review order for approval"};
   if(approval==="Changes requested")return {owner:"Buyer",action:"Update order and resubmit"};
   if(approval==="Rejected")return {owner:"Buyer",action:"Review rejected order"};
   if(approval!=="Approved")return {owner:"Buyer",action:"Prepare or submit order"};
+  if(supplierCreditDue>0&&["Awaiting invoice","Ready to pay","Part paid","Overdue"].includes(payment))return {owner:"FD / Finance",action:"Apply supplier credit to next invoice"};
   if(payment==="Awaiting invoice")return {owner:"Buyer",action:"Awaiting supplier invoice"};
   if(payment==="Ready to pay")return {owner:"FD / Finance",action:"Pay supplier invoice"};
   if(payment==="Part paid")return {owner:"Buyer",action:"Awaiting next supplier invoice"};
   if(payment==="Overdue")return {owner:"FD / Finance",action:"Resolve overdue supplier payment"};
   if(payment!=="Paid")return {owner:"Buyer",action:"Confirm invoice and payment plan"};
+  if((state.discrepancies||[]).some(item=>item.status==="Credit requested"))return {owner:"FD / Finance",action:"Track supplier credit note"};
+  if((state.discrepancies||[]).some(item=>!["Credit received","Replacement received","Accepted variance","Written off","Resolved"].includes(item.status)))return {owner:"Merchandising",action:"Resolve receipt discrepancy"};
   if(intake==="Not confirmed"&&!productCompletion(order).complete)return {owner:"Buyer",action:"Complete Shopify product sync before warehouse booking"};
   if(intake==="Received")return {owner:"Merchandising",action:"Archive completed order"};
   if(intake==="Part received")return {owner:"Merchandising",action:"Chase remaining intake"};
@@ -1461,6 +1777,7 @@ function renderDetail(){
       </div>
     </section>
     ${renderBatchGroup(order)}
+    ${renderDiscrepancyGroup(order)}
     ${renderLabelJobGroup()}
     ${renderLineTable(order)}`;
   el("actor-name").addEventListener("input",()=>localStorage.setItem("ordersActorName",val("actor-name")));
@@ -1482,6 +1799,8 @@ async function saveWorkflow(section,patch){
   state.invoices=result.invoices||state.invoices||[];
   state.batches=result.batches||state.batches||[];
   state.batchLines=result.batchLines||state.batchLines||[];
+  state.receiptLines=result.receiptLines||state.receiptLines||[];
+  state.discrepancies=result.discrepancies||state.discrepancies||[];
   const index=state.orders.findIndex(order=>order.id===result.order.id);
   if(index!==-1)state.orders[index]=result.order;
   recalcMetrics();
@@ -1507,6 +1826,8 @@ async function checkOrderProductsInShopify(){
     state.invoices=result.invoices||state.invoices||[];
     state.batches=result.batches||state.batches||[];
     state.batchLines=result.batchLines||state.batchLines||[];
+    state.receiptLines=result.receiptLines||state.receiptLines||[];
+    state.discrepancies=result.discrepancies||state.discrepancies||[];
     const index=state.orders.findIndex(order=>order.id===result.order.id);
     if(index!==-1)state.orders[index]=result.order;
     recalcMetrics();
@@ -1624,6 +1945,8 @@ async function saveInvoice(){
   await saveInvoicePayload({
     id:state.editingInvoiceId||"",
     batchId:val("invoice-batch"),
+    linkedDiscrepancyId:val("invoice-discrepancy"),
+    documentKind:String(val("invoice-type")).toLowerCase()==="credit note"?"credit_note":"invoice",
     invoiceType:val("invoice-type"),
     invoiceNumber:val("invoice-number"),
     invoiceDate:val("invoice-date"),
@@ -1652,6 +1975,8 @@ async function deleteInvoice(id){
   state.invoices=result.invoices||[];
   state.batches=result.batches||state.batches||[];
   state.batchLines=result.batchLines||state.batchLines||[];
+  state.receiptLines=result.receiptLines||state.receiptLines||[];
+  state.discrepancies=result.discrepancies||state.discrepancies||[];
   state.events=result.events||[];
   if(state.editingInvoiceId===id)state.editingInvoiceId="";
   state.invoiceEditorOpen=false;
@@ -1687,6 +2012,8 @@ async function saveInvoicePayload(invoice){
   state.invoices=result.invoices||[];
   state.batches=result.batches||state.batches||[];
   state.batchLines=result.batchLines||state.batchLines||[];
+  state.receiptLines=result.receiptLines||state.receiptLines||[];
+  state.discrepancies=result.discrepancies||state.discrepancies||[];
   state.events=result.events||[];
   state.editingInvoiceId="";
   state.invoiceEditorOpen=false;
@@ -1712,6 +2039,8 @@ async function setArchiveSelected(archived){
   state.invoices=result.invoices||[];
   state.batches=result.batches||state.batches||[];
   state.batchLines=result.batchLines||state.batchLines||[];
+  state.receiptLines=result.receiptLines||state.receiptLines||[];
+  state.discrepancies=result.discrepancies||state.discrepancies||[];
   state.users=result.users||state.users||[];
   const index=state.orders.findIndex(order=>order.id===result.order.id);
   if(index!==-1)state.orders[index]=result.order;
@@ -1736,6 +2065,8 @@ async function deleteSelectedOrder(){
   state.invoices=[];
   state.batches=[];
   state.batchLines=[];
+  state.receiptLines=[];
+  state.discrepancies=[];
   recalcMetrics();
   renderFilters();
   renderMetrics();
@@ -1807,6 +2138,8 @@ async function saveBatch(){
   state.batches=result.batches||[];
   state.invoices=result.invoices||state.invoices||[];
   state.batchLines=result.batchLines||[];
+  state.receiptLines=result.receiptLines||state.receiptLines||[];
+  state.discrepancies=result.discrepancies||state.discrepancies||[];
   state.events=result.events||[];
   state.editingBatchId="";
   state.batchEditorOpen=false;
@@ -1831,6 +2164,8 @@ async function deleteBatch(id){
   state.batches=result.batches||[];
   state.invoices=result.invoices||state.invoices||[];
   state.batchLines=result.batchLines||[];
+  state.receiptLines=result.receiptLines||state.receiptLines||[];
+  state.discrepancies=result.discrepancies||state.discrepancies||[];
   state.events=result.events||[];
   if(state.editingBatchId===id)state.editingBatchId="";
   if(state.lineBatchFilter===id)state.lineBatchFilter="all";
@@ -1885,6 +2220,7 @@ async function selectOrder(id){
   state.invoiceEditorOpen=false;
   state.editingBatchId="";
   state.batchEditorOpen=false;
+  state.receivingBatchId="";
   state.labelValidation=null;
   renderOrders();
   el("detail").innerHTML=`<section class="panel"><p class="empty-state">Loading order...</p></section>`;
@@ -1896,6 +2232,8 @@ async function selectOrder(id){
   state.invoices=result.invoices||[];
   state.batches=result.batches||[];
   state.batchLines=result.batchLines||[];
+  state.receiptLines=result.receiptLines||[];
+  state.discrepancies=result.discrepancies||[];
   state.labelJobs=result.labelJobs||[];
   state.pahSettings=result.pahSettings||state.pahSettings||{};
   const index=state.orders.findIndex(order=>order.id===id);

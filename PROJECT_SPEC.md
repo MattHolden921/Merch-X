@@ -1,6 +1,6 @@
 # Merch X Project Spec
 
-Last reviewed: 2026-07-03
+Last reviewed: 2026-07-07
 
 This is the shared logic and product reference for Merch X. Keep it current when the app's workflows, calculations, data model, integrations, or page responsibilities change.
 
@@ -38,12 +38,13 @@ The app favours simple operational tools over a large framework:
 - `public/design-system.css`: shared visual system.
 - `public/bestsellers.html`: TY/LY bestsellers, revenue analysis, stock position, slow sellers, methodology, trade last week, CSV/import workflows.
 - `public/order-form.html`: purchase order creation, SKU issuing/lookup, line image upload, printable PO output.
-- `public/orders.html`: order workspace, approval/payment/intake workflow, invoices, notes, archive/delete, printable warehouse image reports, and barcode label-job reports for printers and suppliers.
-- `public/order-reports.html`: read-only operational reports for arrivals, intake exceptions, next actions, finance, buying mix, and data quality.
+- `public/orders.html`: order workspace, approval/payment/intake workflow, supplier batches, received actuals, discrepancies/credits, supplier credit balances, invoices, notes, archive/delete, printable warehouse image reports, and barcode label-job reports for printers and suppliers.
+- `public/order-reports.html`: read-only operational reports for arrivals, intake exceptions, next actions, finance, supplier performance, buying mix, and data quality.
 - `public/pnl.html`: finance P&L planner using live Shopify actuals, saved cost rules, manual marketing spend, and driver-based profit scenarios.
 - `public/sku-register.html`: local SKU register and safe deletion of unused issued SKUs.
 - `public/products.html`: product and supplier master-data workspace, local SKU enrichment, readiness review, and Shopify draft push workflow.
 - `public/merchandising.html`: Shopify product merchandising view using product, order, and optional GA4 metrics.
+- `public/new-in-performance.html`: launch and image-refresh performance report for recent New In products, draft pipeline rows, image-change impact comparisons, marketing actions, share links, and CSV export.
 - `public/collection-planner.html`: Shopify collection reorder planning and apply-to-Shopify workflow.
 - `public/sale-planner.html`: markdown and sale planning workspace for importing products, reviewing markdown prices, mapping Sale collections, applying Shopify sale state, and removing sale state.
 - `public/weekly-actions.html`: action board generated from saved bestsellers periods.
@@ -77,7 +78,7 @@ Primary table groups:
 - Work management: `work_handoffs`, `notifications`.
 - Buying/order form: `suppliers`, `products`, `issued_skus`, `orders`.
 - Product/supplier master data: extended `suppliers` and `products` rows plus `product_sync_events`.
-- Order management: `order_workflows`, `order_events`, `order_invoices`, supplier batches, PAH carrier defaults in `app_settings`, and immutable `order_label_jobs` report snapshots.
+- Order management: `order_workflows`, `order_events`, `order_invoices`, supplier batches, batch-line receipt actuals in `order_receipt_lines`, discrepancy/credit resolution rows in `order_discrepancies`, PAH carrier defaults in `app_settings`, and immutable `order_label_jobs` report snapshots.
 - Collection reorder: `collection_reorder_audit`.
 - Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
 - Weekly actions: `weekly_actions`, `weekly_action_events`.
@@ -234,6 +235,8 @@ Order workspace:
 - `POST /api/orders/workflow`
 - `POST /api/orders/invoices`
 - `POST /api/orders/invoices/delete`
+- `POST /api/orders/receipts`
+- `POST /api/orders/discrepancies`
 - `POST /api/orders/archive`
 - `POST /api/orders/delete`
 - `POST /api/orders/events`
@@ -244,6 +247,7 @@ Order workspace:
 Shopify and Google:
 
 - `GET /api/shopify-merchandising`
+- `GET /api/new-in-performance`
 - `GET /api/shopify-collection-planner`
 - `POST /api/shopify-collection-reorder/start`
 - `GET /api/shopify-collection-reorder/status`
@@ -284,6 +288,7 @@ Shopify and Google:
 - Readiness checks block Shopify draft push when SKU, supplier, title/style, RRP, product type, image, cost, or local SKU uniqueness is missing.
 - SKU lookup from the order form prefers the local product master first, then falls back to live Shopify lookup.
 - Saving an order enriches supplier/product master records with last-order metadata and non-empty line details without wiping curated master-data fields.
+- Supplier master records expose a derived `creditBalance` from outstanding credit-note discrepancy rows, so open supplier credits follow the supplier into supplier lists and new order creation.
 - `product_sync_events` records local save/archive and Shopify preview/push/status actions with actor, result, payload summary, Shopify product ID, and errors.
 
 ### Shopify Product Draft Push
@@ -297,7 +302,7 @@ Shopify and Google:
 
 ### Order Workflow
 
-Order workflow is split into approval, payment, and intake sections. The composite order status is derived from workflow values and the stored order status.
+Order workflow is split into approval, payment, and intake sections. The composite order status is derived from workflow values, supplier batch state, receipt actuals, and the stored order status.
 
 Important principles:
 
@@ -311,6 +316,17 @@ Important principles:
 - Deleting an order should remove related invoice records/files and workflow data only through the server's delete logic.
 - The Orders workspace can print a warehouse-facing image report for the full order, a selected delivery batch, or remaining unbatched units. The report contains product image, SKU, buying code, colour/material, and quantity only; batch reports use allocated quantities and unbatched reports use ordered quantity less all allocations.
 
+### Receipt Actuals And Supplier Discrepancies
+
+- Supplier batches remain the expected-delivery unit for warehouse intake. Each batch can be received through a line-level actuals table showing expected, received, damaged, accepted, short, and over quantities by order line/SKU.
+- Receipt actuals are cumulative per batch line and stored in `order_receipt_lines`. Existing orders without line actuals retain legacy behaviour where a batch marked `Received` counts its full batch quantity as received.
+- If an order has no supplier batches, Merchandising can use Receive full order; the server creates a full-order batch from remaining order-line quantities before saving actuals.
+- Saving receipt actuals creates or updates open discrepancy rows in `order_discrepancies` for shortages, damage, and overages. Receipt-line notes seed new discrepancy notes, and existing open discrepancy notes are only filled from receipt notes when still blank. When a corrected receipt removes a variance, the open discrepancy is resolved with `corrected_receipt`; already resolved historical rows are preserved.
+- Supported discrepancy statuses are `Open`, `Credit requested`, `Credit received`, `Replacement expected`, `Replacement received`, `Accepted variance`, `Written off`, and `Resolved`. Supported resolution types are `credit_note`, `replacement`, `accepted_variance`, `write_off`, and `corrected_receipt`.
+- Supplier credit balances are calculated from discrepancies where the resolution type is `credit_note` or the status is `Credit requested`/`Credit received`. Non-terminal credit rows count as credit due; `Credit received` counts as received credit; `Written off`, `Accepted variance`, `Replacement received`, and `Resolved` remove the row from the open supplier balance while preserving audit history.
+- Merchandising/Admin users can save receipt actuals and operational discrepancy resolutions. Finance/Admin users can link credit notes and mark supplier credits received or written off.
+- Receipt and discrepancy changes write order events and can drive next-action prompts for unresolved receipt variances, supplier credit due, credit notes due, and replacements due. Once an order is approved, an outstanding supplier credit balance can prompt Finance to apply supplier credit to the next invoice.
+
 ### PAH Delivery Reports
 
 - The Orders workspace exports the freight forwarder's 20-column PAH CSV contract in one click for a full order, a selected supplier batch, or remaining unbatched units.
@@ -319,6 +335,13 @@ Important principles:
 - Batch pre-advice IDs append the saved batch number/title to the PO number so separate deliveries cannot overwrite one another at the warehouse. The CSV filename uses the same reference.
 - Pre-advice type, warehouse supplier ID, carrier/contact details, warehouse address, country, and return flag are stored as editable JSON under the SQLite `app_settings.pahCarrier` key. Initial values match the current Europe Logistics / Rebecca Bird workflow; report generation reads the persisted setting rather than inline UI values.
 - Buyer, Merchandising, and Admin roles can export PAH files and edit the shared PAH defaults. Every supplier-batch row also has a direct PAH CSV action.
+
+### Order Reports
+
+- Order reports combine workflow, batch, invoice, receipt, and discrepancy data into operational views for arrivals, exceptions, next actions, finance, supplier performance, buying mix, and data quality.
+- Actuals fields include ordered/expected units, received units, accepted units, damaged units, short units, over units, fill rate, variance value, open credit value, and credit received.
+- The Supplier Performance tab summarizes fill rate, on-time rate, shortage/damage units, open discrepancies, supplier credit due/received, outstanding balances, and late/open batches by supplier.
+- Data quality flags include received batches without line actuals, batches without line allocations, credit notes not linked to discrepancies, open discrepancies without a resolution, invoice-without-batch rows, unbatched units, missing dates, missing FX, and missing product links.
 
 ### Barcode Label Jobs
 
@@ -338,6 +361,10 @@ Important principles:
 - New invoice files are written to disk and referenced by `file_path`.
 - The API returns public upload URLs, not raw filesystem paths.
 - Invoice totals and paid/sent-to-FD states feed payment status.
+- Credit notes are first-class finance documents on `order_invoices` using `document_kind = credit_note`. Users enter credit-note amounts as positive values; summaries expose them as signed credits so they reduce net invoiced value rather than inflating supplier charges.
+- Credit notes can be linked to receipt discrepancy rows. Linked credit notes move the discrepancy to credit requested or credit received depending on payment/received state.
+- Invoice summaries expose gross invoices, credit-note totals, net invoiced, paid supplier invoices, supplier credit due, and outstanding payable balances.
+- Supplier-level credit due is not a manually edited accounting ledger. It is derived from unresolved credit-note discrepancies and exposed as `supplierCredit` on managed order responses and `creditBalance` on supplier responses. Buyers see it when selecting a supplier for a new purchase order; Finance sees it in the order invoice panel and should apply it as a reduction on the next supplier invoice.
 
 ### Bestsellers Reports
 
@@ -427,6 +454,22 @@ Guardrails:
 - Reorder jobs are polled until complete/error.
 - Successful applies are written to `collection_reorder_audit`.
 - After apply, the user should sync collections again to verify live Shopify order.
+
+### New In Performance
+
+The New In Performance report is a read-only Marketing/Merchandising handoff view for products that are newly live, recently re-shot/re-imaged, or still in the draft pipeline.
+
+Key principles:
+
+- `GET /api/new-in-performance` reuses the Shopify merchandising product, order, stock, cost, and GA4 merge path, then filters into launch/image cohorts server-side.
+- New launch detection uses Shopify `publishedAt` first, falling back to `createdAt` only for active products without a publish timestamp. This avoids counting products as New In simply because a draft was created weeks before it went live.
+- Updated-image detection uses the Shopify featured media image `updatedAt`/`createdAt` timestamp exposed as `imageUpdatedAt`, matching the collection planner's Manual Lift image-date logic.
+- Draft pipeline rows are included when a Shopify product is still `DRAFT` and was created within the selected launch window; they show no live-day performance until published.
+- The page exposes separate sales, launch, and image-update date windows. It can filter by cohort, status, product type, action, and search term.
+- Updated-image rows include an image-impact comparison when daily order metrics are available. The comparison splits on the featured media image date, compares the selected `impactDays` window before the image change with the available post-change window, and normalises sales, units, views, and add-to-cart metrics by days so partial recent windows remain comparable.
+- GA4 daily item metrics are merged into image impact when available, so pre/post CVR can be compared; Shopify order metrics remain the sales source when GA4 is unavailable.
+- Marketing actions are advisory labels derived from stock, sales velocity, GA4 views/CVR, and cohort state: Push, Needs exposure, Image test, Content check, Stock watch, Sold out, Draft pipeline, or Watch.
+- CSV export is browser-side from the current filtered view and includes product URLs, image URLs, SKU, cohort, action, launch/image dates, sales, stock, GP, GA4 metrics, and pre/post image-impact fields.
 
 ### Email Merchandiser
 
