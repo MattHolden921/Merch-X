@@ -8,6 +8,12 @@
 - If the implementation and `PROJECT_SPEC.md` disagree, treat the code as current truth, then update the spec.
 - Keep `README.md` for setup/storage basics and `DESIGN.md` for visual/design guidance.
 
+## Table Design
+
+- When adding or reviewing table views, consider whether footer totals or subtotals would help users reconcile the visible rows.
+- Add totals only where the values are additive or clearly meaningful. Avoid totals that would imply false precision, such as summing unit prices, statuses, or mixed percentages.
+- Totals should respect the active filters/search whenever the table is filtered.
+
 ## Local Development Server
 
 - On Windows/Codex desktop, start the app outside the sandbox so the in-app browser can keep using it after the tool call finishes.

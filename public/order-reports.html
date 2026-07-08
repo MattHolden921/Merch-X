@@ -156,6 +156,9 @@ function setOptions(id,items,allLabel){
 function openLink(row){
   return `<a class="btn" href="${attr(row.openUrl||`orders.html?id=${encodeURIComponent(row.id)}`)}">Open order</a>`;
 }
+function supplierReportLink(row){
+  return `<a class="btn" href="supplier-report.html?supplier=${encodeURIComponent(row.supplierName||"")}">Open supplier</a>`;
+}
 function orderCell(row){
   return `<div class="primary-cell"><strong>${escapeHtml(row.orderNumber||"No order")}</strong><span>${escapeHtml(row.supplierName||"No supplier")}</span>${row.portionLabel?`<span>${escapeHtml(row.portionLabel)}</span>`:""}<span>${escapeHtml(row.season||"No season")} / ${Number(row.units||0).toLocaleString("en-GB")} units</span></div>`;
 }
@@ -285,7 +288,8 @@ function columnsFor(tab){
     {key:"creditDue",label:"Credit due",className:"num",render:row=>formatMoney(row.openCreditValueGbp),sort:row=>Number(row.openCreditValueGbp||0)},
     {key:"creditReceived",label:"Credit received",className:"num",render:row=>formatMoney(row.creditReceivedGbp),sort:row=>Number(row.creditReceivedGbp||0)},
     {key:"outstanding",label:"Outstanding",className:"num",render:row=>formatMoney(row.outstandingGbp),sort:row=>Number(row.outstandingGbp||0)},
-    {key:"onTime",label:"On time",className:"num",render:row=>`${formatPercent(row.onTimeRate)}<span class="subline">${numberFmt.format(Number(row.lateBatches||0))} late / ${numberFmt.format(Number(row.openBatches||0))} open</span>`,sort:row=>Number(row.onTimeRate||0)}
+    {key:"onTime",label:"On time",className:"num",render:row=>`${formatPercent(row.onTimeRate)}<span class="subline">${numberFmt.format(Number(row.lateBatches||0))} late / ${numberFmt.format(Number(row.openBatches||0))} open</span>`,sort:row=>Number(row.onTimeRate||0)},
+    {key:"supplierReport",label:"",render:supplierReportLink,sort:row=>row.supplierName||""}
   ];
   if(tab==="dataQuality")return [
     base[0],base[1],

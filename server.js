@@ -5861,6 +5861,427 @@ function buildOrderReports(params = {}) {
   };
 }
 
+function supplierReportKey(value) {
+  return cleanText(value).toLowerCase();
+}
+
+function supplierReportNameForOrder(order = {}) {
+  return cleanText(order.supplier?.name || order.supplierName) || "No supplier";
+}
+
+function supplierReportBatchLabel(batch = {}) {
+  return [batch.batchNumber, batch.title].map(cleanText).filter(Boolean).join(" / ") || "Full order";
+}
+
+function summarizeSupplierReportReceiptLines(lines = []) {
+  return (lines || []).reduce((sum, line) => {
+    sum.expectedQuantity += Number(line.expectedQuantity || 0);
+    sum.receivedQuantity += Number(line.receivedQuantity || 0);
+    sum.damagedQuantity += Number(line.damagedQuantity || 0);
+    sum.acceptedQuantity += Number(line.acceptedQuantity || 0);
+    sum.shortQuantity += Number(line.shortQuantity || 0);
+    sum.overQuantity += Number(line.overQuantity || 0);
+    if (line.notes) sum.notes.push(line.notes);
+    if (line.receivedDate && (!sum.receivedDate || line.receivedDate > sum.receivedDate)) sum.receivedDate = line.receivedDate;
+    if (line.updatedAt && (!sum.updatedAt || line.updatedAt > sum.updatedAt)) sum.updatedAt = line.updatedAt;
+    return sum;
+  }, {
+    expectedQuantity: 0,
+    receivedQuantity: 0,
+    damagedQuantity: 0,
+    acceptedQuantity: 0,
+    shortQuantity: 0,
+    overQuantity: 0,
+    receivedDate: "",
+    updatedAt: "",
+    notes: []
+  });
+}
+
+function emptySupplierReportMetrics() {
+  return {
+    orders: 0,
+    openOrders: 0,
+    products: 0,
+    units: 0,
+    orderValueGbp: 0,
+    outstandingGbp: 0,
+    orderedUnits: 0,
+    receivedUnits: 0,
+    acceptedUnits: 0,
+    damagedUnits: 0,
+    shortUnits: 0,
+    overUnits: 0,
+    fillRate: 0,
+    batches: 0,
+    openBatches: 0,
+    lateBatches: 0,
+    unbatchedUnits: 0,
+    receiptRows: 0,
+    openDiscrepancies: 0,
+    openCreditValueGbp: 0,
+    creditReceivedGbp: 0
+  };
+}
+
+function buildSupplierReport(params = {}) {
+  const includeArchived = params.includeArchived === true || params.includeArchived === "true" || params.includeArchived === "1";
+  const dbData = readOrderDb();
+  const workflows = readOrderWorkflowMap();
+  const productLookup = catalogProductMap();
+  const supplierCredits = supplierCreditSummaries();
+  const catalogProducts = readCatalogProducts({ includeArchived: true });
+  const catalogSuppliers = readCatalogSuppliers();
+  const supplierMap = new Map();
+
+  const ensureSupplier = (name, patch = {}) => {
+    const supplierName = cleanText(name) || "No supplier";
+    const key = supplierReportKey(supplierName);
+    if (!supplierMap.has(key)) {
+      supplierMap.set(key, {
+        key,
+        id: "",
+        name: supplierName,
+        reference: "",
+        status: "",
+        country: "",
+        currency: "",
+        contact: "",
+        email: "",
+        phone: "",
+        productCount: 0,
+        orderCount: 0,
+        units: 0,
+        lastOrderDate: "",
+        creditDueGbp: 0,
+        ...patch
+      });
+    } else {
+      supplierMap.set(key, { ...supplierMap.get(key), ...patch, key, name: supplierName });
+    }
+    return supplierMap.get(key);
+  };
+
+  for (const supplier of catalogSuppliers) {
+    const summary = supplier.creditBalance || emptySupplierCreditSummary(supplier.name);
+    ensureSupplier(supplier.name, {
+      id: supplier.id,
+      reference: supplier.reference || "",
+      status: supplier.status || "",
+      country: supplier.country || "",
+      currency: supplier.currency || "",
+      contact: supplier.contact || "",
+      email: supplier.email || "",
+      phone: supplier.phone || "",
+      creditDueGbp: Number(summary.creditDueGbp || 0)
+    });
+  }
+
+  for (const product of catalogProducts) {
+    if (!includeArchived && product.status === "Archived") continue;
+    const supplier = ensureSupplier(product.supplierName);
+    supplier.productCount += 1;
+  }
+
+  for (const order of dbData.orders || []) {
+    if (!includeArchived && order.archivedAt) continue;
+    const supplier = ensureSupplier(supplierReportNameForOrder(order));
+    const units = (order.lines || []).reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    supplier.orderCount += 1;
+    supplier.units += units;
+    const orderDate = order.orderDate || order.savedAt || "";
+    if (orderDate && (!supplier.lastOrderDate || orderDate > supplier.lastOrderDate)) supplier.lastOrderDate = orderDate;
+  }
+
+  const supplierId = cleanText(params.supplierId);
+  const requestedName = cleanText(params.supplierName || params.supplier || params.name);
+  const supplierOptions = [...supplierMap.values()].sort((a, b) => String(a.name).localeCompare(String(b.name), "en-GB", { sensitivity: "base" }));
+  let selectedKey = requestedName ? supplierReportKey(requestedName) : "";
+  if (supplierId) {
+    const match = supplierOptions.find(supplier => String(supplier.id) === supplierId);
+    selectedKey = match?.key || selectedKey;
+  }
+  if (!selectedKey && supplierOptions.length) selectedKey = supplierOptions[0].key;
+  if (requestedName && !supplierMap.has(selectedKey)) ensureSupplier(requestedName);
+
+  const selectedOption = supplierMap.get(selectedKey) || null;
+  const selectedSupplierFull = selectedOption
+    ? catalogSuppliers.find(supplier => supplierReportKey(supplier.name) === selectedKey)
+    : null;
+  const selectedSupplier = selectedOption ? {
+    id: selectedSupplierFull?.id || selectedOption.id || "",
+    name: selectedSupplierFull?.name || selectedOption.name,
+    reference: selectedSupplierFull?.reference || selectedOption.reference || "",
+    status: selectedSupplierFull?.status || selectedOption.status || "",
+    contact: selectedSupplierFull?.contact || selectedOption.contact || "",
+    email: selectedSupplierFull?.email || selectedOption.email || "",
+    phone: selectedSupplierFull?.phone || selectedOption.phone || "",
+    city: selectedSupplierFull?.city || "",
+    country: selectedSupplierFull?.country || selectedOption.country || "",
+    currency: selectedSupplierFull?.currency || selectedOption.currency || "",
+    incoterms: selectedSupplierFull?.incoterms || "",
+    leadTimeDays: Number(selectedSupplierFull?.leadTimeDays || 0),
+    moq: Number(selectedSupplierFull?.moq || 0),
+    creditBalance: supplierCreditSummary(selectedSupplierFull?.name || selectedOption.name, supplierCredits)
+  } : null;
+
+  const orders = [];
+  const productsByKey = new Map();
+  const discrepancies = [];
+  const receiptRows = [];
+  const orderRowsById = new Map();
+
+  const upsertProductRow = (key, patch = {}, orderRef = null) => {
+    const id = key || patch.sku || patch.buyingCode || patch.title || patch.style || crypto.randomUUID();
+    const current = productsByKey.get(id) || {
+      id: patch.id || "",
+      rowKey: id,
+      sku: patch.sku || "",
+      buyingCode: patch.buyingCode || patch.supplierSku || "",
+      title: patch.title || patch.style || "",
+      style: patch.style || patch.title || "",
+      productType: patch.productType || patch.category || "",
+      season: patch.season || "",
+      colour: patch.colour || patch.color || "",
+      size: patch.size || patch.optionValue || "",
+      unitCostGbp: Number(patch.unitCostGbp || patch.unitCost || 0),
+      rrp: Number(patch.rrp || 0),
+      imageUrl: patch.imageUrl || "",
+      status: patch.status || "Order line",
+      syncStatus: patch.syncStatus || "",
+      readiness: patch.readiness || null,
+      lastOrderNumber: patch.lastOrderNumber || "",
+      lastOrderedAt: patch.lastOrderedAt || "",
+      orderedUnits: 0,
+      orderCount: 0,
+      openOrderCount: 0,
+      lastOrderDate: "",
+      orderRefs: []
+    };
+    const merged = { ...current };
+    for (const [field, value] of Object.entries(patch)) {
+      if (value !== undefined && value !== null && value !== "" && (merged[field] === "" || merged[field] === null || merged[field] === undefined)) {
+        merged[field] = value;
+      }
+    }
+    if (orderRef) {
+      merged.orderedUnits += Number(orderRef.quantity || 0);
+      if (!merged.orderRefs.some(ref => String(ref.orderId) === String(orderRef.orderId))) {
+        merged.orderRefs.push(orderRef);
+        merged.orderCount += 1;
+        if (!deliveredOrderIntakeStatuses.has(orderRef.intakeStatus)) merged.openOrderCount += 1;
+      }
+      if (orderRef.orderDate && (!merged.lastOrderDate || orderRef.orderDate > merged.lastOrderDate)) merged.lastOrderDate = orderRef.orderDate;
+      merged.lastOrderNumber = merged.lastOrderNumber || orderRef.orderNumber || "";
+      merged.lastOrderedAt = merged.lastOrderedAt || orderRef.orderDate || "";
+    }
+    productsByKey.set(id, merged);
+  };
+
+  for (const product of catalogProducts) {
+    if (!selectedKey || supplierReportKey(product.supplierName) !== selectedKey) continue;
+    if (!includeArchived && product.status === "Archived") continue;
+    const key = normalizeSku(product.sku) || `product:${product.id}`;
+    upsertProductRow(key, product);
+  }
+
+  for (const savedOrder of dbData.orders || []) {
+    if (!includeArchived && savedOrder.archivedAt) continue;
+    if (!selectedKey || supplierReportKey(supplierReportNameForOrder(savedOrder)) !== selectedKey) continue;
+
+    const workflowRow = workflows.get(String(savedOrder.id));
+    const syncedOrder = syncOrderStatusFromWorkflowRow(savedOrder, workflowRow);
+    const managedOrder = publicManagedOrder(syncedOrder, workflowRow, productLookup, supplierCredits);
+    const workflow = managedOrder.workflow || workflowFromRow(workflowRow, syncedOrder);
+    const batches = readOrderBatches(managedOrder.id);
+    const batchLines = readOrderBatchLines(managedOrder.id);
+    const invoices = readOrderInvoices(managedOrder.id, false);
+    const receiptLines = readOrderReceiptLines(managedOrder.id);
+    const orderDiscrepancies = readOrderDiscrepancies(managedOrder.id);
+    const reportRow = orderReportSummaryRow(managedOrder, workflow, batches, batchLines, invoices, receiptLines, orderDiscrepancies);
+    orders.push(reportRow);
+    orderRowsById.set(String(reportRow.id), reportRow);
+
+    for (const [lineIndex, line] of (syncedOrder.lines || []).entries()) {
+      const sku = normalizeSku(line.sku);
+      const master = sku ? productLookup.get(sku) : null;
+      const key = sku || `order-line:${syncedOrder.id}:${lineIndex}`;
+      upsertProductRow(key, { ...(master || {}), ...line, sku: sku || line.sku || "" }, {
+        orderId: reportRow.id,
+        orderNumber: reportRow.orderNumber,
+        orderDate: reportRow.orderDate || reportRow.savedAt || "",
+        intakeStatus: reportRow.workflow?.intakeStatus || "",
+        quantity: Number(line.quantity || 0),
+        openUrl: reportRow.openUrl
+      });
+    }
+
+    const batchMap = new Map(batches.map(batch => [String(batch.id), batch]));
+    const invoiceMap = new Map(invoices.map(invoice => [String(invoice.id), invoice]));
+    const receiptMap = new Map();
+    for (const receipt of receiptLines) {
+      const key = `${receipt.batchId}:${receipt.lineIndex}`;
+      if (!receiptMap.has(key)) receiptMap.set(key, []);
+      receiptMap.get(key).push(receipt);
+    }
+    const usedReceiptKeys = new Set();
+
+    for (const item of orderDiscrepancies) {
+      const invoice = invoiceMap.get(String(item.linkedInvoiceId)) || {};
+      const batch = batchMap.get(String(item.batchId)) || {};
+      discrepancies.push({
+        ...item,
+        orderNumber: reportRow.orderNumber,
+        supplierName: reportRow.supplierName,
+        batchLabel: item.batchId ? supplierReportBatchLabel(batch) : "Full order",
+        linkedInvoiceNumber: invoice.invoiceNumber || "",
+        isOpen: !terminalDiscrepancyStatuses.has(item.status),
+        openUrl: reportRow.openUrl
+      });
+    }
+
+    for (const batch of batches) {
+      const lines = batchLines.filter(line => String(line.batchId) === String(batch.id));
+      if (!lines.length) {
+        receiptRows.push({
+          orderId: reportRow.id,
+          orderNumber: reportRow.orderNumber,
+          supplierName: reportRow.supplierName,
+          batchId: batch.id,
+          batchLabel: supplierReportBatchLabel(batch),
+          batchStatus: batch.intakeStatus,
+          etaDate: batch.etaDate,
+          shippedDate: batch.shippedDate,
+          receivedDate: batch.receivedDate,
+          lineIndex: null,
+          sku: "",
+          buyingCode: "",
+          style: "",
+          expectedQuantity: Number(batch.units || 0),
+          allocatedQuantity: Number(batch.units || 0),
+          receivedQuantity: batch.intakeStatus === "Received" ? Number(batch.units || 0) : 0,
+          damagedQuantity: 0,
+          acceptedQuantity: batch.intakeStatus === "Received" ? Number(batch.units || 0) : 0,
+          shortQuantity: 0,
+          overQuantity: 0,
+          notes: batch.notes || "",
+          openUrl: reportRow.openUrl
+        });
+        continue;
+      }
+      for (const line of lines) {
+        const key = `${line.batchId}:${line.lineIndex}`;
+        const receipts = receiptMap.get(key) || [];
+        const totals = summarizeSupplierReportReceiptLines(receipts);
+        usedReceiptKeys.add(key);
+        receiptRows.push({
+          orderId: reportRow.id,
+          orderNumber: reportRow.orderNumber,
+          supplierName: reportRow.supplierName,
+          batchId: batch.id,
+          batchLabel: supplierReportBatchLabel(batch),
+          batchStatus: batch.intakeStatus,
+          etaDate: batch.etaDate,
+          shippedDate: batch.shippedDate,
+          receivedDate: totals.receivedDate || batch.receivedDate || "",
+          lineIndex: line.lineIndex,
+          sku: line.sku || "",
+          buyingCode: line.buyingCode || "",
+          style: line.style || "",
+          expectedQuantity: Number(totals.expectedQuantity || line.quantity || 0),
+          allocatedQuantity: Number(line.quantity || 0),
+          receivedQuantity: Number(totals.receivedQuantity || 0),
+          damagedQuantity: Number(totals.damagedQuantity || 0),
+          acceptedQuantity: Number(totals.acceptedQuantity || 0),
+          shortQuantity: Number(totals.shortQuantity || 0),
+          overQuantity: Number(totals.overQuantity || 0),
+          notes: [...new Set(totals.notes.filter(Boolean))].join("; "),
+          updatedAt: totals.updatedAt,
+          openUrl: reportRow.openUrl
+        });
+      }
+    }
+
+    for (const [key, receipts] of receiptMap.entries()) {
+      if (usedReceiptKeys.has(key)) continue;
+      const receipt = receipts[0] || {};
+      const totals = summarizeSupplierReportReceiptLines(receipts);
+      const batch = batchMap.get(String(receipt.batchId)) || {};
+      receiptRows.push({
+        orderId: reportRow.id,
+        orderNumber: reportRow.orderNumber,
+        supplierName: reportRow.supplierName,
+        batchId: receipt.batchId || "",
+        batchLabel: receipt.batchId ? supplierReportBatchLabel(batch) : "Full order",
+        batchStatus: batch.intakeStatus || "",
+        etaDate: batch.etaDate || "",
+        shippedDate: batch.shippedDate || "",
+        receivedDate: totals.receivedDate || receipt.receivedDate || "",
+        lineIndex: receipt.lineIndex,
+        sku: receipt.sku || "",
+        buyingCode: receipt.buyingCode || "",
+        style: receipt.style || "",
+        expectedQuantity: Number(totals.expectedQuantity || 0),
+        allocatedQuantity: 0,
+        receivedQuantity: Number(totals.receivedQuantity || 0),
+        damagedQuantity: Number(totals.damagedQuantity || 0),
+        acceptedQuantity: Number(totals.acceptedQuantity || 0),
+        shortQuantity: Number(totals.shortQuantity || 0),
+        overQuantity: Number(totals.overQuantity || 0),
+        notes: [...new Set(totals.notes.filter(Boolean))].join("; "),
+        updatedAt: totals.updatedAt,
+        openUrl: reportRow.openUrl
+      });
+    }
+  }
+
+  orders.sort((a, b) => String(b.orderDate || b.savedAt || "").localeCompare(String(a.orderDate || a.savedAt || "")) || String(a.orderNumber).localeCompare(String(b.orderNumber)));
+  discrepancies.sort((a, b) => Number(b.isOpen) - Number(a.isOpen) || String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+  receiptRows.sort((a, b) => String(a.etaDate || "9999-99-99").localeCompare(String(b.etaDate || "9999-99-99")) || String(a.orderNumber).localeCompare(String(b.orderNumber)) || String(a.batchLabel).localeCompare(String(b.batchLabel)));
+
+  const products = [...productsByKey.values()].sort((a, b) => Number(b.orderedUnits || 0) - Number(a.orderedUnits || 0) || String(a.sku || a.buyingCode || a.title).localeCompare(String(b.sku || b.buyingCode || b.title)));
+  const performance = orderActuals.summarizeSupplierPerformance(orders)[0] || {};
+  const metrics = {
+    ...emptySupplierReportMetrics(),
+    orders: orders.length,
+    openOrders: orders.filter(order => !deliveredOrderIntakeStatuses.has(order.workflow?.intakeStatus)).length,
+    products: products.length,
+    units: orders.reduce((sum, order) => sum + Number(order.units || 0), 0),
+    orderValueGbp: orders.reduce((sum, order) => sum + Number(order.totalGbp || 0), 0),
+    outstandingGbp: orders.reduce((sum, order) => sum + Number(order.invoices?.outstanding || 0), 0),
+    orderedUnits: Number(performance.orderedUnits || 0),
+    receivedUnits: Number(performance.receivedUnits || 0),
+    acceptedUnits: Number(performance.acceptedUnits || 0),
+    damagedUnits: Number(performance.damagedUnits || 0),
+    shortUnits: Number(performance.shortUnits || 0),
+    overUnits: Number(performance.overUnits || 0),
+    fillRate: Number(performance.fillRate || 0),
+    batches: orders.reduce((sum, order) => sum + Number(order.batches?.count || 0), 0),
+    openBatches: Number(performance.openBatches || 0),
+    lateBatches: Number(performance.lateBatches || 0),
+    unbatchedUnits: orders.reduce((sum, order) => sum + Number(order.batches?.unbatchedUnits || 0), 0),
+    receiptRows: receiptRows.length,
+    openDiscrepancies: discrepancies.filter(item => item.isOpen).length,
+    openCreditValueGbp: Number(performance.openCreditValueGbp || 0),
+    creditReceivedGbp: Number(performance.creditReceivedGbp || 0)
+  };
+
+  return {
+    generatedAt: new Date().toISOString(),
+    includeArchived,
+    selectedSupplier,
+    suppliers: [...supplierMap.values()].sort((a, b) => String(a.name).localeCompare(String(b.name), "en-GB", { sensitivity: "base" })),
+    metrics,
+    reports: {
+      orders,
+      products,
+      discrepancies,
+      receipts: receiptRows
+    },
+    linkedOrderIds: [...orderRowsById.keys()]
+  };
+}
+
 function writeOrderWorkflow(order, patch, actorName = "", section = "workflow") {
   const db = openOrderSqliteDb();
   const currentRow = db.prepare("SELECT * FROM order_workflows WHERE order_id = ?").get(String(order.id));
@@ -13481,6 +13902,20 @@ async function handleApi(req, res) {
       count: suppliers.length,
       generatedAt: new Date().toISOString()
     });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/suppliers/report") {
+    try {
+      sendJson(res, 200, buildSupplierReport({
+        supplier: url.searchParams.get("supplier"),
+        supplierName: url.searchParams.get("supplierName"),
+        supplierId: url.searchParams.get("supplierId"),
+        includeArchived: url.searchParams.get("includeArchived")
+      }));
+    } catch (error) {
+      sendJson(res, 500, { error: error.message || "Could not build supplier report." });
+    }
     return true;
   }
 

@@ -1,6 +1,6 @@
 # Merch X Project Spec
 
-Last reviewed: 2026-07-07
+Last reviewed: 2026-07-08
 
 This is the shared logic and product reference for Merch X. Keep it current when the app's workflows, calculations, data model, integrations, or page responsibilities change.
 
@@ -40,6 +40,7 @@ The app favours simple operational tools over a large framework:
 - `public/order-form.html`: purchase order creation, SKU issuing/lookup, line image upload, printable PO output.
 - `public/orders.html`: order workspace, approval/payment/intake workflow, supplier batches, received actuals, discrepancies/credits, supplier credit balances, invoices, notes, archive/delete, printable warehouse image reports, and barcode label-job reports for printers and suppliers.
 - `public/order-reports.html`: read-only operational reports for arrivals, intake exceptions, next actions, finance, supplier performance, buying mix, and data quality.
+- `public/supplier-report.html`: supplier-led workbench for top-down review of one supplier's orders, products, receipt actuals, discrepancies, and credit exposure.
 - `public/pnl.html`: finance P&L planner using live Shopify actuals, saved cost rules, manual marketing spend, and driver-based profit scenarios.
 - `public/sku-register.html`: local SKU register and safe deletion of unused issued SKUs.
 - `public/products.html`: product and supplier master-data workspace, local SKU enrichment, readiness review, and Shopify draft push workflow.
@@ -222,6 +223,7 @@ Product and supplier master data:
 - `POST /api/products/update`
 - `POST /api/products/archive`
 - `GET /api/suppliers`
+- `GET /api/suppliers/report`
 - `POST /api/suppliers/update`
 - `POST /api/products/shopify/preview`
 - `POST /api/products/shopify/push-draft`
@@ -345,6 +347,15 @@ Important principles:
 - Actuals fields include ordered/expected units, received units, accepted units, damaged units, short units, over units, fill rate, variance value, open credit value, and credit received.
 - The Supplier Performance tab summarizes fill rate, on-time rate, shortage/damage units, open discrepancies, supplier credit due/received, outstanding balances, and late/open batches by supplier.
 - Data quality flags include received batches without line actuals, batches without line allocations, credit notes not linked to discrepancies, open discrepancies without a resolution, invoice-without-batch rows, unbatched units, missing dates, missing FX, and missing product links.
+
+### Supplier Report
+
+- The Supplier Report is a supplier-led reconciliation workbench. It starts from one supplier and returns order summaries, product rows, line-level receipt/batch rows, and discrepancy/credit rows from existing order, product, supplier, invoice, batch, receipt, and discrepancy data.
+- `GET /api/suppliers/report` accepts `supplier`, `supplierName`, or `supplierId` plus optional `includeArchived`. It returns the supplier selector list, selected supplier summary, metrics, and table payloads for `orders`, `products`, `discrepancies`, and `receipts`.
+- Product rows include supplier master products and any order-line products found on that supplier's orders, so unsynced or not-yet-mastered SKUs still appear during reconciliation.
+- Supplier Report tables include footer totals for meaningful additive fields, and those totals follow the current table search/filter state.
+- Discrepancy rows remain actioned through the Orders workspace. Supplier Report rows deep-link back to `orders.html?id=...` rather than duplicating receipt, discrepancy, invoice, or workflow editing.
+- The page is reachable from the tool hub, the Supplier Performance report, and the Products & suppliers supplier workspace.
 
 ### Barcode Label Jobs
 

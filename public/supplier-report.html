@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Supplier Report</title>
+<link rel="stylesheet" href="design-system.css">
+<style>
+.wrap{max-width:1680px}
+.head{align-items:center}
+.toolbar{display:grid;grid-template-columns:minmax(260px,1.4fr) minmax(180px,.8fr) auto;gap:10px;align-items:end}
+.field.check-field{display:flex;align-items:center;gap:8px;min-height:32px}
+.field.check-field label{margin:0;text-transform:none;letter-spacing:0;font-size:12px;color:var(--ds-text-muted)}
+.field.check-field input{width:16px;min-height:16px}
+.supplier-summary{display:grid;grid-template-columns:minmax(260px,1.1fr) repeat(3,minmax(150px,.6fr));gap:14px;align-items:start;margin-bottom:14px}
+.supplier-summary h2{font-size:18px;margin:0 0 5px;color:var(--ds-text)}
+.supplier-summary p,.supplier-summary span{font-size:12px;line-height:1.5;color:var(--ds-text-muted)}
+.supplier-summary label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);margin-bottom:3px}
+.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.tab{border:1px solid var(--ds-line-strong);background:var(--ds-bg-surface);border-radius:var(--ds-radius);min-height:34px;padding:0 12px;font-size:12px;font-weight:650;cursor:pointer;color:var(--ds-text-muted)}
+.tab:hover{background:var(--ds-bg-muted);color:var(--ds-text)}
+.tab.active{background:var(--ds-action);border-color:var(--ds-action);color:#fff}
+.report-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;color:var(--ds-text-muted);font-size:12px}
+.table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
+table{width:100%;border-collapse:collapse;font-size:12px;min-width:1260px}
+th{position:sticky;top:0;z-index:1;background:var(--ds-bg-muted);color:var(--ds-text-soft);font-size:10px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:8px;border-bottom:1px solid var(--ds-line);white-space:nowrap;cursor:pointer}
+th:hover{color:var(--ds-text)}
+td{padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:top;color:var(--ds-text-muted)}
+tr:last-child td{border-bottom:0}
+tfoot td{position:sticky;bottom:0;background:var(--ds-bg-muted);border-top:1px solid var(--ds-line-strong);font-weight:700;color:var(--ds-text)}
+tfoot .subline{font-weight:500}
+.num{text-align:right;white-space:nowrap}
+.primary-cell strong{display:block;color:var(--ds-text);font-size:12px;margin-bottom:2px}
+.primary-cell span,.subline{display:block;color:var(--ds-text-soft);font-size:11px;line-height:1.4}
+.badge{display:inline-flex;align-items:center;min-height:20px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:2px 7px;font-size:10px;font-weight:650;color:var(--ds-text-muted);background:var(--ds-bg-muted);white-space:nowrap}
+.badge.good{color:var(--ds-good);border-color:rgba(21,128,61,.35)}
+.badge.warn{color:var(--ds-warn);border-color:rgba(180,83,9,.35)}
+.badge.bad{color:var(--ds-bad);border-color:rgba(185,28,28,.35)}
+.badge.info{color:var(--ds-info);border-color:rgba(37,99,235,.35)}
+.thumb{width:42px;height:56px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--ds-text-soft);font-size:10px}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.empty-state{padding:36px 14px;text-align:center;color:var(--ds-text-muted);font-size:13px}
+@media(max-width:1280px){.metric-grid{grid-template-columns:repeat(3,1fr)}.supplier-summary{grid-template-columns:1fr 1fr}}
+@media(max-width:760px){.toolbar,.metric-grid,.supplier-summary{grid-template-columns:1fr}.report-meta{display:block}.actions{justify-content:flex-start}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div>
+      <h1>Supplier report</h1>
+      <p class="sub">Supplier-led order, product, receipt, and discrepancy review.</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="order-reports.html">Order reports</a>
+      <a class="btn" href="products.html">Products &amp; suppliers</a>
+      <button type="button" class="btn primary" id="refresh-btn">Refresh</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label>Supplier</label><select class="select" id="supplier-filter"></select></div>
+      <div class="field"><label>Search table</label><input class="input" id="search" placeholder="Order, SKU, style, batch, status"></div>
+      <div class="field check-field"><input id="include-archived" type="checkbox"><label for="include-archived">Archived</label></div>
+    </div>
+  </section>
+
+  <section class="panel supplier-summary" id="supplier-summary"></section>
+  <section class="metric-grid" id="metrics"></section>
+  <section class="tabs" id="tabs"></section>
+
+  <section class="panel">
+    <div class="report-meta">
+      <span id="report-title">Loading supplier report...</span>
+      <span id="report-generated"></span>
+    </div>
+    <div id="report-body"></div>
+  </section>
+</main>
+
+<script>
+const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"});
+const numberFmt=new Intl.NumberFormat("en-GB");
+const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+const naturalSort=new Intl.Collator("en-GB",{numeric:true,sensitivity:"base"});
+const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
+const tabs=[
+  {id:"orders",label:"Orders"},
+  {id:"products",label:"Products"},
+  {id:"discrepancies",label:"Discrepancies"},
+  {id:"receipts",label:"Batches / receipts"}
+];
+let state={data:null,tab:"orders",sort:{key:"orderDate",dir:"desc"}};
+const el=id=>document.getElementById(id);
+const val=id=>el(id)?.value||"";
+
+async function apiFetch(path,options){
+  let lastError=null;
+  for(const origin of API_ORIGINS){
+    try{
+      const response=await fetch(`${origin}${path}`,options);
+      if(response.ok||response.status>=400)return response;
+      lastError=new Error(`API returned ${response.status}`);
+    }catch(error){lastError=error;}
+  }
+  throw lastError||new Error("API unavailable");
+}
+function escapeHtml(value){
+  return String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[char]));
+}
+function attr(value){return escapeHtml(value).replace(/`/g,"&#096;");}
+function formatDate(value){
+  if(!value)return "-";
+  const iso=String(value).slice(0,10);
+  const date=new Date(`${iso}T00:00:00`);
+  return Number.isNaN(date.getTime())?escapeHtml(value):dateFmt.format(date);
+}
+function formatMoney(value){return money.format(Number(value||0));}
+function formatPercent(value){return `${Math.round(Number(value||0)*100)}%`;}
+function badgeClass(value){
+  if(["Received","Paid","Approved","Complete","Credit received","Replacement received","Resolved","Live","Synced draft"].includes(value))return"good";
+  if(["Delayed","Overdue","Rejected","Missing ETA","Open","Error","Conflict"].includes(value))return"bad";
+  if(["Ready to pay","Part paid","Pending director approval","Awaiting FD","Shipped","In production","Credit requested","Replacement expected","Review after delivery","Ready"].includes(value))return"warn";
+  return"info";
+}
+function statusBadge(value){
+  return `<span class="badge ${badgeClass(value)}">${escapeHtml(value||"-")}</span>`;
+}
+function openOrderLink(row){
+  return `<a class="btn" href="${attr(row.openUrl||`orders.html?id=${encodeURIComponent(row.orderId||row.id||"")}`)}">Open order</a>`;
+}
+function orderCell(row){
+  return `<div class="primary-cell"><strong>${escapeHtml(row.orderNumber||"No order")}</strong><span>${escapeHtml(row.season||row.batchLabel||"")}</span></div>`;
+}
+function productCell(row){
+  return `<div class="primary-cell"><strong>${escapeHtml(row.title||row.style||"Untitled")}</strong><span>${escapeHtml([row.productType,row.colour,row.size].filter(Boolean).join(" / "))}</span></div>`;
+}
+function rowText(row){
+  return Object.values(row||{}).map(value=>{
+    if(Array.isArray(value))return value.map(rowText).join(" ");
+    if(value&&typeof value==="object")return rowText(value);
+    return String(value||"");
+  }).join(" ").toLowerCase();
+}
+function filteredRows(tab=state.tab){
+  const q=val("search").trim().toLowerCase();
+  const rows=state.data?.reports?.[tab]||[];
+  return q?rows.filter(row=>rowText(row).includes(q)):rows;
+}
+function sortRows(rows,columns){
+  const sort=state.sort;
+  const column=columns.find(item=>item.key===sort.key)||columns[0];
+  const dir=sort.dir==="desc"?-1:1;
+  return [...rows].sort((a,b)=>{
+    const av=column.sort?column.sort(a):(a[column.key]??"");
+    const bv=column.sort?column.sort(b):(b[column.key]??"");
+    if(typeof av==="number"||typeof bv==="number")return (Number(av||0)-Number(bv||0))*dir;
+    return naturalSort.compare(String(av||""),String(bv||""))*dir;
+  });
+}
+function sumRows(rows,fn){
+  return rows.reduce((total,row)=>total+Number(fn(row)||0),0);
+}
+function totalCell(value,subline=""){
+  return `${escapeHtml(value)}${subline?`<span class="subline">${escapeHtml(subline)}</span>`:""}`;
+}
+function tableTotals(tab,rows){
+  if(!rows.length)return null;
+  if(tab==="products"){
+    const costValue=sumRows(rows,row=>Number(row.unitCostGbp||0)*Number(row.orderedUnits||0));
+    const retailValue=sumRows(rows,row=>Number(row.rrp||0)*Number(row.orderedUnits||0));
+    const orderRefs=new Set();
+    const openOrderRefs=new Set();
+    rows.flatMap(row=>row.orderRefs||[]).forEach(ref=>{
+      const key=String(ref.orderId||ref.orderNumber||"");
+      if(!key)return;
+      orderRefs.add(key);
+      if(!["Received","Cancelled","Rejected"].includes(ref.intakeStatus))openOrderRefs.add(key);
+    });
+    const orderCount=orderRefs.size||sumRows(rows,row=>row.orderCount);
+    const openOrderCount=openOrderRefs.size||sumRows(rows,row=>row.openOrderCount);
+    return {
+      sku:totalCell("Total",`${numberFmt.format(rows.length)} products`),
+      cost:totalCell(formatMoney(costValue),`${formatMoney(retailValue)} retail`),
+      orderedUnits:totalCell(numberFmt.format(sumRows(rows,row=>row.orderedUnits))),
+      orders:totalCell(numberFmt.format(orderCount),`${numberFmt.format(openOrderCount)} open`)
+    };
+  }
+  if(tab==="discrepancies"){
+    const openCount=rows.filter(row=>row.isOpen).length;
+    return {
+      order:totalCell("Total",`${numberFmt.format(rows.length)} discrepancies`),
+      quantity:totalCell(numberFmt.format(sumRows(rows,row=>row.quantity))),
+      value:totalCell(formatMoney(sumRows(rows,row=>row.valueGbp))),
+      status:totalCell(`${numberFmt.format(openCount)} open`)
+    };
+  }
+  if(tab==="receipts"){
+    return {
+      order:totalCell("Total",`${numberFmt.format(rows.length)} receipt rows`),
+      expected:totalCell(numberFmt.format(sumRows(rows,row=>row.expectedQuantity))),
+      received:totalCell(numberFmt.format(sumRows(rows,row=>row.receivedQuantity))),
+      accepted:totalCell(numberFmt.format(sumRows(rows,row=>row.acceptedQuantity))),
+      variance:totalCell(`${numberFmt.format(sumRows(rows,row=>row.shortQuantity))} / ${numberFmt.format(sumRows(rows,row=>row.damagedQuantity))} / ${numberFmt.format(sumRows(rows,row=>row.overQuantity))}`)
+    };
+  }
+  return {
+    order:totalCell("Total",`${numberFmt.format(rows.length)} orders`),
+    units:totalCell(numberFmt.format(sumRows(rows,row=>row.units))),
+    accepted:totalCell(numberFmt.format(sumRows(rows,row=>row.actuals?.acceptedQuantity))),
+    variance:totalCell(`${numberFmt.format(sumRows(rows,row=>row.actuals?.shortQuantity))} / ${numberFmt.format(sumRows(rows,row=>row.actuals?.damagedQuantity))}`),
+    value:totalCell(formatMoney(sumRows(rows,row=>row.totalGbp))),
+    outstanding:totalCell(formatMoney(sumRows(rows,row=>row.invoices?.outstanding))),
+    issues:totalCell(numberFmt.format(sumRows(rows,row=>row.discrepancies?.openCount)),`${formatMoney(sumRows(rows,row=>row.discrepancies?.creditDueGbp))} credit`)
+  };
+}
+function renderTotalsRow(rows,columns){
+  const totals=tableTotals(state.tab,rows);
+  if(!totals)return "";
+  return `<tfoot><tr>${columns.map(col=>`<td class="${col.className||""}">${totals[col.key]||""}</td>`).join("")}</tr></tfoot>`;
+}
+function renderTable(rows,columns,emptyText){
+  if(!rows.length)return `<div class="empty-state">${escapeHtml(emptyText||"No matching rows.")}</div>`;
+  const sorted=sortRows(rows,columns);
+  return `<div class="table-wrap"><table><thead><tr>${columns.map(col=>`<th onclick="setSort('${attr(col.key)}')">${escapeHtml(col.label)}${state.sort.key===col.key?state.sort.dir==="asc"?" asc":" desc":""}</th>`).join("")}</tr></thead><tbody>${sorted.map(row=>`<tr>${columns.map(col=>`<td class="${col.className||""}">${col.render?col.render(row):escapeHtml(row[col.key]??"")}</td>`).join("")}</tr>`).join("")}</tbody>${renderTotalsRow(rows,columns)}</table></div>`;
+}
+function columnsFor(tab){
+  if(tab==="products")return [
+    {key:"image",label:"Image",render:row=>`<div class="thumb">${row.imageUrl?`<img src="${attr(row.imageUrl)}" alt="">`:"No image"}</div>`,sort:row=>Number(Boolean(row.imageUrl))},
+    {key:"sku",label:"SKU",render:row=>`<strong>${escapeHtml(row.sku||"-")}</strong><span class="subline">${escapeHtml(row.buyingCode||"")}</span>`,sort:row=>row.sku||row.buyingCode||""},
+    {key:"product",label:"Product",render:productCell,sort:row=>row.title||row.style||""},
+    {key:"season",label:"Season",render:row=>escapeHtml(row.season||"-"),sort:row=>row.season||""},
+    {key:"cost",label:"Cost / RRP",className:"num",render:row=>`${formatMoney(row.unitCostGbp)}<span class="subline">${formatMoney(row.rrp)} RRP</span>`,sort:row=>Number(row.unitCostGbp||0)},
+    {key:"orderedUnits",label:"Ordered units",className:"num",render:row=>numberFmt.format(Number(row.orderedUnits||0)),sort:row=>Number(row.orderedUnits||0)},
+    {key:"orders",label:"Orders",className:"num",render:row=>`${numberFmt.format(Number(row.orderCount||0))}<span class="subline">${numberFmt.format(Number(row.openOrderCount||0))} open</span>`,sort:row=>Number(row.orderCount||0)},
+    {key:"status",label:"Status",render:row=>statusBadge(row.status),sort:row=>row.status||""},
+    {key:"sync",label:"Shopify",render:row=>statusBadge(row.syncStatus||"Not synced"),sort:row=>row.syncStatus||""},
+    {key:"readiness",label:"Readiness",render:row=>row.readiness?.ready?statusBadge("Ready"):escapeHtml((row.readiness?.blocking||[]).slice(0,2).join(", ")||"-"),sort:row=>Number(row.readiness?.ready||0)},
+    {key:"lastOrder",label:"Last order",render:row=>`${escapeHtml(row.lastOrderNumber||"-")}<span class="subline">${formatDate(row.lastOrderDate||row.lastOrderedAt)}</span>`,sort:row=>row.lastOrderDate||row.lastOrderedAt||""}
+  ];
+  if(tab==="discrepancies")return [
+    {key:"order",label:"Order",render:orderCell,sort:row=>row.orderNumber||""},
+    {key:"batch",label:"Batch",render:row=>escapeHtml(row.batchLabel||"-"),sort:row=>row.batchLabel||""},
+    {key:"sku",label:"SKU / style",render:row=>`<strong>${escapeHtml(row.sku||row.buyingCode||"-")}</strong><span class="subline">${escapeHtml(row.style||"")}</span>`,sort:row=>row.sku||row.buyingCode||""},
+    {key:"type",label:"Type",render:row=>escapeHtml(row.discrepancyType||"-"),sort:row=>row.discrepancyType||""},
+    {key:"quantity",label:"Qty",className:"num",render:row=>numberFmt.format(Number(row.quantity||0)),sort:row=>Number(row.quantity||0)},
+    {key:"value",label:"Value",className:"num",render:row=>formatMoney(row.valueGbp),sort:row=>Number(row.valueGbp||0)},
+    {key:"status",label:"Status",render:row=>statusBadge(row.status),sort:row=>row.status||""},
+    {key:"resolution",label:"Resolution",render:row=>escapeHtml(row.resolutionType||"-"),sort:row=>row.resolutionType||""},
+    {key:"invoice",label:"Credit note",render:row=>escapeHtml(row.linkedInvoiceNumber||row.linkedInvoiceId||"-"),sort:row=>row.linkedInvoiceNumber||row.linkedInvoiceId||""},
+    {key:"notes",label:"Notes",render:row=>escapeHtml(row.notes||""),sort:row=>row.notes||""},
+    {key:"updated",label:"Updated",render:row=>formatDate(row.updatedAt||row.createdAt),sort:row=>row.updatedAt||row.createdAt||""},
+    {key:"open",label:"",render:openOrderLink,sort:row=>row.orderNumber||""}
+  ];
+  if(tab==="receipts")return [
+    {key:"order",label:"Order",render:orderCell,sort:row=>row.orderNumber||""},
+    {key:"batch",label:"Batch",render:row=>`<strong>${escapeHtml(row.batchLabel||"-")}</strong><span class="subline">${escapeHtml(row.batchStatus||"")}</span>`,sort:row=>row.batchLabel||""},
+    {key:"eta",label:"ETA",render:row=>`${formatDate(row.etaDate)}<span class="subline">Received ${formatDate(row.receivedDate)}</span>`,sort:row=>row.etaDate||"9999-99-99"},
+    {key:"sku",label:"SKU / style",render:row=>`<strong>${escapeHtml(row.sku||row.buyingCode||"-")}</strong><span class="subline">${escapeHtml(row.style||"")}</span>`,sort:row=>row.sku||row.buyingCode||""},
+    {key:"expected",label:"Expected",className:"num",render:row=>numberFmt.format(Number(row.expectedQuantity||0)),sort:row=>Number(row.expectedQuantity||0)},
+    {key:"received",label:"Received",className:"num",render:row=>numberFmt.format(Number(row.receivedQuantity||0)),sort:row=>Number(row.receivedQuantity||0)},
+    {key:"accepted",label:"Accepted",className:"num",render:row=>numberFmt.format(Number(row.acceptedQuantity||0)),sort:row=>Number(row.acceptedQuantity||0)},
+    {key:"variance",label:"Short / damaged / over",className:"num",render:row=>`${numberFmt.format(Number(row.shortQuantity||0))} / ${numberFmt.format(Number(row.damagedQuantity||0))} / ${numberFmt.format(Number(row.overQuantity||0))}`,sort:row=>Number(row.shortQuantity||0)+Number(row.damagedQuantity||0)+Number(row.overQuantity||0)},
+    {key:"notes",label:"Notes",render:row=>escapeHtml(row.notes||""),sort:row=>row.notes||""},
+    {key:"open",label:"",render:openOrderLink,sort:row=>row.orderNumber||""}
+  ];
+  return [
+    {key:"order",label:"Order",render:orderCell,sort:row=>row.orderNumber||""},
+    {key:"orderDate",label:"Order date",render:row=>formatDate(row.orderDate||row.savedAt),sort:row=>row.orderDate||row.savedAt||""},
+    {key:"arrivalDate",label:"ETA",render:row=>`${formatDate(row.arrivalDate)}<span class="subline">${escapeHtml(row.arrivalSource||"")}</span>`,sort:row=>row.arrivalDate||"9999-99-99"},
+    {key:"units",label:"Units",className:"num",render:row=>numberFmt.format(Number(row.units||0)),sort:row=>Number(row.units||0)},
+    {key:"accepted",label:"Accepted",className:"num",render:row=>numberFmt.format(Number(row.actuals?.acceptedQuantity||0)),sort:row=>Number(row.actuals?.acceptedQuantity||0)},
+    {key:"variance",label:"Short / damaged",className:"num",render:row=>`${numberFmt.format(Number(row.actuals?.shortQuantity||0))} / ${numberFmt.format(Number(row.actuals?.damagedQuantity||0))}`,sort:row=>Number(row.actuals?.shortQuantity||0)+Number(row.actuals?.damagedQuantity||0)},
+    {key:"value",label:"Value",className:"num",render:row=>formatMoney(row.totalGbp),sort:row=>Number(row.totalGbp||0)},
+    {key:"outstanding",label:"Outstanding",className:"num",render:row=>formatMoney(row.invoices?.outstanding),sort:row=>Number(row.invoices?.outstanding||0)},
+    {key:"issues",label:"Open issues",className:"num",render:row=>`${numberFmt.format(Number(row.discrepancies?.openCount||0))}<span class="subline">${formatMoney(row.discrepancies?.creditDueGbp)} credit</span>`,sort:row=>Number(row.discrepancies?.openCount||0)},
+    {key:"intake",label:"Intake",render:row=>statusBadge(row.workflow?.intakeStatus),sort:row=>row.workflow?.intakeStatus||""},
+    {key:"payment",label:"Payment",render:row=>statusBadge(row.workflow?.paymentStatus),sort:row=>row.workflow?.paymentStatus||""},
+    {key:"owner",label:"Owner",render:row=>`${escapeHtml(row.workflow?.nextActionOwner||"Unassigned")}<span class="subline">${escapeHtml(row.workflow?.nextAction||"")}</span>`,sort:row=>row.workflow?.nextActionOwner||""},
+    {key:"open",label:"",render:openOrderLink,sort:row=>row.orderNumber||""}
+  ];
+}
+function setSort(key){
+  state.sort={key,dir:state.sort.key===key&&state.sort.dir==="asc"?"desc":"asc"};
+  render();
+}
+function setTab(tab){
+  state.tab=tab;
+  const defaults={orders:["orderDate","desc"],products:["orderedUnits","desc"],discrepancies:["updated","desc"],receipts:["eta","asc"]};
+  const next=defaults[tab]||["order","asc"];
+  state.sort={key:next[0],dir:next[1]};
+  render();
+}
+function renderSupplierSummary(){
+  const supplier=state.data?.selectedSupplier||{};
+  const credit=supplier.creditBalance||{};
+  el("supplier-summary").innerHTML=supplier.name?`
+    <div>
+      <h2>${escapeHtml(supplier.name)}</h2>
+      <p>${escapeHtml([supplier.reference,supplier.status,supplier.country].filter(Boolean).join(" / ")||"Supplier record")}</p>
+      <p>${escapeHtml([supplier.contact,supplier.email,supplier.phone].filter(Boolean).join(" / "))}</p>
+    </div>
+    <div><label>Terms</label><span>${escapeHtml([supplier.currency,supplier.incoterms].filter(Boolean).join(" / ")||"-")}</span></div>
+    <div><label>Lead time / MOQ</label><span>${numberFmt.format(Number(supplier.leadTimeDays||0))} days / ${numberFmt.format(Number(supplier.moq||0))}</span></div>
+    <div><label>Credit balance</label><span>${formatMoney(credit.creditDueGbp)} due / ${numberFmt.format(Number(credit.openCreditCount||0))} open</span></div>
+  `:`<div><h2>No supplier selected</h2><p>Select a supplier to load the report.</p></div>`;
+}
+function renderMetrics(){
+  const m=state.data?.metrics||{};
+  const items=[
+    ["Orders",numberFmt.format(Number(m.orders||0)),`${numberFmt.format(Number(m.openOrders||0))} open`],
+    ["Products",numberFmt.format(Number(m.products||0)),`${numberFmt.format(Number(m.units||0))} units ordered`],
+    ["Order value",formatMoney(m.orderValueGbp),`${formatMoney(m.outstandingGbp)} outstanding`],
+    ["Fill rate",formatPercent(m.fillRate),`${numberFmt.format(Number(m.acceptedUnits||0))} accepted / ${numberFmt.format(Number(m.orderedUnits||0))} expected`],
+    ["Short units",numberFmt.format(Number(m.shortUnits||0)),`${numberFmt.format(Number(m.damagedUnits||0))} damaged / ${numberFmt.format(Number(m.overUnits||0))} over`],
+    ["Open issues",numberFmt.format(Number(m.openDiscrepancies||0)),`${formatMoney(m.openCreditValueGbp)} credit due`],
+    ["Batches",numberFmt.format(Number(m.batches||0)),`${numberFmt.format(Number(m.openBatches||0))} open / ${numberFmt.format(Number(m.lateBatches||0))} late`],
+    ["Unbatched",numberFmt.format(Number(m.unbatchedUnits||0)),`${numberFmt.format(Number(m.receiptRows||0))} receipt rows`]
+  ];
+  el("metrics").innerHTML=items.map(item=>`<div class="metric"><label>${escapeHtml(item[0])}</label><span>${escapeHtml(item[1])}</span><small>${escapeHtml(item[2])}</small></div>`).join("");
+}
+function renderTabs(){
+  const reports=state.data?.reports||{};
+  el("tabs").innerHTML=tabs.map(tab=>`<button type="button" class="tab ${state.tab===tab.id?"active":""}" onclick="setTab('${tab.id}')">${escapeHtml(tab.label)} (${numberFmt.format((reports[tab.id]||[]).length)})</button>`).join("");
+}
+function render(){
+  if(!state.data)return;
+  renderSupplierSummary();
+  renderMetrics();
+  renderTabs();
+  const active=tabs.find(tab=>tab.id===state.tab);
+  const rows=filteredRows();
+  el("report-title").textContent=`${active?.label||"Report"} / ${rows.length.toLocaleString("en-GB")} matching rows`;
+  el("report-generated").textContent=`Generated ${new Date(state.data.generatedAt).toLocaleString("en-GB")}`;
+  el("report-body").innerHTML=renderTable(rows,columnsFor(state.tab),"No matching rows for this supplier.");
+}
+function populateSuppliers(){
+  const select=el("supplier-filter");
+  const current=val("supplier-filter")||state.data?.selectedSupplier?.name||"";
+  select.innerHTML=(state.data?.suppliers||[]).map(supplier=>`<option value="${attr(supplier.name)}">${escapeHtml(supplier.name)} (${numberFmt.format(Number(supplier.orderCount||0))})</option>`).join("");
+  if([...select.options].some(option=>option.value===current))select.value=current;
+  else if(state.data?.selectedSupplier?.name)select.value=state.data.selectedSupplier.name;
+}
+async function loadReport(){
+  el("report-title").textContent="Loading supplier report...";
+  el("report-body").innerHTML="";
+  const params=new URLSearchParams();
+  const supplier=val("supplier-filter")||new URLSearchParams(location.search).get("supplier")||"";
+  if(supplier)params.set("supplier",supplier);
+  if(el("include-archived").checked)params.set("includeArchived","true");
+  const response=await apiFetch(`/api/suppliers/report?${params.toString()}`);
+  const data=await response.json();
+  if(!response.ok)throw new Error(data.error||"Could not load supplier report");
+  state.data=data;
+  populateSuppliers();
+  const selected=data.selectedSupplier?.name||val("supplier-filter");
+  if(selected){
+    const next=new URL(location.href);
+    next.searchParams.set("supplier",selected);
+    if(el("include-archived").checked)next.searchParams.set("includeArchived","true");
+    else next.searchParams.delete("includeArchived");
+    history.replaceState(null,"",next);
+  }
+  render();
+}
+function showError(error){
+  el("report-title").textContent="Supplier report unavailable";
+  el("report-generated").textContent="";
+  el("supplier-summary").innerHTML="";
+  el("metrics").innerHTML="";
+  el("tabs").innerHTML="";
+  el("report-body").innerHTML=`<div class="empty-state">${escapeHtml(error.message||"Could not load supplier report.")}</div>`;
+}
+const initialParams=new URLSearchParams(location.search);
+if(initialParams.get("includeArchived")==="true")el("include-archived").checked=true;
+el("supplier-filter").addEventListener("change",()=>loadReport().catch(showError));
+el("search").addEventListener("input",render);
+el("include-archived").addEventListener("input",()=>loadReport().catch(showError));
+el("refresh-btn").addEventListener("click",()=>loadReport().catch(showError));
+loadReport().catch(showError);
+</script>
+</body>
+</html>
