@@ -313,6 +313,8 @@ Important principles:
 - Buyers can upload invoice documents and invoice metadata. Finance/Admin retain control of payment-facing invoice state such as sent-to-FD and paid.
 - Invoice changes can update payment workflow.
 - Archiving hides orders from active creation/bootstrap views but preserves history.
+- Completed warehouse intake moves the order-level intake workflow to `Review after delivery`. Merchandising should complete receipt/discrepancy checks there, then move the intake status to `Received`; only `Received`, cancelled, or rejected orders can be archived. Supplier batches still use `Received` to represent the factual delivery booking.
+- The Orders workspace status filter always offers `Review after delivery` so Merchandising can find orders waiting for post-delivery review, even if the current view would otherwise build status options only from loaded orders.
 - Deleting an order should remove related invoice records/files and workflow data only through the server's delete logic.
 - The Orders workspace can print a warehouse-facing image report for the full order, a selected delivery batch, or remaining unbatched units. The report contains product image, SKU, buying code, colour/material, and quantity only; batch reports use allocated quantities and unbatched reports use ordered quantity less all allocations.
 

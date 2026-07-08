@@ -205,7 +205,9 @@ const naturalSort=new Intl.Collator("en-GB",{numeric:true,sensitivity:"base"});
 const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
 const approvalStatuses=["Not requested","Pending director approval","Approved","Changes requested","Rejected"];
 const paymentStatuses=["Not due","Awaiting invoice","Ready to pay","Part paid","Paid","Overdue"];
-const intakeStatuses=["Not confirmed","Confirmed","In production","Part shipped","Shipped","Delayed","Part received","Received"];
+const deliveryReviewStatus="Review after delivery";
+const statusFilterPinned=[deliveryReviewStatus];
+const intakeStatuses=["Not confirmed","Confirmed","In production","Part shipped","Shipped","Delayed","Part received",deliveryReviewStatus,"Received"];
 const batchPaymentStatuses=["Awaiting invoice","Ready to pay","Part paid","Paid","Query"];
 const batchIntakeStatuses=["Not confirmed","Confirmed","In production","Shipped","Delayed","Part received","Received"];
 const invoiceTypes=["Deposit invoice","Balance invoice","Full invoice","Credit note","Other"];
@@ -385,6 +387,7 @@ function userHasAppRole(role){
 
 function badgeClass(value){
   if(["Approved","Paid","Received","Payment complete","Complete","Credit received","Replacement received","Accepted variance","Written off","Resolved"].includes(value))return"good";
+  if([deliveryReviewStatus].includes(value))return"warn";
   if(["Pending director approval","Ready to pay","Part paid","Part shipped","Part received","Shipped","Confirmed","In production","Awaiting approval","Sent to FD","Shopify linked","Synced draft","Shopify draft","Live","Credit requested","Replacement expected"].includes(value))return"info";
   if(["Changes requested","Awaiting invoice","Delayed","Overdue","Rejected","Query","Product sync","Needs Shopify","Missing SKU","Product hold","Open"].includes(value))return value==="Overdue"||value==="Rejected"?"bad":"warn";
   return "";
@@ -431,7 +434,7 @@ function recalcMetrics(){
     totalOrders:activeOrders.length,
     awaitingApproval:activeOrders.filter(order=>order.workflow.approvalStatus==="Pending director approval").length,
     readyToPay:activeOrders.filter(order=>["Ready to pay","Overdue"].includes(order.workflow.paymentStatus)||(order.workflow.paymentStatus==="Part paid"&&order.workflow.nextActionOwner==="FD / Finance")).length,
-    intakeRisk:activeOrders.filter(order=>order.workflow.intakeStatus==="Delayed"||(order.workflow.intakeEtaDate&&order.workflow.intakeStatus!=="Received"&&order.workflow.intakeEtaDate<todayIso)).length,
+    intakeRisk:activeOrders.filter(order=>order.workflow.intakeStatus==="Delayed"||(order.workflow.intakeEtaDate&&![deliveryReviewStatus,"Received"].includes(order.workflow.intakeStatus)&&order.workflow.intakeEtaDate<todayIso)).length,
     productBlocked:activeOrders.filter(order=>!productCompletion(order).complete).length
   };
 }
@@ -549,7 +552,9 @@ function renderFilterSummary(orders){
 function renderFilters(){
   const archiveMode=val("archive-filter")||"active";
   const scoped=state.orders.filter(order=>archiveMode==="all"||(archiveMode==="archived"?order.archivedAt:!order.archivedAt));
-  const statuses=[...new Set(scoped.map(order=>order.compositeStatus).filter(Boolean))].sort();
+  const currentStatus=val("status-filter");
+  const statuses=[...new Set([...statusFilterPinned,...scoped.map(order=>order.compositeStatus),currentStatus].filter(Boolean))]
+    .sort((a,b)=>statusFilterPinned.includes(a)&&!statusFilterPinned.includes(b)?-1:statusFilterPinned.includes(b)&&!statusFilterPinned.includes(a)?1:naturalSort.compare(a,b));
   const activeOwners=[...new Set(scoped.map(order=>order.workflow.nextActionOwner).filter(Boolean))].sort();
   el("status-filter").innerHTML=options(statuses,val("status-filter"),"All statuses");
   el("owner-filter").innerHTML=options(activeOwners,val("owner-filter"),"All owners");
@@ -1786,6 +1791,7 @@ function suggestedNextAction(workflow,order){
   if((state.discrepancies||[]).some(item=>item.status==="Credit requested"))return {owner:"FD / Finance",action:"Track supplier credit note"};
   if((state.discrepancies||[]).some(item=>!["Credit received","Replacement received","Accepted variance","Written off","Resolved"].includes(item.status)))return {owner:"Merchandising",action:"Resolve receipt discrepancy"};
   if(intake==="Not confirmed"&&!productCompletion(order).complete)return {owner:"Buyer",action:"Complete Shopify product sync before warehouse booking"};
+  if(intake===deliveryReviewStatus)return {owner:"Merchandising",action:"Review delivery before archive"};
   if(intake==="Received")return {owner:"Merchandising",action:"Archive completed order"};
   if(intake==="Part received")return {owner:"Merchandising",action:"Chase remaining intake"};
   if(intake==="Shipped")return {owner:"Merchandising",action:"Track shipment to warehouse"};
@@ -2326,7 +2332,7 @@ async function saveIntake(){
     intakeStatus:status,
     intakeEtaDate:val("intake-eta"),
     intakeConfirmedDate:val("intake-confirmed"),
-    intakeActualDate:val("intake-actual")||(status==="Received"?today():""),
+    intakeActualDate:val("intake-actual")||([deliveryReviewStatus,"Received"].includes(status)?today():""),
     intakeReference:val("intake-ref"),
     intakeNotes:val("intake-notes")
   }).catch(showError);

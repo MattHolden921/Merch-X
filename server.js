@@ -4919,6 +4919,9 @@ const workflowFields = {
   nextAction: "next_action"
 };
 
+const deliveryReviewStatus = "Review after delivery";
+const deliveredOrderIntakeStatuses = new Set([deliveryReviewStatus, "Received"]);
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -4979,8 +4982,11 @@ function workflowPatchForOrderStatus(status, currentWorkflow = {}) {
   if (normalized === "part shipped") {
     return { intakeStatus: "Part shipped", nextActionOwner: "Merchandising", nextAction: "Track remaining supplier shipments" };
   }
+  if (normalized === deliveryReviewStatus.toLowerCase()) {
+    return { intakeStatus: deliveryReviewStatus, intakeActualDate: currentWorkflow.intakeActualDate || todayIsoDate(), nextActionOwner: "Merchandising", nextAction: "Review delivery before archive" };
+  }
   if (normalized === "received") {
-    return { intakeStatus: "Received", intakeActualDate: currentWorkflow.intakeActualDate || todayIsoDate(), nextActionOwner: "Merchandising", nextAction: "Close intake checks" };
+    return { intakeStatus: "Received", intakeActualDate: currentWorkflow.intakeActualDate || todayIsoDate(), nextActionOwner: "Merchandising", nextAction: "Archive completed order" };
   }
   if (normalized === "draft") {
     return { approvalStatus: "Not requested", paymentStatus: "Not due", nextActionOwner: "Buyer", nextAction: "Prepare or submit order" };
@@ -5001,13 +5007,14 @@ function orderStatusForWorkflowPatch(section, workflow) {
     if (workflow.paymentStatus === "Paid") return "Paid";
   }
   if (section === "intake") {
-    if (["In production", "Part shipped", "Shipped", "Part received", "Received"].includes(workflow.intakeStatus)) return workflow.intakeStatus;
+    if (["In production", "Part shipped", "Shipped", "Part received", deliveryReviewStatus, "Received"].includes(workflow.intakeStatus)) return workflow.intakeStatus;
   }
   return "";
 }
 
 function orderStatusFromWorkflow(workflow) {
   if (!workflow) return "";
+  if (workflow.intakeStatus === deliveryReviewStatus) return deliveryReviewStatus;
   if (workflow.intakeStatus === "Received") return "Received";
   if (workflow.intakeStatus === "Part received") return "Part received";
   if (workflow.intakeStatus === "Shipped") return "Shipped";
@@ -5049,6 +5056,7 @@ function nextActionForWorkflow(order, workflow, supplierCredits = null) {
   if (intakeStatus === "Not confirmed" && !orderProductCompletion(order).complete) {
     return { nextActionOwner: "Buyer", nextAction: productCompletionNextAction };
   }
+  if (intakeStatus === deliveryReviewStatus) return { nextActionOwner: "Merchandising", nextAction: "Review delivery before archive" };
   if (intakeStatus === "Received") return { nextActionOwner: "Merchandising", nextAction: "Archive completed order" };
   if (intakeStatus === "Part received") return { nextActionOwner: "Merchandising", nextAction: "Chase remaining intake" };
   if (intakeStatus === "Shipped") return { nextActionOwner: "Merchandising", nextAction: "Track shipment to warehouse" };
@@ -5142,6 +5150,7 @@ function readOrderEvents(orderId, limit = 40) {
 function orderCompositeStatus(order, workflow, productCompletion = null) {
   if (order?.archivedAt) return "Archived";
   if (String(order?.status || "").toLowerCase() === "cancelled") return "Cancelled";
+  if (workflow.intakeStatus === deliveryReviewStatus) return deliveryReviewStatus;
   if (workflow.intakeStatus === "Received") return "Received";
   if (workflow.intakeStatus === "Part received") return "Part received";
   if (workflow.intakeStatus === "Shipped") return "Shipped";
@@ -5324,7 +5333,7 @@ function canDeleteOrder(order) {
 
 function canArchiveOrder(order) {
   const status = String(order?.status || "").trim().toLowerCase();
-  return !order?.archivedAt && ["received", "paid", "cancelled", "rejected"].includes(status);
+  return !order?.archivedAt && ["received", "cancelled", "rejected"].includes(status);
 }
 
 function orderWorkflowMetrics(orders) {
@@ -5333,7 +5342,7 @@ function orderWorkflowMetrics(orders) {
     totalOrders: orders.length,
     awaitingApproval: orders.filter(order => order.workflow.approvalStatus === "Pending director approval").length,
     readyToPay: orders.filter(order => ["Ready to pay", "Overdue"].includes(order.workflow.paymentStatus) || (order.workflow.paymentStatus === "Part paid" && order.workflow.nextActionOwner === "FD / Finance")).length,
-    intakeRisk: orders.filter(order => order.workflow.intakeStatus === "Delayed" || (order.workflow.intakeEtaDate && order.workflow.intakeEtaDate < today && order.workflow.intakeStatus !== "Received")).length,
+    intakeRisk: orders.filter(order => order.workflow.intakeStatus === "Delayed" || (order.workflow.intakeEtaDate && order.workflow.intakeEtaDate < today && !deliveredOrderIntakeStatuses.has(order.workflow.intakeStatus))).length,
     productBlocked: orders.filter(order => !order.productCompletion?.complete).length
   };
 }
@@ -5516,7 +5525,7 @@ function orderReportPortions(row, order, batches, batchLines) {
   }
   const orderStats = reportOrderLineStats(order);
   if (!(batches || []).length) {
-    if (row.workflow?.intakeStatus === "Received") return { dated: [], undated: null };
+    if (deliveredOrderIntakeStatuses.has(row.workflow?.intakeStatus)) return { dated: [], undated: null };
     if (row.arrivalDate) {
       return {
         dated: [reportPortionRow(row, orderStats, {
@@ -5742,10 +5751,10 @@ function buildOrderReports(params = {}) {
 
     const exceptionReasons = [];
     if (workflow.intakeStatus === "Delayed") exceptionReasons.push("Delayed intake");
-    if (row.arrivalDate && row.arrivalDate < today && workflow.intakeStatus !== "Received") exceptionReasons.push("Overdue ETA");
+    if (row.arrivalDate && row.arrivalDate < today && !deliveredOrderIntakeStatuses.has(workflow.intakeStatus)) exceptionReasons.push("Overdue ETA");
     if (["Shipped", "Part shipped"].includes(workflow.intakeStatus) && !row.arrivalDate) exceptionReasons.push("Shipped with no ETA");
     if (workflow.intakeStatus === "In production" && !row.arrivalDate) exceptionReasons.push("In production with no ETA");
-    if (row.batches.outstandingUnits > 0 && workflow.intakeStatus === "Received") exceptionReasons.push("Received status with outstanding units");
+    if (row.batches.outstandingUnits > 0 && deliveredOrderIntakeStatuses.has(workflow.intakeStatus)) exceptionReasons.push("Delivered status with outstanding units");
     if (row.discrepancies.openCount > 0) exceptionReasons.push("Open receipt discrepancy");
     if (exceptionReasons.length) exceptions.push({ ...row, reason: exceptionReasons.join(", ") });
 
@@ -5753,7 +5762,7 @@ function buildOrderReports(params = {}) {
     if (workflow.approvalStatus === "Pending director approval") actionReason.push("Approval waiting");
     if (["Ready to pay", "Overdue"].includes(workflow.paymentStatus)) actionReason.push("Finance waiting");
     if (workflow.paymentStatus === "Part paid") actionReason.push("Part paid");
-    if (["Confirmed", "In production", "Part shipped", "Shipped", "Delayed", "Part received"].includes(workflow.intakeStatus)) actionReason.push("Intake follow-up");
+    if (["Confirmed", "In production", "Part shipped", "Shipped", "Delayed", "Part received", deliveryReviewStatus].includes(workflow.intakeStatus)) actionReason.push("Intake follow-up");
     if (row.discrepancies.openCount > 0) actionReason.push("Receipt discrepancy");
     if (row.discrepancies.creditDueGbp > 0) actionReason.push("Credit note due");
     if (!row.productCompletion?.complete) actionReason.push("Product completion block");
@@ -5765,7 +5774,7 @@ function buildOrderReports(params = {}) {
     }
 
     const qualityReasons = [];
-    if (!row.arrivalDate && workflow.intakeStatus !== "Received") qualityReasons.push("Missing ETA");
+    if (!row.arrivalDate && !deliveredOrderIntakeStatuses.has(workflow.intakeStatus)) qualityReasons.push("Missing ETA");
     if (!row.supplierReference) qualityReasons.push("Missing supplier reference");
     if (String(row.currency || "").toUpperCase() === "EUR" && !Number(savedOrder.fxRate || savedOrder.totals?.fxRate || 0)) qualityReasons.push("Missing FX rate");
     if (!row.productCompletion?.complete) qualityReasons.push("Missing product links");
@@ -5966,6 +5975,7 @@ function setOrderArchived(orderId, archived, actorName = "") {
   const row = db.prepare("SELECT data FROM orders WHERE id = ?").get(String(orderId));
   const order = parseJson(row?.data, null);
   if (!order) throw new Error("Order not found");
+  if (archived && !canArchiveOrder(order)) throw new Error("Move the order to Received after delivery review before archiving.");
   const archivedAt = archived ? new Date().toISOString() : "";
   order.archivedAt = archivedAt;
   db.prepare(`
@@ -6827,7 +6837,10 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
 function intakePatchForBatchSummary(summary, current) {
   if (!summary.count) return {};
   if (summary.received === summary.count) {
-    return { intakeStatus: "Received", intakeActualDate: current.intakeActualDate || todayIsoDate() };
+    return {
+      intakeStatus: current.intakeStatus === "Received" ? "Received" : deliveryReviewStatus,
+      intakeActualDate: current.intakeActualDate || todayIsoDate()
+    };
   }
   if (summary.received > 0 || summary.partReceived > 0) return { intakeStatus: "Part received" };
   if (summary.delayed > 0) return { intakeStatus: "Delayed" };
@@ -6848,19 +6861,21 @@ function syncBatchWorkflow(order, actorName = "") {
   const hasPaymentAction = invoiceTotals.unpaidActionable > 0 || ["Ready to pay", "Overdue"].includes(current.paymentStatus);
   const patch = { ...intakePatch };
   if (!hasPaymentAction) {
-    if (["Received", "Part received", "Shipped", "Part shipped", "Delayed", "In production", "Confirmed"].includes(patch.intakeStatus)) {
+    if ([deliveryReviewStatus, "Received", "Part received", "Shipped", "Part shipped", "Delayed", "In production", "Confirmed"].includes(patch.intakeStatus)) {
       patch.nextActionOwner = "Merchandising";
-      patch.nextAction = patch.intakeStatus === "Received"
-        ? "Archive completed order"
-        : patch.intakeStatus === "Part received"
-          ? "Chase remaining intake"
-          : patch.intakeStatus === "Shipped"
-            ? "Track shipment to warehouse"
-            : patch.intakeStatus === "Part shipped"
-              ? "Track remaining supplier shipments"
-              : patch.intakeStatus === "Delayed"
-                ? "Resolve delayed intake"
-                : "Track supplier production and ETA";
+      patch.nextAction = patch.intakeStatus === deliveryReviewStatus
+        ? "Review delivery before archive"
+        : patch.intakeStatus === "Received"
+          ? "Archive completed order"
+          : patch.intakeStatus === "Part received"
+            ? "Chase remaining intake"
+            : patch.intakeStatus === "Shipped"
+              ? "Track shipment to warehouse"
+              : patch.intakeStatus === "Part shipped"
+                ? "Track remaining supplier shipments"
+                : patch.intakeStatus === "Delayed"
+                  ? "Resolve delayed intake"
+                  : "Track supplier production and ETA";
     } else if (current.paymentStatus === "Part paid") {
       patch.nextActionOwner = "Buyer";
       patch.nextAction = "Awaiting next supplier invoice";

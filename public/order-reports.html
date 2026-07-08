@@ -144,7 +144,7 @@ function setQuickPeriod(){
 function badgeClass(value){
   if(["Received","Paid","Approved","Complete"].includes(value))return"good";
   if(["Delayed","Overdue","Rejected","Missing ETA"].includes(value))return"bad";
-  if(["Ready to pay","Part paid","Pending director approval","Awaiting FD","Shipped","In production","Query"].includes(value))return"warn";
+  if(["Ready to pay","Part paid","Pending director approval","Awaiting FD","Shipped","In production","Query","Review after delivery"].includes(value))return"warn";
   return"info";
 }
 function setOptions(id,items,allLabel){
