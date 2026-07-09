@@ -1,6 +1,6 @@
 # Merch X Project Spec
 
-Last reviewed: 2026-07-08
+Last reviewed: 2026-07-09
 
 This is the shared logic and product reference for Merch X. Keep it current when the app's workflows, calculations, data model, integrations, or page responsibilities change.
 
@@ -479,7 +479,7 @@ Key principles:
 - New launch detection uses Shopify `publishedAt` first, falling back to `createdAt` only for active products without a publish timestamp. This avoids counting products as New In simply because a draft was created weeks before it went live.
 - Updated-image detection uses the Shopify featured media image `updatedAt`/`createdAt` timestamp exposed as `imageUpdatedAt`, matching the collection planner's Manual Lift image-date logic.
 - Draft pipeline rows are included when a Shopify product is still `DRAFT` and was created within the selected launch window; they show no live-day performance until published.
-- The page exposes separate sales, launch, and image-update date windows. It can filter by cohort, status, product type, action, and search term.
+- The page exposes separate sales, launch, and image-update date windows. It can filter by cohort, status, supplier, product type, action, and search term. Supplier comes from the Shopify product metafield `custom.supplier`; supplier filtering also updates the visible summary metrics and browser-side CSV export.
 - Updated-image rows include an image-impact comparison when daily order metrics are available. The comparison splits on the featured media image date, compares the selected `impactDays` window before the image change with the available post-change window, and normalises sales, units, views, and add-to-cart metrics by days so partial recent windows remain comparable.
 - GA4 daily item metrics are merged into image impact when available, so pre/post CVR can be compared; Shopify order metrics remain the sales source when GA4 is unavailable.
 - Marketing actions are advisory labels derived from stock, sales velocity, GA4 views/CVR, and cohort state: Push, Needs exposure, Image test, Content check, Stock watch, Sold out, Draft pipeline, or Watch.

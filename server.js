@@ -537,6 +537,10 @@ function productSeason(product) {
   return match ? match[0].replace(/\s+/, "").toUpperCase() : "";
 }
 
+function productSupplier(product) {
+  return String(product.supplierMetafield?.value || "").trim();
+}
+
 function productColor(product) {
   const palette = ["Black","Blue","Brown","Cocoa","Cream","Denim","Fuchsia","Green","Grey","Ivory","Khaki","Lime","Navy","Olive","Orange","Pink","Powder Blue","Purple","Red","Stone","White","Yellow"];
   const haystack = `${product.title} ${product.tags.join(" ")}`.toLowerCase();
@@ -618,6 +622,7 @@ function normalizeProduct(product, orderMetrics) {
     legacyResourceId: product.legacyResourceId,
     skus,
     variantIds,
+    supplier: productSupplier(product),
     season: productSeason(product),
     color: productColor(product),
     imageUrl: image?.url || "",
@@ -1112,6 +1117,7 @@ async function fetchShopifyMerchandising(req, res) {
           vendor
           productType
           tags
+          supplierMetafield: metafield(namespace: "custom", key: "supplier") { value }
           seasonMetafield: metafield(namespace: "custom", key: "season") { value }
           productStatusMetafield: metafield(namespace: "custom", key: "product_status") { value }
           featuredMedia {
@@ -12417,6 +12423,7 @@ function buildNewInPerformance(products, options) {
       status,
       productStatusCode: product.productStatusCode || "",
       vendor: product.vendor || "",
+      supplier: product.supplier || "",
       productType: product.productType || "",
       season: product.season || "",
       color: product.color || "",
