@@ -281,6 +281,13 @@ Shopify and Google:
 - Orders are saved to SQLite as JSON payloads plus indexed top-level fields.
 - Saving an order also updates supplier/product helper records and syncs workflow status defaults.
 
+### Order Pricing
+
+- The order form's five-times RRP is `unit cost GBP × 5`. The result is the intended customer-facing RRP; do not add VAT to that result again.
+- The 65% exit retail remains `(unit cost GBP / 0.35) × 1.2`.
+- Supplier cost, supplier total, payment amount, and invoice reconciliation use the ordered line cost (`quantity × unit cost GBP`) without a VAT uplift. Retail-pricing calculations must not change the supplier amount used for invoice matching.
+- `scripts/fix-order-rrp-vat-regression.js` audits the June 2026 `× 5 × 1.2` regression. It defaults to dry-run, creates a SQLite backup before `--apply`, repairs only the exact generated 6× fingerprint in order snapshots and matching local product records, and skips Shopify-linked products for manual review.
+
 ### Product And Supplier Master Data
 
 - Merch X is the source of truth for pre-launch product records.

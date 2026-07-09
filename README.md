@@ -135,6 +135,20 @@ For Hetzner/VPS backups, use SQLite's backup command rather than copying a live 
 sqlite3 /var/lib/merch-x/merch-x.sqlite ".backup '/var/backups/merch-x/merch-x-$(date +%F).sqlite'"
 ```
 
+To audit and repair orders saved during the June 2026 RRP VAT regression, run the repair in dry-run mode first:
+
+```bash
+node scripts/fix-order-rrp-vat-regression.js --database /var/lib/merch-x/merch-x.sqlite
+```
+
+After reviewing the counts and any skipped Shopify-linked SKUs, apply the local database repair:
+
+```bash
+node scripts/fix-order-rrp-vat-regression.js --database /var/lib/merch-x/merch-x.sqlite --backup-dir /var/backups/merch-x --apply
+```
+
+Apply mode creates its own SQLite backup before changing data. It corrects affected order snapshots and matching local product records; Shopify-linked products are reported but deliberately left unchanged for manual local/Shopify price review.
+
 Also back up the uploads directory, which contains invoices and order/product images:
 
 ```bash

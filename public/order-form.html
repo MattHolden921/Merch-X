@@ -154,7 +154,7 @@ textarea{min-height:72px;resize:vertical}
           <div>
             <p class="section-title" style="margin-bottom:8px">Spend by category</p>
             <table class="cat-table">
-              <thead><tr><th>Category</th><th>Units</th><th>Cost GBP</th><th>5x RRP inc VAT</th><th>Exit retail</th><th>Share</th></tr></thead>
+              <thead><tr><th>Category</th><th>Units</th><th>Cost GBP</th><th>5x RRP</th><th>Exit retail</th><th>Share</th></tr></thead>
               <tbody id="cat-body"><tr><td colspan="6" class="empty">Add lines to see category spend.</td></tr></tbody>
             </table>
           </div>
@@ -162,7 +162,7 @@ textarea{min-height:72px;resize:vertical}
             <div class="total-row"><span>Supplier cost GBP</span><strong id="subtotal">&pound;0.00</strong></div>
             <div class="total-row"><span>VAT for retail pricing (20%)</span><strong id="vat">&pound;0.00</strong></div>
             <div class="grand"><span>Supplier total</span><span id="grand">&pound;0.00</span></div>
-            <div class="total-row"><span>5x total RRP inc VAT</span><strong id="rrp-total">&pound;0.00</strong></div>
+            <div class="total-row"><span>5x total RRP</span><strong id="rrp-total">&pound;0.00</strong></div>
             <div class="total-row"><span>65% exit retail inc VAT</span><strong id="exit-total">&pound;0.00</strong></div>
           </div>
         </div>
@@ -228,6 +228,7 @@ textarea{min-height:72px;resize:vertical}
   <img id="image-lightbox-img" alt="">
 </div>
 
+<script src="order-pricing.js"></script>
 <script>
 const CATEGORIES=["Tops","Bottoms","Dresses & Jumpsuits","Outerwear","Knitwear","Footwear","Accessories","Bags & Luggage","Jewellery","Swimwear & Beachwear","Lingerie & Nightwear","Sportswear & Activewear","Childrenswear","Menswear","Home & Lifestyle","Other"];
 const SEASONS=["SS26","AW26","SS27","AW27"];
@@ -460,7 +461,7 @@ function addLine(data={},afterId=null){
           ${field("quantity",id,"Qty","number","0",data.quantity)}
           ${field("unitCostEur",id,"Unit cost EUR","number","0.00",data.unitCostEur??data.unitCost)}
           ${field("unitCostGbp",id,"Cost GBP","number","0.00",data.unitCostGbp)}
-          ${field("rrp",id,"5x RRP inc VAT GBP","text","0.00",data.rrp)}
+          ${field("rrp",id,"5x RRP GBP","text","0.00",data.rrp)}
         </div>
         <div class="line-row second">
           ${skuField(id,data.sku)}
@@ -669,7 +670,7 @@ function lineCostValues(id){
   }else{
     unitCostGbp=unitCostEur*fx;
   }
-  const rrp=unitCostGbp*5*1.2;
+  const rrp=MerchXOrderPricing.calculateRrpGbp(unitCostGbp);
   const exitRetail=(unitCostGbp/.35)*1.2;
   return { mode, unitCostEur, unitCostGbp, rrp, exitRetail };
 }
@@ -921,11 +922,11 @@ function exportCleanPdf(){
       </section>
       <section class="grid"><div class="box"><h2>Supplier</h2><table>${supplierRows}</table></div><div class="box"><h2>Buyer</h2><table>${buyerRows}</table></div></section>
       <section class="grid"><div class="box"><h2>Delivery</h2><table>${deliveryRows}</table></div><div class="box"><h2>Payment and bank details</h2><table>${paymentRows}</table></div></section>
-      <table class="lines"><thead><tr><th>#</th><th>Style</th><th>SKU</th><th>Category</th><th class="num">Qty</th><th class="num">Cost EUR</th><th class="num">Cost GBP</th><th class="num">5x RRP inc VAT</th><th class="num">65% Exit</th><th class="num">Line cost</th></tr></thead><tbody>${lines}</tbody></table>
+      <table class="lines"><thead><tr><th>#</th><th>Style</th><th>SKU</th><th>Category</th><th class="num">Qty</th><th class="num">Cost EUR</th><th class="num">Cost GBP</th><th class="num">5x RRP</th><th class="num">65% Exit</th><th class="num">Line cost</th></tr></thead><tbody>${lines}</tbody></table>
       <table class="totals">
         <tr><td>Supplier cost GBP</td><td class="num">${money.format(order.totals.subtotal||0)}</td></tr>
         <tr><td>VAT for retail pricing</td><td class="num">${money.format(order.totals.vat||0)}</td></tr>
-        <tr><td>5x total RRP inc VAT</td><td class="num">${money.format(order.totals.totalRrp||0)}</td></tr>
+        <tr><td>5x total RRP</td><td class="num">${money.format(order.totals.totalRrp||0)}</td></tr>
         <tr><td>65% exit retail inc VAT</td><td class="num">${money.format(order.totals.totalExitRetail||0)}</td></tr>
         <tr><td>Supplier total</td><td class="num">${money.format(order.totals.grand||0)}</td></tr>
       </table>
