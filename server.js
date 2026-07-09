@@ -5370,7 +5370,7 @@ function isoDateOrBlank(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
 }
 
-function dateInRange(dateIso, fromIso, toIso) {
+function dateInOrderReportRange(dateIso, fromIso, toIso) {
   return Boolean(dateIso && dateIso >= fromIso && dateIso <= toIso);
 }
 
@@ -5752,7 +5752,7 @@ function buildOrderReports(params = {}) {
       incrementReportGroup(categoryGroups, category.label, { orders: 1, units: category.units, valueGbp: category.valueGbp, outstandingGbp: 0 });
     }
 
-    arrivals.push(...portions.dated.filter(portion => dateInRange(portion.arrivalDate, dateFrom, dateTo)));
+    arrivals.push(...portions.dated.filter(portion => dateInOrderReportRange(portion.arrivalDate, dateFrom, dateTo)));
     if (portions.undated) withoutDates.push(portions.undated);
 
     const exceptionReasons = [];

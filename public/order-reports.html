@@ -104,6 +104,7 @@ const tabs=[
   {id:"dataQuality",label:"Data quality"}
 ];
 let state={data:null,tab:"arrivals",sort:{key:"arrivalDate",dir:"asc"}};
+let reportLoadId=0;
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value||"";
 
@@ -387,13 +388,14 @@ function renderTabs(){
   const missingCount=(state.data?.reports?.withoutDates||[]).filter(row=>rowMatches(row,true)).length;
   el("tabs").innerHTML=tabs.map(tab=>`<button type="button" class="tab ${state.tab===tab.id?"active":""}" onclick="setTab('${tab.id}')">${escapeHtml(tab.label)}${tab.id==="withoutDates"?` (${numberFmt.format(missingCount)})`:""}</button>`).join("");
 }
+function setDueScope(missing){
+  el("due-scope").value=missing?"missing":"dated";
+  el("window-days").disabled=missing;
+  el("date-from").disabled=missing;
+  el("date-to").disabled=missing;
+}
 function setTab(tab){
-  if(tab==="withoutDates"){
-    el("due-scope").value="missing";
-    el("window-days").disabled=true;
-    el("date-from").disabled=true;
-    el("date-to").disabled=true;
-  }
+  setDueScope(tab==="withoutDates");
   state.tab=tab;
   const defaults={arrivals:"arrivalDate",withoutDates:"order",exceptions:"reason",nextActions:"owner",finance:"outstandingInvoiced",supplierPerformance:"value",buyingMix:"valueGbp",dataQuality:"reason"};
   state.sort={key:defaults[tab]||"order",dir:tab==="finance"||tab==="buyingMix"||tab==="supplierPerformance"?"desc":"asc"};
@@ -424,16 +426,22 @@ function populateFilters(){
   setOptions("owner-filter",filters.owners||[],"All owners");
 }
 async function loadReports(){
+  const loadId=++reportLoadId;
   el("report-title").textContent="Loading reports...";
   el("report-body").innerHTML="";
-  const params=new URLSearchParams({windowDays:val("window-days")||"30",dateFrom:val("date-from"),dateTo:val("date-to")});
-  if(el("include-archived").checked)params.set("includeArchived","true");
-  const response=await apiFetch(`/api/orders/reports?${params.toString()}`);
-  const data=await response.json();
-  if(!response.ok)throw new Error(data.error||"Could not load reports");
-  state.data=data;
-  populateFilters();
-  render();
+  try{
+    const params=new URLSearchParams({windowDays:val("window-days")||"30",dateFrom:val("date-from"),dateTo:val("date-to")});
+    if(el("include-archived").checked)params.set("includeArchived","true");
+    const response=await apiFetch(`/api/orders/reports?${params.toString()}`);
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.error||"Could not load reports");
+    if(loadId!==reportLoadId)return;
+    state.data=data;
+    populateFilters();
+    render();
+  }catch(error){
+    if(loadId===reportLoadId)showError(error);
+  }
 }
 function showError(error){
   el("report-title").textContent="Report unavailable";
@@ -441,18 +449,22 @@ function showError(error){
   el("report-body").innerHTML=`<div class="empty-state">${escapeHtml(error.message||"Could not load reports.")}</div>`;
 }
 ["supplier-filter","season-filter","category-filter","intake-filter","payment-filter","owner-filter"].forEach(id=>el(id).addEventListener("input",render));
-el("window-days").addEventListener("input",()=>{setQuickPeriod();loadReports().catch(showError);});
-["date-from","date-to","include-archived"].forEach(id=>el(id).addEventListener("input",()=>loadReports().catch(showError)));
+el("window-days").addEventListener("input",()=>{setQuickPeriod();loadReports();});
+["date-from","date-to","include-archived"].forEach(id=>el(id).addEventListener("input",loadReports));
 el("due-scope").addEventListener("input",()=>{
   const missing=val("due-scope")==="missing";
-  el("window-days").disabled=missing;
-  el("date-from").disabled=missing;
-  el("date-to").disabled=missing;
+  setDueScope(missing);
   setTab(state.tab==="nextActions"?"nextActions":missing?"withoutDates":"arrivals");
 });
-el("refresh-btn").addEventListener("click",()=>loadReports().catch(showError));
+el("refresh-btn").addEventListener("click",loadReports);
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState==="visible")loadReports();
+});
+window.addEventListener("pageshow",event=>{
+  if(event.persisted)loadReports();
+});
 setQuickPeriod();
-loadReports().catch(showError);
+loadReports();
 </script>
 </body>
 </html>

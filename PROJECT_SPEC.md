@@ -344,6 +344,7 @@ Important principles:
 ### Order Reports
 
 - Order reports combine workflow, batch, invoice, receipt, and discrepancy data into operational views for arrivals, exceptions, next actions, finance, supplier performance, buying mix, and data quality.
+- The Arrivals report includes open dated order/batch portions inside the selected inclusive date range, including past dates. Its dated and missing-date scopes stay synchronized with the active report tab, and the page reloads report data when it becomes visible again so changes made in another browser tab are reflected.
 - Actuals fields include ordered/expected units, received units, accepted units, damaged units, short units, over units, fill rate, variance value, open credit value, and credit received.
 - The Supplier Performance tab summarizes fill rate, on-time rate, shortage/damage units, open discrepancies, supplier credit due/received, outstanding balances, and late/open batches by supplier.
 - Data quality flags include received batches without line actuals, batches without line allocations, credit notes not linked to discrepancies, open discrepancies without a resolution, invoice-without-batch rows, unbatched units, missing dates, missing FX, and missing product links.
