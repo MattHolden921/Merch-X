@@ -11306,6 +11306,152 @@ async function shopifyVariantBySku(sku) {
   return data?.productVariants?.edges?.[0]?.node || null;
 }
 
+const orderLineLiveNewArrivalsTag = "Collection: New Arrivals";
+
+function hasShopifyTag(tags, expectedTag) {
+  const target = cleanText(expectedTag).toLowerCase();
+  return (Array.isArray(tags) ? tags : [])
+    .some(tag => cleanText(tag).toLowerCase() === target);
+}
+
+async function shopifyLiveNewArrivalsStateBySku(sku) {
+  const normalized = normalizeSku(sku);
+  if (!normalized) {
+    return {
+      sku: "",
+      found: false,
+      isLive: false,
+      hasNewArrivalsTag: false,
+      ok: false,
+      message: "Missing SKU"
+    };
+  }
+  const data = await shopifyGraphql(`query OrderLineLiveNewArrivalsBySku($query: String!) {
+    productVariants(first: 1, query: $query) {
+      edges {
+        node {
+          id
+          sku
+          product {
+            id
+            title
+            handle
+            status
+            tags
+            publishedAt
+            onlineStoreUrl
+          }
+        }
+      }
+    }
+  }`, { query: `sku:${normalized}` });
+  const variant = data?.productVariants?.edges?.[0]?.node || null;
+  const product = variant?.product || null;
+  if (!variant || !product) {
+    return {
+      sku: normalized,
+      found: false,
+      isLive: false,
+      hasNewArrivalsTag: false,
+      ok: false,
+      message: "Not found in Shopify"
+    };
+  }
+  const status = cleanText(product.status).toUpperCase();
+  const isLive = status === "ACTIVE";
+  const hasNewArrivalsTag = hasShopifyTag(product.tags, orderLineLiveNewArrivalsTag);
+  return {
+    sku: variant.sku || normalized,
+    found: true,
+    isLive,
+    hasNewArrivalsTag,
+    ok: isLive && hasNewArrivalsTag,
+    shopifyStatus: product.status || "",
+    tag: orderLineLiveNewArrivalsTag,
+    title: product.title || "",
+    handle: product.handle || "",
+    shopifyProductGid: product.id || "",
+    shopifyVariantGid: variant.id || "",
+    shopifyAdminUrl: publicShopifyAdminUrl(product.id || ""),
+    onlineStoreUrl: product.onlineStoreUrl || "",
+    publishedAt: product.publishedAt || "",
+    message: isLive && hasNewArrivalsTag
+      ? "Live and tagged New Arrivals"
+      : !isLive
+        ? "Not live"
+        : "Missing New Arrivals tag"
+  };
+}
+
+async function checkOrderLinesLiveNewArrivals(order) {
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  const lines = order?.lines || [];
+  const checkedAt = new Date().toISOString();
+  if (!shop || !clientId || !clientSecret) {
+    return {
+      configured: false,
+      message: "Set Shopify credentials to check order lines against Shopify.",
+      orderId: String(order?.id || ""),
+      tag: orderLineLiveNewArrivalsTag,
+      checkedAt,
+      results: []
+    };
+  }
+
+  const lookupBySku = new Map();
+  for (const line of lines) {
+    const sku = normalizeSku(line?.sku);
+    if (!sku || lookupBySku.has(sku)) continue;
+    try {
+      lookupBySku.set(sku, await shopifyLiveNewArrivalsStateBySku(sku));
+    } catch (error) {
+      lookupBySku.set(sku, {
+        sku,
+        found: false,
+        isLive: false,
+        hasNewArrivalsTag: false,
+        ok: false,
+        error: error.message || "Could not check Shopify",
+        message: "Shopify check failed"
+      });
+    }
+  }
+
+  const results = lines.map((line, lineIndex) => {
+    const sku = normalizeSku(line?.sku);
+    const lookup = sku ? lookupBySku.get(sku) : null;
+    return {
+      lineIndex,
+      sku: sku || String(line?.sku || "").trim(),
+      buyingCode: line?.buyingCode || line?.supplierSku || "",
+      style: line?.style || line?.description || "",
+      ...(lookup || {
+        found: false,
+        isLive: false,
+        hasNewArrivalsTag: false,
+        ok: false,
+        message: "Missing SKU"
+      })
+    };
+  });
+
+  return {
+    configured: true,
+    orderId: String(order?.id || ""),
+    tag: orderLineLiveNewArrivalsTag,
+    checkedAt,
+    results,
+    summary: {
+      lines: results.length,
+      ok: results.filter(item => item.ok).length,
+      live: results.filter(item => item.isLive).length,
+      tagged: results.filter(item => item.hasNewArrivalsTag).length,
+      notFound: results.filter(item => !item.found && !item.error).length,
+      errors: results.filter(item => item.error).length
+    }
+  };
+}
+
 function shopifyPushError(message, code = "shopify_push_error", details = {}) {
   const error = new Error(message);
   error.code = code;
@@ -14551,6 +14697,27 @@ async function handleApi(req, res) {
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not check order products against Shopify" });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/orders/products/live-new-arrivals") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"], "Only Buyer, Merchandising, or Admin users can check order lines against Shopify.")) return true;
+    try {
+      const orderId = String(url.searchParams.get("orderId") || "");
+      const db = readOrderDb();
+      const order = db.orders.find(item => String(item.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      const result = await checkOrderLinesLiveNewArrivals(order);
+      sendJson(res, 200, {
+        ok: Boolean(result.configured),
+        ...result
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not check order lines against Shopify" });
     }
     return true;
   }

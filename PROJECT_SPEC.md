@@ -38,7 +38,7 @@ The app favours simple operational tools over a large framework:
 - `public/design-system.css`: shared visual system.
 - `public/bestsellers.html`: TY/LY bestsellers, revenue analysis, stock position, slow sellers, methodology, trade last week, CSV/import workflows.
 - `public/order-form.html`: purchase order creation, SKU issuing/lookup, line image upload, printable PO output.
-- `public/orders.html`: order workspace, approval/payment/intake workflow, supplier batches, received actuals, discrepancies/credits, supplier credit balances, invoices, notes, archive/delete, printable warehouse image reports, and barcode label-job reports for printers and suppliers.
+- `public/orders.html`: order workspace, approval/payment/intake workflow, supplier batches, received actuals, discrepancies/credits, supplier credit balances, invoices, notes, archive/delete, read-only order-line Shopify live/New Arrivals checks, printable warehouse image reports, and barcode label-job reports for printers and suppliers.
 - `public/order-reports.html`: read-only operational reports for arrivals, intake exceptions, next actions, finance, supplier performance, buying mix, and data quality.
 - `public/supplier-report.html`: supplier-led workbench for top-down review of one supplier's orders, products, receipt actuals, discrepancies, and credit exposure.
 - `public/pnl.html`: finance P&L planner using live Shopify actuals, saved cost rules, manual marketing spend, and driver-based profit scenarios.
@@ -114,6 +114,7 @@ Configuration:
 Used for:
 
 - Product and variant lookups by SKU.
+- Read-only order-line checks by SKU for Shopify `ACTIVE`/local Live state and the exact `Collection: New Arrivals` tag.
 - Draft product creation from local product master records.
 - Product merchandising sync.
 - Collection planner product and collection sync.
@@ -243,6 +244,7 @@ Order workspace:
 - `POST /api/orders/delete`
 - `POST /api/orders/events`
 - `POST /api/orders/label-jobs`
+- `GET /api/orders/products/live-new-arrivals`
 - `GET /api/orders/pah`
 - `POST /api/orders/pah-settings`
 
@@ -326,6 +328,7 @@ Important principles:
 - The Orders workspace status filter always offers `Review after delivery` so Merchandising can find orders waiting for post-delivery review, even if the current view would otherwise build status options only from loaded orders.
 - Deleting an order should remove related invoice records/files and workflow data only through the server's delete logic.
 - The Orders workspace can print a warehouse-facing image report for the full order, a selected delivery batch, or remaining unbatched units. The report contains product image, SKU, buying code, colour/material, and quantity only; batch reports use allocated quantities and unbatched reports use ordered quantity less all allocations.
+- The Orders workspace order-line table has a read-only Shopify check for Buyer, Merchandising, and Admin users. `GET /api/orders/products/live-new-arrivals` looks up each order-line SKU in Shopify and returns a transient Y/N flag for whether the Shopify product is `ACTIVE` and has the exact tag `Collection: New Arrivals`. This check must not update local product records, order data, workflow state, or order events.
 
 ### Receipt Actuals And Supplier Discrepancies
 

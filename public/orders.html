@@ -142,7 +142,7 @@ textarea{min-height:70px;resize:vertical}
 .discrepancy-table th:nth-child(8),.discrepancy-table td:nth-child(8){width:64px}
 .empty-state{padding:38px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.6}
 .line-table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius)}
-.line-table{width:100%;border-collapse:collapse;min-width:1040px}
+.line-table{width:100%;border-collapse:collapse;min-width:1120px}
 .line-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:8px;border-bottom:1px solid var(--ds-line)}
 .line-table td{font-size:12px;color:var(--ds-text-muted);padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:top}
 .line-table tr:last-child td{border-bottom:0}
@@ -224,7 +224,7 @@ const discrepancyResolutionTypes=[
 const currencyOptions=["EUR","GBP","USD","Other"];
 const owners=["Buyer","Buying Director","FD / Finance","Merchandising","Supplier"];
 const INVOICE_BALANCE_TOLERANCE_GBP=10;
-let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],receiptLines:[],discrepancies:[],labelJobs:[],labelValidation:null,labelSettings:{sparePerSku:0,placementInstructions:""},pahSettings:{},metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,receivingBatchId:"",lineBatchFilter:"all",authMode:"none",currentUser:null};
+let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],receiptLines:[],discrepancies:[],labelJobs:[],labelValidation:null,labelSettings:{sparePerSku:0,placementInstructions:""},pahSettings:{},metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,receivingBatchId:"",lineBatchFilter:"all",liveCheck:null,authMode:"none",currentUser:null};
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
@@ -410,6 +410,36 @@ function productLineStatus(order,lineIndex){
 
 function canCheckProductStatus(){
   return userHasAppRole("Buyer")||userHasAppRole("Merchandising")||userHasAppRole("Admin");
+}
+
+function liveCheckForOrder(order){
+  return state.liveCheck&&String(state.liveCheck.orderId||"")===String(order?.id||"")?state.liveCheck:null;
+}
+
+function liveCheckResultForLine(order,lineIndex){
+  const check=liveCheckForOrder(order);
+  if(!check)return null;
+  return (check.results||[]).find(item=>Number(item.lineIndex)===Number(lineIndex))||null;
+}
+
+function liveNewArrivalsFlag(order,lineIndex){
+  const result=liveCheckResultForLine(order,lineIndex);
+  if(!result)return `<span class="badge">-</span><span class="money-sub">Not checked</span>`;
+  const badge=result.ok?"good":result.error?"bad":"warn";
+  const detail=result.error||result.message||`${result.isLive?"Live":"Not live"} / ${result.hasNewArrivalsTag?"New Arrivals":"No New Arrivals tag"}`;
+  const link=result.shopifyAdminUrl?`<a class="money-sub" href="${attr(result.shopifyAdminUrl)}" target="_blank">Shopify</a>`:"";
+  return `<span class="badge ${badge}">${result.ok?"Y":"N"}</span><span class="money-sub">${escapeHtml(detail)}</span>${link}`;
+}
+
+function liveCheckSummary(order){
+  const check=liveCheckForOrder(order);
+  if(!check)return "";
+  if(check.configured===false)return `<div class="status warn" style="margin-bottom:10px">${escapeHtml(check.message||"Shopify credentials are not configured.")}</div>`;
+  const summary=check.summary||{};
+  const checkedAt=check.checkedAt?new Date(check.checkedAt):null;
+  const checkedLabel=checkedAt&&!Number.isNaN(checkedAt.getTime())?` · ${checkedAt.toLocaleString("en-GB",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}`:"";
+  const type=Number(summary.ok||0)===Number(summary.lines||0)?"ok":"warn";
+  return `<div class="status ${type}" style="margin-bottom:10px">Live/New Arrivals check: ${Number(summary.ok||0).toLocaleString("en-GB")} of ${Number(summary.lines||0).toLocaleString("en-GB")} line${Number(summary.lines||0)===1?"":"s"} = Y${checkedLabel}</div>`;
 }
 
 function metric(label,value,small){
@@ -929,16 +959,19 @@ function renderLineTable(order){
   const lines=order.order?.lines||[];
   if(!lines.length)return "";
   const visible=filteredOrderLines(lines);
+  const liveButton=canCheckProductStatus()?`<button type="button" class="btn" onclick="checkLiveNewArrivals()">Check live/New Arrivals</button>`:"";
   return `<section class="work-panel" style="margin-top:14px">
-    <div class="work-head"><h3>Order lines</h3><div class="actions"><span class="pill">${visible.length} of ${lines.length} lines</span><button type="button" class="btn" onclick="exportWarehouseReport()">Warehouse report</button><button type="button" class="btn" onclick="exportOrderLinesExcel()">Export Excel</button></div></div>
+    <div class="work-head"><h3>Order lines</h3><div class="actions"><span class="pill">${visible.length} of ${lines.length} lines</span>${liveButton}<button type="button" class="btn" onclick="exportWarehouseReport()">Warehouse report</button><button type="button" class="btn" onclick="exportOrderLinesExcel()">Export Excel</button></div></div>
+    ${liveCheckSummary(order)}
     ${lineFilterTabs()}
     <div class="line-table-wrap"><table class="line-table">
-      <thead><tr><th>Batch</th><th>Product</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
+      <thead><tr><th>Batch</th><th>Product</th><th>Live + New In</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
       <tbody>${visible.map(({line,index})=>{
         const productStatus=productLineStatus(order,index);
         return `<tr>
         <td>${lineBatchBadges(index)}</td>
         <td><span class="badge ${productStatus.complete?"good":"warn"}">${escapeHtml(productStatus.status)}</span><span class="money-sub">${escapeHtml(productStatus.source||"")}</span></td>
+        <td>${liveNewArrivalsFlag(order,index)}</td>
         <td>${escapeHtml(line.sku||"")}</td>
         <td>${escapeHtml(line.buyingCode||line.supplierSku||"")}</td>
         <td>${escapeHtml(line.style||line.description||"")}</td>
@@ -1986,6 +2019,30 @@ async function checkOrderProductsInShopify(){
   }
 }
 
+async function checkLiveNewArrivals(){
+  if(!state.selectedId)return;
+  try{
+    showStatus("Checking Shopify live/New Arrivals state...","ok");
+    const response=await apiFetch(`/api/orders/products/live-new-arrivals?orderId=${encodeURIComponent(state.selectedId)}`);
+    const result=await response.json();
+    if(!response.ok)throw new Error(result.error||"Could not check Shopify live/New Arrivals state");
+    state.liveCheck=result;
+    renderDetail();
+    if(result.configured===false){
+      showStatus(result.message||"Shopify credentials are not configured.","warn");
+      return;
+    }
+    const summary=result.summary||{};
+    const ok=Number(summary.ok||0);
+    const lines=Number(summary.lines||0);
+    const errors=Number(summary.errors||0);
+    const errorText=errors?` ${errors.toLocaleString("en-GB")} error${errors===1?"":"s"}.`:"";
+    showStatus(`Checked Shopify: ${ok.toLocaleString("en-GB")} of ${lines.toLocaleString("en-GB")} line${lines===1?"":"s"} are live and tagged Collection: New Arrivals.${errorText}`,ok===lines&&lines>0?"ok":"warn");
+  }catch(error){
+    showError(error);
+  }
+}
+
 async function saveApproval(){
   const status=val("approval-status");
   const patch={
@@ -2358,6 +2415,7 @@ function showStatus(message,type="ok"){
 }
 
 async function selectOrder(id){
+  state.liveCheck=null;
   state.selectedId=id;
   state.editingInvoiceId="";
   state.invoiceEditorOpen=false;
