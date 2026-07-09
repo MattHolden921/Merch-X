@@ -141,11 +141,20 @@ textarea{min-height:70px;resize:vertical}
 .discrepancy-table th:nth-child(6),.discrepancy-table td:nth-child(6){width:124px}
 .discrepancy-table th:nth-child(8),.discrepancy-table td:nth-child(8){width:64px}
 .empty-state{padding:38px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.6}
-.line-table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius)}
-.line-table{width:100%;border-collapse:collapse;min-width:1120px}
-.line-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:8px;border-bottom:1px solid var(--ds-line)}
-.line-table td{font-size:12px;color:var(--ds-text-muted);padding:8px;border-bottom:1px solid var(--ds-line);vertical-align:top}
+.line-table-wrap{overflow-x:hidden;border:1px solid var(--ds-line);border-radius:var(--ds-radius)}
+.line-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.line-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line)}
+.line-table td{font-size:11px;color:var(--ds-text-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);vertical-align:top;overflow-wrap:anywhere}
 .line-table tr:last-child td{border-bottom:0}
+.line-table th:nth-child(1),.line-table td:nth-child(1){width:8%}
+.line-table th:nth-child(2),.line-table td:nth-child(2){width:11%}
+.line-table th:nth-child(3),.line-table td:nth-child(3){width:9%}
+.line-table th:nth-child(4),.line-table td:nth-child(4){width:9%}
+.line-table th:nth-child(5),.line-table td:nth-child(5){width:14%}
+.line-table th:nth-child(6),.line-table td:nth-child(6){width:9%}
+.line-table th:nth-child(7),.line-table td:nth-child(7){width:9%}
+.line-table th:nth-child(8),.line-table td:nth-child(8){width:5%}
+.line-table th:nth-child(n+9),.line-table td:nth-child(n+9){width:6.5%}
 .label-grid{display:grid;grid-template-columns:140px minmax(180px,1fr) minmax(240px,2fr);gap:10px;align-items:end}
 .label-validation{margin-top:10px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px;font-size:12px;line-height:1.55}
 .label-validation ul{margin:6px 0 0;padding-left:20px}.label-history{display:flex;flex-direction:column;gap:7px;margin-top:12px}.label-job-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;border-top:1px solid var(--ds-line);padding-top:8px}.label-job-row:first-child{border-top:0}.label-job-row strong,.label-job-row span{display:block}.label-job-row span{font-size:11px;color:var(--ds-text-muted);margin-top:2px}
@@ -424,11 +433,25 @@ function liveCheckResultForLine(order,lineIndex){
 
 function liveNewArrivalsFlag(order,lineIndex){
   const result=liveCheckResultForLine(order,lineIndex);
-  if(!result)return `<span class="badge">-</span><span class="money-sub">Not checked</span>`;
+  if(!result)return "";
   const badge=result.ok?"good":result.error?"bad":"warn";
   const detail=result.error||result.message||`${result.isLive?"Live":"Not live"} / ${result.hasNewArrivalsTag?"New Arrivals":"No New Arrivals tag"}`;
-  const link=result.shopifyAdminUrl?`<a class="money-sub" href="${attr(result.shopifyAdminUrl)}" target="_blank">Shopify</a>`:"";
-  return `<span class="badge ${badge}">${result.ok?"Y":"N"}</span><span class="money-sub">${escapeHtml(detail)}</span>${link}`;
+  const link=result.shopifyAdminUrl?` · <a href="${attr(result.shopifyAdminUrl)}" target="_blank">Shopify</a>`:"";
+  return `<span class="money-sub">Live/New In: <span class="badge ${badge}">${result.ok?"Y":"N"}</span> ${escapeHtml(detail)}${link}</span>`;
+}
+
+function liveNewArrivalsExportFields(order,lineIndex){
+  const result=liveCheckResultForLine(order,lineIndex);
+  if(!result)return ["","","","","","",""];
+  return [
+    result.ok?"Y":"N",
+    result.isLive?"Y":"N",
+    result.hasNewArrivalsTag?"Y":"N",
+    result.shopifyStatus||"",
+    result.message||result.error||"",
+    result.shopifyAdminUrl||"",
+    result.checkedAt||liveCheckForOrder(order)?.checkedAt||""
+  ];
 }
 
 function liveCheckSummary(order){
@@ -965,13 +988,12 @@ function renderLineTable(order){
     ${liveCheckSummary(order)}
     ${lineFilterTabs()}
     <div class="line-table-wrap"><table class="line-table">
-      <thead><tr><th>Batch</th><th>Product</th><th>Live + New In</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
+      <thead><tr><th>Batch</th><th>Product</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
       <tbody>${visible.map(({line,index})=>{
         const productStatus=productLineStatus(order,index);
         return `<tr>
         <td>${lineBatchBadges(index)}</td>
-        <td><span class="badge ${productStatus.complete?"good":"warn"}">${escapeHtml(productStatus.status)}</span><span class="money-sub">${escapeHtml(productStatus.source||"")}</span></td>
-        <td>${liveNewArrivalsFlag(order,index)}</td>
+        <td><span class="badge ${productStatus.complete?"good":"warn"}">${escapeHtml(productStatus.status)}</span><span class="money-sub">${escapeHtml(productStatus.source||"")}</span>${liveNewArrivalsFlag(order,index)}</td>
         <td>${escapeHtml(line.sku||"")}</td>
         <td>${escapeHtml(line.buyingCode||line.supplierSku||"")}</td>
         <td>${escapeHtml(line.style||line.description||"")}</td>
@@ -1087,7 +1109,7 @@ function exportOrderLinesExcel(){
     showStatus("Excel export library could not be loaded. Check your internet connection and try again.","err");
     return;
   }
-  const headers=["Order number","Supplier","Batch","Product status","Product source","SKU","Buying code","Style","Category","Colour","Size","Quantity","Unit cost GBP","Unit cost EUR","Line cost GBP","Line cost EUR","Season"];
+  const headers=["Order number","Supplier","Batch","Product status","Product source","Live + New In","Shopify live","New Arrivals tag","Shopify status","Live check detail","Shopify admin URL","Live check time","SKU","Buying code","Style","Category","Colour","Size","Quantity","Unit cost GBP","Unit cost EUR","Line cost GBP","Line cost EUR","Season"];
   const rows=filteredOrderLines(lines).map(({line,index})=>{
     const productStatus=productLineStatus(order,index);
     return [
@@ -1096,6 +1118,7 @@ function exportOrderLinesExcel(){
     allocationsForLine(index).map(allocation=>`${batchDisplayName(batchById(allocation.batchId)||{})} ${Number(allocation.quantity||0)}`).join(", ")||"Unbatched",
     productStatus.status||"",
     productStatus.source||"",
+    ...liveNewArrivalsExportFields(order,index),
     line.sku||"",
     line.buyingCode||line.supplierSku||"",
     line.style||line.description||"",
@@ -1112,16 +1135,16 @@ function exportOrderLinesExcel(){
   });
   const worksheet=XLSX.utils.aoa_to_sheet([headers,...rows]);
   worksheet["!cols"]=[
-    {wch:16},{wch:24},{wch:24},{wch:16},{wch:20},{wch:18},{wch:18},{wch:28},{wch:18},
-    {wch:18},{wch:12},{wch:10},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14}
+    {wch:16},{wch:24},{wch:24},{wch:16},{wch:20},{wch:14},{wch:12},{wch:16},{wch:14},{wch:24},{wch:34},{wch:20},
+    {wch:18},{wch:18},{wch:28},{wch:18},{wch:18},{wch:12},{wch:10},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14}
   ];
   worksheet["!autofilter"]={ref:worksheet["!ref"]};
   for(let rowIndex=1;rowIndex<=rows.length;rowIndex++){
-    for(const columnIndex of [12,14]){
+    for(const columnIndex of [19,21]){
       const cell=worksheet[XLSX.utils.encode_cell({r:rowIndex,c:columnIndex})];
       if(cell)cell.z='£#,##0.00;[Red]-£#,##0.00';
     }
-    for(const columnIndex of [13,15]){
+    for(const columnIndex of [20,22]){
       const cell=worksheet[XLSX.utils.encode_cell({r:rowIndex,c:columnIndex})];
       if(cell)cell.z='€#,##0.00;[Red]-€#,##0.00';
     }

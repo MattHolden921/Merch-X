@@ -328,7 +328,7 @@ Important principles:
 - The Orders workspace status filter always offers `Review after delivery` so Merchandising can find orders waiting for post-delivery review, even if the current view would otherwise build status options only from loaded orders.
 - Deleting an order should remove related invoice records/files and workflow data only through the server's delete logic.
 - The Orders workspace can print a warehouse-facing image report for the full order, a selected delivery batch, or remaining unbatched units. The report contains product image, SKU, buying code, colour/material, and quantity only; batch reports use allocated quantities and unbatched reports use ordered quantity less all allocations.
-- The Orders workspace order-line table has a read-only Shopify check for Buyer, Merchandising, and Admin users. `GET /api/orders/products/live-new-arrivals` looks up each order-line SKU in Shopify and returns a transient Y/N flag for whether the Shopify product is `ACTIVE` and has the exact tag `Collection: New Arrivals`. This check must not update local product records, order data, workflow state, or order events.
+- The Orders workspace order-line table has a read-only Shopify check for Buyer, Merchandising, and Admin users. `GET /api/orders/products/live-new-arrivals` looks up each order-line SKU in Shopify and returns a transient Y/N flag for whether the Shopify product is `ACTIVE` and has the exact tag `Collection: New Arrivals`. This check must not update local product records, order data, workflow state, or order events. When the check has been run, order-line Excel exports include the Y/N flag, live status, New Arrivals tag status, Shopify status, detail message, admin URL, and check time.
 
 ### Receipt Actuals And Supplier Discrepancies
 
