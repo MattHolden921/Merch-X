@@ -11619,6 +11619,9 @@ function productFromRow(row) {
     season: data.season || row.season || "",
     colour: data.colour || data.color || row.colour || "",
     color: data.color || data.colour || row.colour || "",
+    colourCode: data.colourCode || data.colorCode || "",
+    colorCode: data.colorCode || data.colourCode || "",
+    material: data.material || "",
     size: data.size || row.size || "",
     optionName: data.optionName || "Size",
     optionValue: data.optionValue || data.size || "One Size Fits UK 8 to 18",
@@ -11780,6 +11783,9 @@ function normalizeProductInput(input = {}, existing = {}) {
     season: cleanText(merged.season || firstNonEmpty(merged, ["Season (product.metafields.custom.season)"])),
     colour: cleanText(rawColour),
     color: cleanText(rawColour),
+    colourCode: cleanText(merged.colourCode || merged.colorCode),
+    colorCode: cleanText(merged.colorCode || merged.colourCode),
+    material: cleanText(merged.material),
     size: cleanText(merged.size || firstNonEmpty(merged, ["Option1 Value"])),
     optionName: "Size",
     optionValue: cleanText(merged.size || merged.optionValue || firstNonEmpty(merged, ["Option1 Value"]) || "One Size Fits UK 8 to 18"),
@@ -12039,9 +12045,10 @@ function successfulShopifySyncEvent(product) {
 }
 
 function productShopifyPayload(product, fileInput = null) {
-  const optionName = "Size";
+  const sizeOptionName = "Size";
   const optionValue = cleanText(product.size || product.optionValue || "One Size Fits UK 8 to 18") || "One Size Fits UK 8 to 18";
   const colour = cleanText(product.colour || product.color);
+  const buyingCode = cleanText(product.buyingCode || product.supplierSku);
   const department = cleanText(product.department || product.category || product.productType);
   const supplier = cleanText(product.supplierName);
   const baseMetafields = [
@@ -12054,11 +12061,15 @@ function productShopifyPayload(product, fileInput = null) {
     product.productStatusCode ? { namespace: "custom", key: "product_status", type: "single_line_text_field", value: product.productStatusCode } : null,
     product.season ? { namespace: "custom", key: "season", type: "single_line_text_field", value: product.season } : null,
     supplier ? { namespace: "custom", key: "supplier", type: "single_line_text_field", value: supplier } : null,
+    buyingCode ? { namespace: "custom", key: "buying_code", type: "single_line_text_field", value: buyingCode } : null,
     product.supplierSku ? { namespace: "custom", key: "supplier_sku", type: "single_line_text_field", value: product.supplierSku } : null
   ].filter(Boolean);
   const metafields = mergeMetafields(product.extraMetafields || [], baseMetafields);
   const variant = {
-    optionValues: [{ optionName, name: optionValue }],
+    optionValues: [{ optionName: sizeOptionName, name: optionValue }],
+    ...(colour ? {
+      metafields: [{ namespace: "custom", key: "colour", type: "single_line_text_field", value: colour }]
+    } : {}),
     price: String(numberOrZero(product.rrp).toFixed(2)),
     sku: product.sku,
     inventoryItem: {
@@ -12077,7 +12088,7 @@ function productShopifyPayload(product, fileInput = null) {
     descriptionHtml: product.description ? escapeHtml(product.description).replace(/\r?\n/g, "<br>") : undefined,
     seo: product.seoTitle || product.seoDescription ? { title: product.seoTitle || undefined, description: product.seoDescription || undefined } : undefined,
     tags: [...new Set([...(product.tags || []), product.season].filter(Boolean))],
-    productOptions: [{ name: optionName, position: 1, values: [{ name: optionValue }] }],
+    productOptions: [{ name: sizeOptionName, position: 1, values: [{ name: optionValue }] }],
     variants: [variant],
     metafields
   };

@@ -26,7 +26,7 @@ textarea{min-height:72px;resize:vertical}
 .thumb-tools{display:flex;flex-direction:column;gap:6px;margin-top:7px}
 .thumb-tools .btn{width:88px;min-height:28px;padding:5px 7px;font-size:11px}
 .image-file{display:none}
-.line-row{display:grid;grid-template-columns:1.35fr 1fr .85fr .65fr .55fr .75fr .75fr .75fr;gap:8px;margin-bottom:8px}
+.line-row{display:grid;grid-template-columns:1.35fr 1fr .85fr .65fr .85fr .65fr .55fr .75fr .75fr .75fr;gap:8px;margin-bottom:8px}
 .line-row.second{grid-template-columns:1.15fr .8fr .85fr .85fr 1fr .75fr .75fr}
 .sku-field{display:grid;grid-template-columns:minmax(0,1fr) 30px 52px;gap:5px}
 .sku-field .btn{min-height:32px;padding:0}
@@ -456,7 +456,9 @@ function addLine(data={},afterId=null){
         <div class="line-row">
           ${field("style",id,"Style / description","text","Style name or ref",data.style||data.description)}
           ${selectField("category",id,"Category",CATEGORIES,data.category)}
-          ${field("colour",id,"Colour / fabric","text","Navy / Cotton",data.colour)}
+          ${field("colour",id,"Colour","text","Navy",data.colour||data.color)}
+          ${field("colourCode",id,"Colour code","text","NVY",data.colourCode||data.colorCode)}
+          ${field("material",id,"Material","text","Cotton",data.material)}
           ${field("size",id,"Size","text","S/M/L",data.size)}
           ${field("quantity",id,"Qty","number","0",data.quantity)}
           ${field("unitCostEur",id,"Unit cost EUR","number","0.00",data.unitCostEur??data.unitCost)}
@@ -679,7 +681,7 @@ function lineData(id){
   const quantity=Number(val(`quantity-${id}`))||0;
   const { mode, unitCostEur, unitCostGbp, rrp, exitRetail }=lineCostValues(id);
   return {
-    sku:val(`sku-${id}`),style:val(`style-${id}`),category:val(`category-${id}`),colour:val(`colour-${id}`),size:val(`size-${id}`),
+    sku:val(`sku-${id}`),style:val(`style-${id}`),category:val(`category-${id}`),colour:val(`colour-${id}`),color:val(`colour-${id}`),colourCode:val(`colourCode-${id}`),colorCode:val(`colourCode-${id}`),material:val(`material-${id}`),size:val(`size-${id}`),
     reissuedFromSku:val(`reissuedFromSku-${id}`)||undefined,
     buyingCode:val(`buyingCode-${id}`),supplierSku:val(`buyingCode-${id}`),quantity,unitCostEur,unitCostGbp,unitCost:unitCostGbp,costMode:mode,rrp,exitRetail,repeatType:val(`repeatType-${id}`),season:val(`season-${id}`),imageUrl:lineDisplayImage(id),
     source:lineSource(id)||undefined,
@@ -755,7 +757,7 @@ async function lookupSku(id){
 }
 
 function applyProductToLine(id,product,options={}){
-  const map={style:"style",category:"category",colour:"colour",size:"size",quantity:"quantity",unitCostEur:"unitCostEur",unitCost:"unitCostEur",repeatType:"repeatType",season:"season",buyingCode:"buyingCode",supplierSku:"buyingCode"};
+  const map={style:"style",category:"category",colour:"colour",color:"colour",colourCode:"colourCode",colorCode:"colourCode",material:"material",size:"size",quantity:"quantity",unitCostEur:"unitCostEur",unitCost:"unitCostEur",repeatType:"repeatType",season:"season",buyingCode:"buyingCode",supplierSku:"buyingCode"};
   Object.entries(map).forEach(([from,to])=>{if(product[from]!=null&&product[from]!=="")set(`${to}-${id}`,product[from])});
   set(`shopifyProductGid-${id}`,product.shopifyProductGid||"");
   set(`shopifyVariantGid-${id}`,product.shopifyVariantGid||"");
@@ -871,7 +873,7 @@ function exportCleanPdf(){
       <td>${index+1}</td>
       <td>
         <strong>${escapeHtml(line.style||"")}</strong>
-        <small>${[line.colour,line.size,line.buyingCode?`Buying code: ${line.buyingCode}`:"",line.repeatType,line.season].filter(Boolean).map(escapeHtml).join(" · ")}</small>
+        <small>${[line.colour,line.colourCode?`Colour code: ${line.colourCode}`:"",line.material,line.size,line.buyingCode?`Buying code: ${line.buyingCode}`:"",line.repeatType,line.season].filter(Boolean).map(escapeHtml).join(" · ")}</small>
       </td>
       <td>${escapeHtml(line.sku||"")}</td>
       <td>${escapeHtml(line.category||"")}</td>

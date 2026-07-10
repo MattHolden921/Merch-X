@@ -1,6 +1,6 @@
 # Merch X Project Spec
 
-Last reviewed: 2026-07-09
+Last reviewed: 2026-07-10
 
 This is the shared logic and product reference for Merch X. Keep it current when the app's workflows, calculations, data model, integrations, or page responsibilities change.
 
@@ -280,7 +280,7 @@ Shopify and Google:
 ### Order Numbers
 
 - New orders receive the next local order number when one is not supplied.
-- Orders are saved to SQLite as JSON payloads plus indexed top-level fields.
+- Orders are saved to SQLite as JSON payloads plus indexed top-level fields. Each order line stores colour, colour code, and material as separate values; `colour` remains the primary colour field used by downstream product and Shopify workflows.
 - Saving an order also updates supplier/product helper records and syncs workflow status defaults.
 
 ### Order Pricing
@@ -298,7 +298,7 @@ Shopify and Google:
 - Supported product sync statuses are `Not synced`, `Ready`, `Synced draft`, `Conflict`, and `Error`.
 - Readiness checks block Shopify draft push when SKU, supplier, title/style, RRP, product type, image, cost, or local SKU uniqueness is missing.
 - SKU lookup from the order form prefers the local product master first, then falls back to live Shopify lookup.
-- Saving an order enriches supplier/product master records with last-order metadata and non-empty line details without wiping curated master-data fields.
+- Saving an order enriches supplier/product master records with last-order metadata and non-empty line details without wiping curated master-data fields. Colour, colour code, and material remain separate on the product master record.
 - Supplier master records expose a derived `creditBalance` from outstanding credit-note discrepancy rows, so open supplier credits follow the supplier into supplier lists and new order creation.
 - `product_sync_events` records local save/archive and Shopify preview/push/status actions with actor, result, payload summary, Shopify product ID, and errors.
 
@@ -306,6 +306,7 @@ Shopify and Google:
 
 - Only products marked `Ready for Shopify` and passing readiness checks can be pushed.
 - Product pushes use Shopify Admin GraphQL `productSet` with `status: DRAFT`.
+- New draft pushes keep the primary order/product `colour` value in the existing Shopify product-level swatch and variant-colour metafields and also write it to the Shopify variant metafield `custom.colour`. `Size` remains the only Shopify variant option; colour must not create a separate variant dimension. The buying code is written to the product metafield `custom.buying_code`. These mappings apply only when creating new drafts; no backfill or repair is performed for products already pushed.
 - Local uploaded product images are sent through Shopify staged uploads before being referenced by the product payload.
 - Successful pushes store Shopify product and variant GIDs, set local status to `Shopify draft`, and set sync status to `Synced draft`.
 - Failed pushes keep the product local, set sync status to `Error`, and write a sync event.
@@ -327,7 +328,7 @@ Important principles:
 - Completed warehouse intake moves the order-level intake workflow to `Review after delivery`. Merchandising should complete receipt/discrepancy checks there, then move the intake status to `Received`; only `Received`, cancelled, or rejected orders can be archived. Supplier batches still use `Received` to represent the factual delivery booking.
 - The Orders workspace status filter always offers `Review after delivery` so Merchandising can find orders waiting for post-delivery review, even if the current view would otherwise build status options only from loaded orders.
 - Deleting an order should remove related invoice records/files and workflow data only through the server's delete logic.
-- The Orders workspace can print a warehouse-facing image report for the full order, a selected delivery batch, or remaining unbatched units. The report contains product image, SKU, buying code, colour/material, and quantity only; batch reports use allocated quantities and unbatched reports use ordered quantity less all allocations.
+- The Orders workspace can print a warehouse-facing image report for the full order, a selected delivery batch, or remaining unbatched units. The report contains product image, SKU, buying code, separate colour, colour code, material, and quantity fields only; batch reports use allocated quantities and unbatched reports use ordered quantity less all allocations.
 - The Orders workspace order-line table has a read-only Shopify check for Buyer, Merchandising, and Admin users. `GET /api/orders/products/live-new-arrivals` looks up each order-line SKU in Shopify and returns a transient Y/N flag for whether the Shopify product is `ACTIVE` and has the exact tag `Collection: New Arrivals`. This check must not update local product records, order data, workflow state, or order events. When the check has been run, order-line Excel exports include the Y/N flag, live status, New Arrivals tag status, Shopify status, detail message, admin URL, and check time.
 
 ### Receipt Actuals And Supplier Discrepancies
@@ -345,7 +346,7 @@ Important principles:
 ### PAH Delivery Reports
 
 - The Orders workspace exports the freight forwarder's 20-column PAH CSV contract in one click for a full order, a selected supplier batch, or remaining unbatched units.
-- Product description, SKU, colour/fabric, and quantities come from the saved order. A batch export uses only that batch's line allocations and its warehouse ETA; an unbatched export subtracts all existing allocations.
+- Product description, SKU, primary colour, and quantities come from the saved order. The fixed PAH contract does not add separate colour-code or material columns. A batch export uses only that batch's line allocations and its warehouse ETA; an unbatched export subtracts all existing allocations.
 - Full-order and unbatched exports use the workflow warehouse ETA when available, then the order's required delivery date. Export is blocked when no valid ETA/date, no scoped units, a SKU, or a whole-unit quantity is missing.
 - Batch pre-advice IDs append the saved batch number/title to the PO number so separate deliveries cannot overwrite one another at the warehouse. The CSV filename uses the same reference.
 - Pre-advice type, warehouse supplier ID, carrier/contact details, warehouse address, country, and return flag are stored as editable JSON under the SQLite `app_settings.pahCarrier` key. Initial values match the current Europe Logistics / Rebecca Bird workflow; report generation reads the persisted setting rather than inline UI values.

@@ -988,7 +988,7 @@ function renderLineTable(order){
     ${liveCheckSummary(order)}
     ${lineFilterTabs()}
     <div class="line-table-wrap"><table class="line-table">
-      <thead><tr><th>Batch</th><th>Product</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
+      <thead><tr><th>Batch</th><th>Product</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th>Colour code</th><th>Material</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
       <tbody>${visible.map(({line,index})=>{
         const productStatus=productLineStatus(order,index);
         return `<tr>
@@ -999,6 +999,8 @@ function renderLineTable(order){
         <td>${escapeHtml(line.style||line.description||"")}</td>
         <td>${escapeHtml(line.category||"")}</td>
         <td>${escapeHtml(line.colour||line.color||"")}</td>
+        <td>${escapeHtml(line.colourCode||line.colorCode||"")}</td>
+        <td>${escapeHtml(line.material||"")}</td>
         <td class="num">${Number(line.quantity||0).toLocaleString("en-GB")}</td>
         <td class="num">${money.format(lineUnitGbp(line))}</td>
         <td class="num">${eurMoney.format(lineUnitEur(line,order))}</td>
@@ -1068,7 +1070,9 @@ function exportWarehouseReport(){
       <td class="image-cell">${image}</td>
       <td class="code-cell"><span>SKU</span><strong>${escapeHtml(line.sku||"Not supplied")}</strong></td>
       <td class="code-cell"><span>Buying code</span><strong>${escapeHtml(line.buyingCode||line.supplierSku||"Not supplied")}</strong></td>
-      <td class="code-cell material-cell"><span>Colour / material</span><strong>${escapeHtml(line.colour||line.color||"Not supplied")}</strong></td>
+      <td class="code-cell material-cell"><span>Colour</span><strong>${escapeHtml(line.colour||line.color||"Not supplied")}</strong></td>
+      <td class="code-cell material-cell"><span>Colour code</span><strong>${escapeHtml(line.colourCode||line.colorCode||"Not supplied")}</strong></td>
+      <td class="code-cell material-cell"><span>Material</span><strong>${escapeHtml(line.material||"Not supplied")}</strong></td>
       <td class="qty-cell"><span>QTY</span><strong>${Number(quantity).toLocaleString("en-GB")}</strong></td>
     </tr>`;
   }).join("");
@@ -1078,13 +1082,13 @@ function exportWarehouseReport(){
       header{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;border-bottom:2px solid #172033;padding-bottom:9px;margin-bottom:10px}
       h1{font-size:21px;line-height:1.15;margin:0 0 5px}.supplier{font-size:12px;color:#526176;margin:0}.meta{text-align:right;font-size:10px;line-height:1.55;color:#526176}.meta strong{display:block;color:#172033;font-size:14px}
       table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}th{background:#eef2f6;color:#526176;font-size:9px;letter-spacing:.06em;text-align:left;text-transform:uppercase;padding:6px 8px;border:1px solid #cdd6e1}
-      th:first-child{width:46mm}th:nth-child(2){width:20%}th:nth-child(3){width:23%}th:nth-child(4){width:23%}th:last-child{width:22mm;text-align:center}
-      td{height:50mm;padding:5px 8px;border:1px solid #cdd6e1;vertical-align:middle}.image-cell{padding:3mm}.image-frame{width:42mm;height:42mm;display:flex;align-items:center;justify-content:center;background:#f6f8fb;border:1px solid #e1e7ef;overflow:hidden}.image-frame img{display:block;width:100%;height:100%;object-fit:contain}.image-missing{padding:8px;text-align:center;color:#8995a5;font-size:10px;line-height:1.35}
+      th:first-child{width:35mm}th:nth-child(2){width:14%}th:nth-child(3){width:17%}th:nth-child(4){width:13%}th:nth-child(5){width:11%}th:nth-child(6){width:16%}th:last-child{width:15mm;text-align:center}
+      td{height:42mm;padding:5px 6px;border:1px solid #cdd6e1;vertical-align:middle}.image-cell{padding:2mm}.image-frame{width:31mm;height:37mm;display:flex;align-items:center;justify-content:center;background:#f6f8fb;border:1px solid #e1e7ef;overflow:hidden}.image-frame img{display:block;width:100%;height:100%;object-fit:contain}.image-missing{padding:8px;text-align:center;color:#8995a5;font-size:10px;line-height:1.35}
       .code-cell span,.qty-cell span{display:block;margin-bottom:6px;color:#718096;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.code-cell strong{display:block;font-size:16px;line-height:1.25;overflow-wrap:anywhere}.material-cell strong{font-size:14px}.qty-cell{text-align:center}.qty-cell strong{display:block;font-size:29px;line-height:1}
       @page{size:A4 portrait;margin:0}@media print{.page{padding:11mm 10mm}tr{break-inside:avoid;page-break-inside:avoid}}
     </style></head><body><main class="page">
       <header><div><h1>Warehouse order report</h1><p class="supplier">${escapeHtml(order.supplierName||"Supplier not supplied")}</p></div><div class="meta"><strong>${escapeHtml(order.orderNumber||"Order")}</strong><div>Scope: ${escapeHtml(warehouseReportScope())}</div><div>Generated: ${escapeHtml(generatedAt)}</div></div></header>
-      <table><thead><tr><th>Product image</th><th>SKU</th><th>Buying code</th><th>Colour / material</th><th>QTY</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>Product image</th><th>SKU</th><th>Buying code</th><th>Colour</th><th>Colour code</th><th>Material</th><th>QTY</th></tr></thead><tbody>${rows}</tbody></table>
     </main><script>
       const images=[...document.images];
       const loaded=Promise.all(images.map(image=>new Promise(resolve=>{
@@ -1109,7 +1113,7 @@ function exportOrderLinesExcel(){
     showStatus("Excel export library could not be loaded. Check your internet connection and try again.","err");
     return;
   }
-  const headers=["Order number","Supplier","Batch","Product status","Product source","Live + New In","Shopify live","New Arrivals tag","Shopify status","Live check detail","Shopify admin URL","Live check time","SKU","Buying code","Style","Category","Colour","Size","Quantity","Unit cost GBP","Unit cost EUR","Line cost GBP","Line cost EUR","Season"];
+  const headers=["Order number","Supplier","Batch","Product status","Product source","Live + New In","Shopify live","New Arrivals tag","Shopify status","Live check detail","Shopify admin URL","Live check time","SKU","Buying code","Style","Category","Colour","Colour code","Material","Size","Quantity","Unit cost GBP","Unit cost EUR","Line cost GBP","Line cost EUR","Season"];
   const rows=filteredOrderLines(lines).map(({line,index})=>{
     const productStatus=productLineStatus(order,index);
     return [
@@ -1124,6 +1128,8 @@ function exportOrderLinesExcel(){
     line.style||line.description||"",
     line.category||"",
     line.colour||line.color||"",
+    line.colourCode||line.colorCode||"",
+    line.material||"",
     line.size||"",
     Number(line.quantity||0),
     Number(lineUnitGbp(line).toFixed(2)),
