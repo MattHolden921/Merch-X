@@ -6,9 +6,10 @@
 <title>Sale Planner</title>
 <link rel="stylesheet" href="design-system.css">
 <style>
-.wrap{max-width:1540px}
+.wrap{max-width:1540px;display:flex;flex-direction:column}
 [hidden]{display:none!important}
 .topbar{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:12px;align-items:end}
+.plan-actions{display:flex;gap:7px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
 .metric-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:14px}
 .analysis-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:12px}
 .analysis-exceptions{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
@@ -39,6 +40,8 @@
 .map-grid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:12px;align-items:start}
 .mapping-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}
 .table-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.filtered-summary{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:8px;margin-bottom:10px}
+.filtered-summary .metric{min-height:72px}
 .table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
 .sale-table{width:100%;min-width:1430px;border-collapse:collapse;table-layout:fixed}
 .sale-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);white-space:nowrap}
@@ -59,6 +62,27 @@
 .badge.removed{color:var(--ds-text-muted)}
 .badge.error,.warn{color:var(--ds-bad)}
 .warning-list{display:flex;flex-direction:column;gap:2px;font-size:10px;line-height:1.3;color:var(--ds-bad)}
+.warning-list details summary{cursor:pointer;color:var(--ds-action)}
+.link-button{border:0;background:transparent;padding:0;color:var(--ds-text);font:inherit;font-weight:650;text-align:left;cursor:pointer}
+.collection-input{width:100%;min-height:28px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);font-size:11px;padding:0 6px}
+.mobile-products{display:none}
+.mobile-card{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);padding:10px;display:grid;gap:9px}
+.mobile-card-head{display:grid;grid-template-columns:auto 42px minmax(0,1fr) auto;gap:8px;align-items:center}
+.mobile-card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.mobile-card-grid label{display:block;font-size:9px;text-transform:uppercase;color:var(--ds-text-soft)}
+.mobile-card-grid strong{display:block;margin-top:2px;font-size:12px}
+.mobile-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.job-strip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+.dialog{width:min(980px,calc(100vw - 30px));max-height:88vh;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:0;background:var(--ds-bg-surface);color:var(--ds-text);box-shadow:var(--ds-shadow)}
+.dialog::backdrop{background:rgba(15,23,42,.48)}
+.dialog-head,.dialog-foot{padding:14px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:1px solid var(--ds-line)}
+.dialog-foot{border-bottom:0;border-top:1px solid var(--ds-line)}
+.dialog-body{padding:16px;overflow:auto;max-height:65vh}
+.preflight-row{border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:10px;margin-bottom:8px}
+.preflight-row.blocked{border-color:var(--ds-bad)}
+.variant-table{width:100%;border-collapse:collapse}
+.variant-table th,.variant-table td{padding:7px;border-bottom:1px solid var(--ds-line);font-size:11px;text-align:left}
+#filters-panel{order:1}#mapping-panel{order:2}#products-panel{order:3}#analysis-panel{order:4}#action-panel{order:5}#activity-panel{order:6}
 .activity{display:grid;gap:7px;max-height:220px;overflow:auto}
 .event{border-top:1px solid var(--ds-line);padding-top:7px;font-size:12px;color:var(--ds-text-muted);line-height:1.45}
 .event:first-child{border-top:0;padding-top:0}
@@ -66,7 +90,7 @@
 .empty-state{padding:34px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.55}
 @media(max-width:1180px){.metric-grid,.analysis-grid{grid-template-columns:repeat(2,1fr)}.analysis-exceptions{grid-template-columns:repeat(2,1fr)}.toolbar,.topbar,.map-grid,.action-toolbar{grid-template-columns:1fr}.action-tools{justify-content:flex-start}}
 @media(max-width:860px){.analysis-exceptions{grid-template-columns:1fr}}
-@media(max-width:720px){body{padding:18px 10px 36px}.metric-grid,.analysis-grid{grid-template-columns:1fr}.actions{justify-content:flex-start}.table-tools{display:block}.table-tools .actions{margin-top:10px}}
+@media(max-width:720px){body{padding:18px 10px 36px}.metric-grid,.analysis-grid{grid-template-columns:repeat(2,1fr)}.metric-grid .metric:last-child{grid-column:1/-1}.filtered-summary{grid-template-columns:repeat(2,1fr)}.filtered-summary .metric:last-child{grid-column:1/-1}.actions,.plan-actions{justify-content:flex-start}.table-tools{display:block}.table-tools .actions{margin-top:10px}.desktop-table{display:none}.mobile-products{display:grid;gap:9px}.dialog-head,.dialog-foot{align-items:flex-start;flex-direction:column}.mobile-card-grid{grid-template-columns:repeat(3,1fr)}#products-panel{order:1}#filters-panel{order:2}#mapping-panel{order:3}}
 </style>
 </head>
 <body>
@@ -87,13 +111,26 @@
   <section class="panel">
     <div class="topbar">
       <div class="field"><label>Sale plan</label><select class="select" id="plan-select"></select></div>
-      <p class="status" id="status-note">Loading sale planner.</p>
+      <div>
+        <div class="plan-actions">
+          <button class="btn" id="new-plan-btn" type="button">New</button>
+          <button class="btn" id="rename-plan-btn" type="button">Rename</button>
+          <button class="btn" id="duplicate-plan-btn" type="button">Duplicate</button>
+          <button class="btn" id="review-date-btn" type="button">Review date</button>
+          <button class="btn primary" id="submit-plan-btn" type="button">Submit for approval</button>
+          <button class="btn primary" id="approve-plan-btn" type="button">Approve plan</button>
+          <button class="btn" id="reopen-plan-btn" type="button">Reopen</button>
+          <button class="btn" id="archive-plan-btn" type="button">Archive</button>
+        </div>
+        <p class="status" id="status-note">Loading sale planner.</p>
+        <div class="job-strip" id="job-strip"></div>
+      </div>
     </div>
   </section>
 
   <section class="metric-grid" id="metrics"></section>
 
-  <section class="panel">
+  <section class="panel" id="analysis-panel">
     <div class="section-head">
       <div>
         <p class="section-title">Analysis</p>
@@ -107,7 +144,7 @@
     <div class="analysis-exceptions" id="analysis-exceptions"></div>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="action-panel">
     <div class="section-head">
       <div>
         <p class="section-title">Action queue</p>
@@ -115,7 +152,7 @@
       </div>
       <span class="pill" id="action-count">0 pending</span>
     </div>
-    <div class="action-toolbar">
+    <div class="action-toolbar" id="action-toolbar">
       <div class="field"><label>Queue filter</label><input id="action-search" placeholder="Product, SKU, reason"></div>
       <div class="field"><label>Action</label><select class="select" id="action-type-filter"><option value="">All actions</option><option value="deepen">Deepen markdown</option><option value="remove">Remove from sale</option><option value="low_views">Low views</option></select></div>
       <div class="field"><label>Status</label><select class="select" id="action-status-filter"><option value="Pending">Pending</option><option value="">All statuses</option><option>Accepted</option><option>Ignored</option><option>Snoozed</option><option>Applied</option></select></div>
@@ -132,7 +169,7 @@
     <div class="table-wrap" id="action-wrap"></div>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="filters-panel">
     <div class="toolbar">
       <div class="field"><label>Search</label><input id="search" placeholder="Product, SKU, type, warning"></div>
       <div class="field"><label>Status</label><select class="select" id="status-filter"><option value="">All statuses</option><option>Planned</option><option>Applied</option><option>Removed</option><option>Error</option></select></div>
@@ -143,23 +180,24 @@
     </div>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="mapping-panel">
     <div class="section-head">
       <div>
         <p class="section-title">Sale collection mapping</p>
         <p class="status" id="mapping-note">Auto-matched Sale collections can be corrected here by Admin.</p>
       </div>
       <div class="actions">
+        <button class="btn" type="button" id="refresh-collections-btn">Refresh collections</button>
         <button class="btn" type="button" id="save-mapping-btn">Save mapping</button>
       </div>
     </div>
     <div class="map-grid">
-      <div class="field"><label>Root Sale collection</label><select class="select" id="root-collection"></select></div>
+      <div class="field"><label>Root Sale collection</label><input class="collection-input" id="root-collection" list="sale-collection-options" placeholder="Search Sale collections"></div>
       <div class="mapping-list" id="type-mapping"></div>
     </div>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="products-panel">
     <div class="table-tools">
       <div>
         <p class="section-title">Planned products</p>
@@ -170,18 +208,32 @@
         <button class="btn" type="button" id="select-all-btn">Select all filtered</button>
         <button class="btn" type="button" id="clear-selected-btn">Clear</button>
         <button class="btn" type="button" id="remove-plan-btn">Remove from planner</button>
+        <button class="btn" type="button" id="reconcile-btn">Reconcile live</button>
         <button class="btn primary" type="button" id="apply-btn">Apply to Shopify</button>
         <button class="btn" type="button" id="remove-btn">Remove from sale</button>
       </div>
     </div>
+    <div class="filtered-summary" id="filtered-summary"></div>
     <div class="table-wrap" id="table-wrap"></div>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="activity-panel">
     <div class="section-head"><p class="section-title">Activity</p><span class="pill" id="event-count">0 events</span></div>
     <div class="activity" id="activity"></div>
   </section>
+  <datalist id="sale-collection-options"></datalist>
 </main>
+
+<dialog class="dialog" id="variant-dialog">
+  <div class="dialog-head"><div><p class="section-title" id="variant-title">Variants</p><p class="status" id="variant-note"></p></div><button class="btn" type="button" data-close-dialog="variant-dialog">Close</button></div>
+  <div class="dialog-body" id="variant-body"></div>
+</dialog>
+
+<dialog class="dialog" id="preflight-dialog">
+  <div class="dialog-head"><div><p class="section-title" id="preflight-title">Review Shopify changes</p><p class="status" id="preflight-note"></p></div><button class="btn" type="button" data-close-dialog="preflight-dialog">Close</button></div>
+  <div class="dialog-body"><div class="filtered-summary" id="preflight-summary"></div><div id="preflight-rows"></div></div>
+  <div class="dialog-foot"><div class="field" style="margin:0;min-width:220px"><label id="confirm-label">Confirmation</label><input id="confirm-input" autocomplete="off"></div><div class="actions"><button class="btn" type="button" id="export-preflight-btn">Export CSV</button><button class="btn" type="button" data-close-dialog="preflight-dialog">Cancel</button><button class="btn primary" type="button" id="confirm-job-btn">Confirm Shopify changes</button></div></div>
+</dialog>
 
 <script>
 const LOCAL_API_ORIGINS=["","http://localhost:3016","http://localhost:3003","http://localhost:3001","http://localhost:3000"];
@@ -189,9 +241,10 @@ const API_ORIGINS=location.protocol==="file:"?LOCAL_API_ORIGINS.slice(1):/^(loca
 const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
 const exactMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",minimumFractionDigits:2,maximumFractionDigits:2});
 const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
-let state={plans:[],plan:null,items:[],events:[],metrics:{},analysis:{summary:{},actionSummary:{},exceptions:{worked:[],watch:[],deepen:[],remove:[]},actions:[]},collections:[],collectionConfig:{rootSaleCollectionId:"",childCollectionByType:{}},canApply:false,shopifyConfigured:false,shopifyMessage:""};
+let state={plans:[],plan:null,items:[],events:[],metrics:{},analysis:{summary:{},actionSummary:{},exceptions:{worked:[],watch:[],deepen:[],remove:[]},actions:[]},collections:[],collectionConfig:{rootSaleCollectionId:"",childCollectionByType:{}},recentJobs:[],policies:{minGpPct:0,requireCostAtDiscount:40},canApply:false,shopifyConfigured:false,shopifyMessage:"",collectionCount:0};
 let selectedRows=new Set();
 let selectedActions=new Set();
+let pendingJob=null;
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
@@ -225,9 +278,15 @@ function gpText(item){
   const value=Number(item?.metrics?.targetGpPct);
   return Number.isFinite(value)?`${value.toFixed(1)}%`:"-";
 }
-function collectionOptions(value,blank="Unmapped"){
-  const rows=[`<option value="">${escapeHtml(blank)}</option>`].concat((state.collections||[]).map(collection=>`<option value="${attr(collection.id)}"${collection.id===value?" selected":""}>${escapeHtml(collection.title)}${collection.handle?` (${escapeHtml(collection.handle)})`:""}</option>`));
-  return rows.join("");
+function collectionLabel(collection){return collection?`${collection.title||"Untitled"}${collection.handle?` (${collection.handle})`:""}`:"";}
+function collectionById(id){return (state.collections||[]).find(collection=>String(collection.id)===String(id))||null;}
+function collectionIdFromInput(input){
+  const raw=String(input?.value||input||"").trim();
+  const exact=(state.collections||[]).find(collection=>collectionLabel(collection)===raw||String(collection.id)===raw);
+  return exact?.id||"";
+}
+function renderCollectionDatalist(){
+  el("sale-collection-options").innerHTML=(state.collections||[]).map(collection=>`<option value="${attr(collectionLabel(collection))}"></option>`).join("");
 }
 
 function metric(label,value,small){
@@ -243,7 +302,7 @@ function renderMetrics(){
     metric("Removed",Number(m.removed||0).toLocaleString("en-GB"),"restored"),
     metric("Errors",Number(m.errors||0).toLocaleString("en-GB"),"need review"),
     metric("Final",Number(m.finalClearance||0).toLocaleString("en-GB"),"50% rows"),
-    metric("Stock value",money.format(Number(m.stockValue||0)),`${Number(m.stockUnits||0).toLocaleString("en-GB")} units`)
+    metric("Stock retail",money.format(Number(m.stockValue||0)),`${Number(m.stockUnits||0).toLocaleString("en-GB")} units at original retail`)
   ].join("");
 }
 
@@ -251,8 +310,15 @@ function renderAnalysis(){
   const analysis=state.analysis||{};
   const s=analysis.summary||{};
   const a=analysis.actionSummary||{};
+  if(!analysis.refreshedAt){
+    el("analysis-metrics").innerHTML="";
+    el("analysis-exceptions").innerHTML="";
+    el("analysis-note").className="status warn";
+    el("analysis-note").textContent="Refresh analysis when completed Monday-Sunday reports are available before and after the markdown.";
+    return;
+  }
   el("analysis-metrics").innerHTML=[
-    metric("Analysed",Number(s.analysed||0).toLocaleString("en-GB"),`${Number(s.appliedItems||0).toLocaleString("en-GB")} applied`),
+    metric("Comparable",Number(s.comparable||0).toLocaleString("en-GB"),`${Number(s.highConfidence||0).toLocaleString("en-GB")} high confidence`),
     metric("Worked",Number(s.worked||0).toLocaleString("en-GB"),"positive read"),
     metric("Watch",Number(s.watch||0).toLocaleString("en-GB"),`${Number(s.early||0).toLocaleString("en-GB")} early`),
     metric("Deepen",Number(s.deepen||0).toLocaleString("en-GB"),"needs action"),
@@ -269,7 +335,7 @@ function renderAnalysis(){
   const exceptions=analysis.exceptions||{};
   el("analysis-exceptions").innerHTML=groups.map(([key,label])=>{
     const rows=exceptions[key]||[];
-    const body=rows.length?rows.map(row=>`<div class="analysis-row"><div><strong title="${attr(row.title)}">${escapeHtml(row.title||"-")}</strong><span>${escapeHtml(row.sku||row.productType||"-")} - ${Number(row.daysObserved||0)}d - stock ${Number(row.postStock||0).toLocaleString("en-GB")}</span></div><b>${pctText(row.sellThroughLift)}</b></div>`).join(""):`<p class="empty-state">None</p>`;
+    const body=rows.length?rows.map(row=>`<div class="analysis-row"><div><strong title="${attr(row.title)}">${escapeHtml(row.title||"-")}</strong><span>${escapeHtml(row.sku||row.productType||"-")} - ${Number(row.comparableWeeks||0)} matched weeks - ${escapeHtml(row.confidence||"unavailable")}</span></div><b>${pctText(row.sellThroughLift)}</b></div>`).join(""):`<p class="empty-state">None</p>`;
     return `<div class="exception-list"><h3>${escapeHtml(label)}</h3>${body}</div>`;
   }).join("");
   el("analysis-note").className=analysis.refreshedAt?"status ok":"status warn";
@@ -329,6 +395,7 @@ function renderActions(){
   el("action-note").textContent=Number(summary.pending||0)
     ? `${Number(summary.deepen||0).toLocaleString("en-GB")} deepen, ${Number(summary.remove||0).toLocaleString("en-GB")} remove, ${Number(summary.lowViews||0).toLocaleString("en-GB")} low views.`
     : "No pending analysis actions.";
+  el("action-toolbar").hidden=!(state.analysis?.actions||[]).length;
   el("action-wrap").innerHTML=rows.length?`<table class="action-table">
     <thead><tr>
       <th style="width:34px"><input type="checkbox" aria-label="Select all visible actions" ${rows.length&&rows.every(action=>selectedActions.has(action.id))?"checked":""} onchange="setAllVisibleActions(this.checked)"></th>
@@ -353,13 +420,14 @@ function renderTypeFilter(){
 function renderMapping(){
   const config=state.collectionConfig||{childCollectionByType:{}};
   const root=config.rootSaleCollectionId||autoRootSaleId();
-  el("root-collection").innerHTML=collectionOptions(root,"Choose Sale collection");
+  renderCollectionDatalist();
+  el("root-collection").value=collectionLabel(collectionById(root));
   const types=[...new Set((state.items||[]).map(item=>item.productType).filter(Boolean))].sort();
   el("type-mapping").innerHTML=types.length?types.map(type=>{
     const existing=config.childCollectionByType?.[type]||autoChildSaleId(type);
-    return `<div class="field"><label>${escapeHtml(type)}</label><select class="select type-map" data-type="${attr(type)}">${collectionOptions(existing,"Choose child collection")}</select></div>`;
+    return `<div class="field"><label>${escapeHtml(type)}</label><input class="collection-input type-map" data-type="${attr(type)}" data-collection-id="${attr(existing)}" list="sale-collection-options" value="${attr(collectionLabel(collectionById(existing)))}" placeholder="Search Sale collections"></div>`;
   }).join(""):`<p class="empty-state">Import products to map sale child collections by product type.</p>`;
-  const msg=state.shopifyConfigured?`${state.collections.length.toLocaleString("en-GB")} Shopify collections available.`:state.shopifyMessage||"Shopify collections are unavailable.";
+  const msg=state.shopifyConfigured?`${state.collections.length.toLocaleString("en-GB")} relevant Sale collections from ${Number(state.collectionCount||state.collections.length).toLocaleString("en-GB")} Shopify collections${state.collectionsCached?" (cached)":""}.`:state.shopifyMessage||"Shopify collections are unavailable.";
   el("mapping-note").className=state.shopifyConfigured?"status ok":"status warn";
   el("mapping-note").textContent=msg;
 }
@@ -390,11 +458,12 @@ function filteredItems(){
   const warn=val("warning-filter");
   return (state.items||[]).filter(item=>{
     const haystack=[item.title,item.sku,item.productType,item.season,item.status,item.lastError,(item.warnings||[]).join(" ")].join(" ").toLowerCase();
+    const warningCount=(item.warnings||[]).length+(item.lastError?1:0);
     return (!q||haystack.includes(q))
       &&(!status||item.status===status)
       &&(!type||item.productType===type)
       &&(!discount||Number(item.discountPercent||0)>=discount)
-      &&(!warn||(warn==="warnings"?(item.warnings||[]).length:(item.warnings||[]).length===0));
+      &&(!warn||(warn==="warnings"?warningCount:warningCount===0));
   });
 }
 
@@ -403,13 +472,23 @@ function badgeClass(status){return String(status||"").toLowerCase();}
 function warningsHtml(item){
   const warnings=[...(item.warnings||[])];
   if(item.lastError)warnings.unshift(item.lastError);
-  return warnings.length?`<div class="warning-list">${warnings.slice(0,3).map(warning=>`<span>${escapeHtml(warning)}</span>`).join("")}</div>`:"-";
+  if(!warnings.length)return "-";
+  const visible=warnings.slice(0,2).map(warning=>`<span>${escapeHtml(warning)}</span>`).join("");
+  const more=warnings.slice(2);
+  return `<div class="warning-list">${visible}${more.length?`<details><summary>${more.length} more</summary>${more.map(warning=>`<span>${escapeHtml(warning)}</span>`).join("")}</details>`:""}</div>`;
+}
+
+function itemEditable(item){return ["Planned","Error"].includes(item.status);}
+function collectionInputHtml(item){
+  const collection=collectionById(item.childSaleCollectionId);
+  return `<input class="collection-input" list="sale-collection-options" value="${attr(collectionLabel(collection))}" placeholder="Search child Sale collection" ${itemEditable(item)?`onchange="updateItemCollection('${attr(item.id)}',this)"`:"disabled"}>`;
 }
 
 function rowHtml(item){
+  const editable=itemEditable(item);
   return `<tr>
     <td><input type="checkbox" aria-label="Select ${attr(item.title)}" ${selectedRows.has(item.id)?"checked":""} onchange="toggleRow('${attr(item.id)}',this.checked)"></td>
-    <td><div class="product-cell"><div class="thumb">${item.imageUrl?`<img src="${attr(item.imageUrl)}" alt="${attr(item.title)}" loading="lazy">`:"No image"}</div><div><span class="product-title" title="${attr(item.title)}">${escapeHtml(item.title)}</span><span class="product-meta">${escapeHtml(item.sku||"-")} - ${escapeHtml(item.productType||"-")} - ${escapeHtml(item.season||"-")}</span></div></div></td>
+    <td><div class="product-cell"><div class="thumb">${item.imageUrl?`<img src="${attr(item.imageUrl)}" alt="${attr(item.title)}" loading="lazy">`:"No image"}</div><div><button class="link-button product-title" type="button" title="Review variants" onclick="showVariants('${attr(item.id)}')">${escapeHtml(item.title)}</button><span class="product-meta">${escapeHtml(item.sku||"-")} - ${escapeHtml(item.productType||"-")} - ${escapeHtml(item.season||"-")}</span></div></div></td>
     <td><span class="badge ${badgeClass(item.status)}">${escapeHtml(item.status)}</span></td>
     <td class="num">${Number(item.stock||0).toLocaleString("en-GB")}</td>
     <td class="num">${Number(item.units||0).toLocaleString("en-GB")}</td>
@@ -417,13 +496,30 @@ function rowHtml(item){
     <td class="num">${Math.round(Number(item.riskScore||0))}</td>
     <td class="num">${moneyText(item.originalPrice)}</td>
     <td class="num">${moneyText(item.currentPrice)}</td>
-    <td><input class="mini-input" type="number" min="0" step="1" value="${attr(item.discountPercent)}" onchange="updateItem('${attr(item.id)}',{discountPercent:this.value})"></td>
-    <td><input class="mini-input" type="number" min="0" step="0.01" value="${attr(item.targetPrice)}" onchange="updateItem('${attr(item.id)}',{targetPrice:this.value})"></td>
+    <td><input class="mini-input" type="number" min="0" max="90" step="1" value="${attr(item.discountPercent)}" ${editable?`onchange="updateItem('${attr(item.id)}',{discountPercent:this.value})"`:"disabled"}></td>
+    <td><input class="mini-input" type="number" min="0.01" max="${attr(item.originalPrice)}" step="0.01" value="${attr(item.targetPrice)}" ${editable?`onchange="updateItem('${attr(item.id)}',{targetPrice:this.value})"`:"disabled"}></td>
     <td class="num" title="GP% = (((retail price / 1.2) - cost price) / (retail price / 1.2))">${gpText(item)}</td>
-    <td><select class="mini-select" onchange="updateItem('${attr(item.id)}',{childSaleCollectionId:this.value})">${collectionOptions(item.childSaleCollectionId,"Child sale collection")}</select></td>
+    <td>${collectionInputHtml(item)}</td>
     <td>${warningsHtml(item)}</td>
-    <td><button class="btn row-open" type="button" onclick="removePlanItems(['${attr(item.id)}'])">Remove</button></td>
+    <td><button class="btn row-open" type="button" onclick="removePlanItems(['${attr(item.id)}'])" ${item.status==="Applied"?"disabled":""}>Remove</button></td>
   </tr>`;
+}
+
+function mobileCardHtml(item){
+  const editable=itemEditable(item);
+  return `<article class="mobile-card">
+    <div class="mobile-card-head"><input type="checkbox" aria-label="Select ${attr(item.title)}" ${selectedRows.has(item.id)?"checked":""} onchange="toggleRow('${attr(item.id)}',this.checked)"><div class="thumb">${item.imageUrl?`<img src="${attr(item.imageUrl)}" alt="${attr(item.title)}" loading="lazy">`:"No image"}</div><div><button class="link-button product-title" type="button" onclick="showVariants('${attr(item.id)}')">${escapeHtml(item.title)}</button><span class="product-meta">${escapeHtml(item.sku||"-")} - ${escapeHtml(item.productType||"-")}</span></div><span class="badge ${badgeClass(item.status)}">${escapeHtml(item.status)}</span></div>
+    <div class="mobile-card-grid"><div><label>Stock</label><strong>${Number(item.stock||0).toLocaleString("en-GB")}</strong></div><div><label>Original</label><strong>${moneyText(item.originalPrice)}</strong></div><div><label>Current</label><strong>${moneyText(item.currentPrice)}</strong></div><div><label>Risk</label><strong>${Math.round(Number(item.riskScore||0))}</strong></div><div><label>Cover</label><strong>${item.coverWks==null?"-":Number(item.coverWks).toFixed(1)}</strong></div><div><label>Target GP</label><strong>${gpText(item)}</strong></div></div>
+    <div class="mobile-edit-grid"><div class="field"><label>Discount %</label><input class="mini-input" type="number" min="0" max="90" value="${attr(item.discountPercent)}" ${editable?`onchange="updateItem('${attr(item.id)}',{discountPercent:this.value})"`:"disabled"}></div><div class="field"><label>Target price</label><input class="mini-input" type="number" min="0.01" max="${attr(item.originalPrice)}" step="0.01" value="${attr(item.targetPrice)}" ${editable?`onchange="updateItem('${attr(item.id)}',{targetPrice:this.value})"`:"disabled"}></div></div>
+    ${collectionInputHtml(item)}${warningsHtml(item)}
+  </article>`;
+}
+
+function renderFilteredSummary(rows){
+  const selected=selectedRows.size?rows.filter(item=>selectedRows.has(item.id)):rows;
+  const totals=selected.reduce((sum,item)=>{const units=Number(item.stock||0),original=units*Number(item.originalPrice||item.currentPrice||0),target=units*Number(item.targetPrice||item.currentPrice||0),gp=Number(item.metrics?.targetGpPct);sum.units+=units;sum.original+=original;sum.target+=target;sum.investment+=Math.max(0,original-target);if(Number.isFinite(gp))sum.gp+=(target/1.2)*(gp/100);return sum;},{units:0,original:0,target:0,investment:0,gp:0});
+  const scope=selectedRows.size?`${selected.length} selected`:`${selected.length} filtered`;
+  el("filtered-summary").innerHTML=[metric("Scope",scope,`${totals.units.toLocaleString("en-GB")} stock units`),metric("Original retail",money.format(totals.original),"stock at original retail"),metric("Planned retail",money.format(totals.target),"stock at target retail"),metric("Markdown investment",money.format(totals.investment),"retail value reduction"),metric("Projected GP",money.format(totals.gp),"estimate where cost is known")].join("");
 }
 
 function renderTable(){
@@ -431,13 +527,53 @@ function renderTable(){
   const valid=new Set(rows.map(item=>item.id));
   selectedRows=new Set([...selectedRows].filter(id=>valid.has(id)));
   el("selected-count").textContent=`${selectedRows.size.toLocaleString("en-GB")} selected`;
-  el("table-wrap").innerHTML=rows.length?`<table class="sale-table">
+  renderFilteredSummary(rows);
+  el("table-wrap").innerHTML=rows.length?`<div class="desktop-table"><table class="sale-table">
     <thead><tr>
       <th style="width:34px"><input type="checkbox" aria-label="Select all visible" ${rows.length&&rows.every(item=>selectedRows.has(item.id))?"checked":""} onchange="setAllVisible(this.checked)"></th>
       <th style="width:310px">Product</th><th style="width:80px">Status</th><th class="num">Stock</th><th class="num">Units</th><th class="num">Cover</th><th class="num">Risk</th><th class="num">Original</th><th class="num">Current</th><th>Disc %</th><th>Target</th><th class="num">GP %</th><th style="width:190px">Sale collection</th><th style="width:240px">Warnings</th><th style="width:90px">Plan</th>
     </tr></thead>
     <tbody>${rows.map(rowHtml).join("")}</tbody>
-  </table>`:`<p class="empty-state">No sale planner items match the current filters.</p>`;
+  </table></div><div class="mobile-products">${rows.map(mobileCardHtml).join("")}</div>`:`<p class="empty-state">No sale planner items match the current filters.</p>`;
+  renderSelectionActions();
+}
+
+function renderSelectionActions(){
+  const selected=state.items.filter(item=>selectedRows.has(item.id));
+  const hasSelection=selected.length>0;
+  const canApplySelection=hasSelection&&selected.every(item=>["Planned","Error"].includes(item.status));
+  const canRemoveSelection=hasSelection&&selected.every(item=>item.status==="Applied");
+  const canDeleteSelection=hasSelection&&selected.every(item=>item.status!=="Applied");
+  const approved=state.plan?.status==="Ready"&&Boolean(state.plan?.data?.approvedSnapshotHash);
+  el("apply-btn").disabled=!state.canApply||!approved||!canApplySelection;
+  el("remove-btn").disabled=!state.canApply||!canRemoveSelection;
+  el("reconcile-btn").disabled=!canRemoveSelection;
+  el("remove-plan-btn").disabled=!canDeleteSelection;
+  el("table-note").textContent=!hasSelection
+    ? "Select Planned/Error rows to apply, or Applied rows to remove from sale."
+    : canApplySelection
+      ? approved?`${selected.length} approved row${selected.length===1?"":"s"} ready for Shopify preflight.`:"Submit and approve the current plan snapshot before applying it to Shopify."
+      : canRemoveSelection
+        ? `${selected.length} applied row${selected.length===1?"":"s"} ready for removal preflight.`
+        : "The selection mixes incompatible statuses. Select only Planned/Error rows or only Applied rows.";
+}
+
+function renderJobs(){
+  const job=(state.recentJobs||[])[0];
+  const reviewDate=state.plan?.data?.reviewDate||"";
+  const review=reviewDate?`<span class="badge ${reviewDate<=new Date().toISOString().slice(0,10)?"error":"planned"}">Review ${escapeHtml(reviewDate)}</span>`:"";
+  if(!job){el("job-strip").innerHTML=review;return;}
+  const resume=state.canApply&&job.status==="error"?`<button class="btn" type="button" onclick="resumeJob('${attr(job.id)}')">Resume failed job</button>`:"";
+  el("job-strip").innerHTML=`${review}<span class="badge ${attr(job.status)}">${escapeHtml(job.mode)} ${escapeHtml(job.status)}</span><span class="status">${escapeHtml(job.message||"")} ${Number(job.processedItems||0)}/${Number(job.totalItems||0)}</span>${resume}`;
+}
+
+function showVariants(itemId){
+  const item=state.items.find(row=>row.id===itemId);
+  if(!item)return;
+  el("variant-title").textContent=item.title;
+  el("variant-note").textContent=`${item.variants?.length||0} variant${item.variants?.length===1?"":"s"}. Row GP uses the lowest variant GP.`;
+  el("variant-body").innerHTML=(item.variants||[]).length?`<table class="variant-table"><thead><tr><th>SKU / variant</th><th>Current</th><th>Original</th><th>Target</th><th>Effective discount</th><th>Cost</th><th>Target GP</th></tr></thead><tbody>${item.variants.map(variant=>{const original=Number(variant.saleOriginalPrice||variant.originalPrice||item.originalPrice||0),target=Number(variant.targetPrice||item.targetPrice||0),effective=original>0?((original-target)/original)*100:0;return `<tr><td><strong>${escapeHtml(variant.sku||variant.title||variant.id||"-")}</strong><br><span class="status">${escapeHtml(variant.title||"")}</span></td><td>${moneyText(variant.currentPrice)}</td><td>${moneyText(original)}</td><td>${moneyText(target)}</td><td>${effective.toFixed(1)}%</td><td>${variant.cost==null?"Missing":moneyText(variant.cost)}</td><td>${variant.targetGpPct==null?"-":`${Number(variant.targetGpPct).toFixed(1)}%`}</td></tr>`;}).join("")}</tbody></table>`:`<p class="empty-state">No variant targets are stored for this product.</p>`;
+  el("variant-dialog").showModal();
 }
 
 function renderActivity(){
@@ -455,8 +591,16 @@ function render(){
   renderMapping();
   renderTable();
   renderActivity();
-  el("apply-btn").disabled=!state.canApply;
-  el("remove-btn").disabled=!state.canApply;
+  renderJobs();
+  el("save-mapping-btn").disabled=!state.canApply;
+  el("refresh-collections-btn").disabled=!state.canApply;
+  el("archive-plan-btn").disabled=!state.plan;
+  el("rename-plan-btn").disabled=!state.plan;
+  el("duplicate-plan-btn").disabled=!state.plan;
+  const status=state.plan?.status||"";
+  el("submit-plan-btn").hidden=!state.plan||!["Draft","Needs review"].includes(status);
+  el("approve-plan-btn").hidden=!state.plan||status!=="Awaiting approval"||!state.canApply;
+  el("reopen-plan-btn").hidden=!state.plan||!["Awaiting approval","Ready"].includes(status);
 }
 
 async function loadPlanner(planId=val("plan-select")){
@@ -465,8 +609,9 @@ async function loadPlanner(planId=val("plan-select")){
     const data=await apiJson(`/api/sale-planner${query}`);
     state={...state,...data};
     selectedActions.clear();
-    el("status-note").className="status ok";
-    el("status-note").textContent=state.plan?`${state.plan.name} loaded.`:"Import products from Weekly Actions or Product Merchandising to start a sale plan.";
+    const legacyReady=state.plan?.status==="Ready"&&!state.plan?.data?.approvedSnapshotHash;
+    el("status-note").className=legacyReady||state.plan?.status==="Awaiting approval"?"status warn":"status ok";
+    el("status-note").textContent=!state.plan?"Import products from Weekly Actions or Product Merchandising to start a sale plan.":legacyReady?`${state.plan.name} predates approval snapshots. Reopen, review, submit, and approve it before applying.`:state.plan.status==="Awaiting approval"?`${state.plan.name} is awaiting Admin approval.`:`${state.plan.name} loaded.`;
     render();
   }catch(error){
     el("status-note").className="status err";
@@ -489,19 +634,67 @@ async function updateItem(itemId,patch){
   }
 }
 
+function updateItemCollection(itemId,input){
+  const id=collectionIdFromInput(input);
+  if(!id&&String(input.value||"").trim()){
+    el("status-note").className="status warn";
+    el("status-note").textContent="Choose a collection from the Sale collection suggestions.";
+    renderTable();
+    return;
+  }
+  updateItem(itemId,{childSaleCollectionId:id});
+}
+
 async function saveMapping(){
   const childCollectionByType={};
-  document.querySelectorAll(".type-map").forEach(select=>{if(select.value)childCollectionByType[select.dataset.type]=select.value;});
+  document.querySelectorAll(".type-map").forEach(input=>{const id=collectionIdFromInput(input);if(id)childCollectionByType[input.dataset.type]=id;});
+  const rootSaleCollectionId=collectionIdFromInput(el("root-collection"));
+  if(!rootSaleCollectionId){el("status-note").className="status warn";el("status-note").textContent="Choose a root Sale collection from the suggestions.";return;}
   try{
-    const data=await apiJson("/api/sale-planner/config",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id||"",config:{rootSaleCollectionId:val("root-collection"),childCollectionByType}})});
+    const data=await apiJson("/api/sale-planner/config",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id||"",applyToPlan:true,config:{rootSaleCollectionId,childCollectionByType}})});
     state={...state,...data};
     el("status-note").className="status ok";
-    el("status-note").textContent="Sale collection mapping saved.";
+    el("status-note").textContent=`Sale collection mapping saved and applied to ${Number(data.propagated||0).toLocaleString("en-GB")} editable row${Number(data.propagated||0)===1?"":"s"}.`;
     render();
   }catch(error){
     el("status-note").className="status err";
     el("status-note").textContent=error.message;
   }
+}
+
+async function refreshCollections(){
+  el("refresh-collections-btn").disabled=true;
+  try{
+    const data=await apiJson("/api/sale-planner/collections/refresh",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id||""})});
+    state={...state,...data};
+    el("status-note").className="status ok";
+    el("status-note").textContent="Sale collection choices refreshed from Shopify.";
+    render();
+  }catch(error){el("status-note").className="status err";el("status-note").textContent=error.message;}finally{el("refresh-collections-btn").disabled=!state.canApply;}
+}
+
+async function savePlanAction(action){
+  if(action==="archive"&&!confirm("Archive this plan? Live Applied rows must be removed first."))return;
+  const defaultName=action==="create"?`Sale plan ${new Date().toISOString().slice(0,10)}`:action==="duplicate"?`${state.plan?.name||"Sale plan"} copy`:state.plan?.name||"";
+  const name=["create","rename","duplicate"].includes(action)?prompt(`${action[0].toUpperCase()+action.slice(1)} plan name`,defaultName):"";
+  if(["create","rename","duplicate"].includes(action)&&!String(name||"").trim())return;
+  try{
+    const data=await apiJson("/api/sale-planner/plans/save",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,planId:state.plan?.id||"",name})});
+    state={...state,...data};selectedRows.clear();selectedActions.clear();
+    const past={create:"created",rename:"renamed",duplicate:"duplicated",archive:"archived",submit:"submitted for approval",approve:"approved",reopen:"reopened"}[action]||"updated";
+    el("status-note").className="status ok";el("status-note").textContent=`Sale plan ${past}.`;render();
+  }catch(error){el("status-note").className="status err";el("status-note").textContent=error.message;}
+}
+
+async function scheduleReview(){
+  if(!state.plan)return;
+  const fallback=state.plan.data?.reviewDate||new Date(Date.now()+14*864e5).toISOString().slice(0,10);
+  const reviewDate=prompt("Review date (YYYY-MM-DD)",fallback);
+  if(!reviewDate)return;
+  try{
+    const data=await apiJson("/api/sale-planner/plans/save",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"schedule",planId:state.plan.id,reviewDate})});
+    state={...state,...data};el("status-note").className="status ok";el("status-note").textContent=`Review scheduled for ${reviewDate}.`;render();
+  }catch(error){el("status-note").className="status err";el("status-note").textContent=error.message;}
 }
 
 async function refreshAnalysis(){
@@ -622,24 +815,79 @@ async function startJob(mode){
     return;
   }
   const selected=state.items.filter(item=>selectedRows.has(item.id));
+  const valid=mode==="remove"?selected.every(item=>item.status==="Applied"):selected.every(item=>["Planned","Error"].includes(item.status));
+  if(!valid){el("status-note").className="status err";el("status-note").textContent=mode==="remove"?"Select only Applied rows to remove from sale.":"Select only Planned or Error rows to apply.";return;}
   const hasFinal=selected.some(item=>Number(item.discountPercent||0)>=50);
   const expected=mode==="remove"?"REMOVE":hasFinal?"FINAL SALE":"APPLY";
-  const confirmation=prompt(`This will ${mode==="remove"?"remove selected products from sale":"change Shopify prices and sale collections"} for ${ids.length.toLocaleString("en-GB")} product${ids.length===1?"":"s"}. Type ${expected} to continue.`);
-  if(String(confirmation||"").trim().toUpperCase()!==expected)return;
-  el(mode==="remove"?"remove-btn":"apply-btn").disabled=true;
   el("status-note").className="status warn";
-  el("status-note").textContent=mode==="remove"?"Starting sale removal job.":"Starting Shopify sale apply job.";
+  el("status-note").textContent="Checking every selected product against live Shopify state...";
   try{
-    const path=mode==="remove"?"/api/sale-planner/remove/start":"/api/sale-planner/apply/start";
-    const data=await apiJson(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id,itemIds:ids,confirmText:confirmation})});
-    await pollJob(data.job.id);
-    selectedRows.clear();
-    await loadPlanner(state.plan?.id||"");
+    const data=await apiJson("/api/sale-planner/preflight",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id,itemIds:ids,mode})});
+    const preflight=data.preflight||{};pendingJob={mode,ids,expected,preflight};
+    const s=preflight.summary||{};
+    el("preflight-title").textContent=mode==="remove"?"Review sale removals":"Review Shopify sale changes";
+    el("preflight-note").className=preflight.ok?"status ok":"status err";
+    el("preflight-note").textContent=preflight.ok?`${s.products||0} products passed live preflight. Review the exact changes below.`:`${s.blocked||0} products are blocked. Shopify cannot be changed until these issues are fixed.`;
+    el("preflight-summary").innerHTML=[metric("Products",String(s.products||0),`${s.stockUnits||0} stock units`),metric("Original retail",money.format(s.originalRetail||0),"selected stock"),metric(mode==="remove"?"Restored retail":"Planned retail",money.format(s.targetRetail||0),"selected stock"),metric("Markdown investment",money.format(s.markdownInvestment||0),"retail reduction"),metric("Projected GP",money.format(s.projectedGrossProfit||0),"where cost is known")].join("");
+    el("preflight-rows").innerHTML=(preflight.rows||[]).map(row=>`<article class="preflight-row ${row.errors?.length?"blocked":""}"><div class="section-head"><div><strong>${escapeHtml(row.title)}</strong><p class="status">${escapeHtml(row.sku||"-")} - ${escapeHtml(row.status)} - stock ${Number(row.stock||0).toLocaleString("en-GB")}</p></div><span class="badge ${row.errors?.length?"error":"planned"}">${row.errors?.length?"Blocked":"Ready"}</span></div><p><strong>${moneyText(row.currentPrice)}</strong> current &rarr; <strong>${moneyText(mode==="remove"?row.originalPrice:row.targetPrice)}</strong> ${mode==="remove"?"restored":`target (${discountText(row.discountPercent)})`}</p>${row.errors?.length?`<div class="warning-list">${row.errors.map(message=>`<span>${escapeHtml(message)}</span>`).join("")}</div>`:""}${row.warnings?.length?`<details><summary>${row.warnings.length} warning${row.warnings.length===1?"":"s"}</summary><div class="warning-list">${row.warnings.map(message=>`<span>${escapeHtml(message)}</span>`).join("")}</div></details>`:""}<details><summary>${row.variants?.length||0} variant changes</summary><table class="variant-table"><tbody>${(row.variants||[]).map(variant=>`<tr><td>${escapeHtml(variant.sku||variant.title||variant.id)}</td><td>${moneyText(variant.livePrice)} live</td><td>&rarr; ${moneyText(mode==="remove"?variant.originalPrice:variant.targetPrice)}</td><td>${variant.targetGpPct==null?"GP unknown":`${Number(variant.targetGpPct).toFixed(1)}% GP`}</td></tr>`).join("")}</tbody></table></details></article>`).join("");
+    el("confirm-label").textContent=`Type ${expected} to confirm`;
+    el("confirm-input").value="";
+    el("confirm-job-btn").disabled=!preflight.ok;
+    el("preflight-dialog").showModal();
+    el("status-note").className=preflight.ok?"status ok":"status err";el("status-note").textContent=el("preflight-note").textContent;
   }catch(error){
     el("status-note").className="status err";
     el("status-note").textContent=error.message;
-    await loadPlanner(state.plan?.id||"");
   }
+}
+
+async function confirmPendingJob(){
+  if(!pendingJob)return;
+  const confirmation=val("confirm-input").toUpperCase();
+  if(confirmation!==pendingJob.expected){el("preflight-note").className="status err";el("preflight-note").textContent=`Type ${pendingJob.expected} exactly to continue.`;return;}
+  el("confirm-job-btn").disabled=true;
+  try{
+    const path=pendingJob.mode==="remove"?"/api/sale-planner/remove/start":"/api/sale-planner/apply/start";
+    const data=await apiJson(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id,itemIds:pendingJob.ids,confirmText:confirmation})});
+    el("preflight-dialog").close();
+    el("status-note").className="status warn";el("status-note").textContent="Shopify job started.";
+    await pollJob(data.job.id);selectedRows.clear();pendingJob=null;await loadPlanner(state.plan?.id||"");
+  }catch(error){el("preflight-note").className="status err";el("preflight-note").textContent=error.message;el("confirm-job-btn").disabled=false;}
+}
+
+function exportPreflightCsv(){
+  if(!pendingJob?.preflight)return;
+  const quote=value=>`"${String(value??"").replaceAll('"','""')}"`;
+  const rows=[["Product","Product SKU","Variant","Live price","Original price","Target/restored price","Cost","Target GP %","Status","Errors","Warnings"]];
+  for(const item of pendingJob.preflight.rows||[]){
+    const variants=item.variants?.length?item.variants:[{}];
+    for(const variant of variants)rows.push([item.title,item.sku,variant.sku||variant.title||variant.id,variant.livePrice,variant.originalPrice,pendingJob.mode==="remove"?variant.originalPrice:variant.targetPrice,variant.cost,variant.targetGpPct,item.errors?.length?"Blocked":"Ready",(item.errors||[]).join(" | "),(item.warnings||[]).join(" | ")]);
+  }
+  const blob=new Blob([rows.map(row=>row.map(quote).join(",")).join("\r\n")],{type:"text/csv;charset=utf-8"});
+  const url=URL.createObjectURL(blob);const link=document.createElement("a");link.href=url;link.download=`sale-preflight-${state.plan?.id||"plan"}-${new Date().toISOString().slice(0,10)}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+async function resumeJob(jobId){
+  try{
+    const data=await apiJson("/api/sale-planner/jobs/resume",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jobId})});
+    el("status-note").className="status warn";el("status-note").textContent="Resuming the failed Shopify job from its last completed step.";
+    await pollJob(data.job.id);await loadPlanner(state.plan?.id||"");
+  }catch(error){el("status-note").className="status err";el("status-note").textContent=error.message;}
+}
+
+async function reconcileSelected(){
+  const itemIds=[...selectedRows];
+  if(!itemIds.length)return;
+  el("status-note").className="status warn";el("status-note").textContent="Comparing selected rows with live Shopify sale state...";
+  try{
+    const data=await apiJson("/api/sale-planner/reconcile",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id,itemIds})});
+    el("variant-title").textContent="Live Shopify reconciliation";
+    el("variant-note").className=data.ok?"status ok":"status err";
+    el("variant-note").textContent=`${data.summary?.matched||0} matched; ${data.summary?.drifted||0} need review.`;
+    el("variant-body").innerHTML=(data.rows||[]).map(row=>`<article class="preflight-row ${row.ok?"":"blocked"}"><div class="section-head"><div><strong>${escapeHtml(row.title)}</strong><p class="status">${escapeHtml(row.sku||"-")}</p></div><span class="badge ${row.ok?"applied":"error"}">${row.ok?"Matched":"Drift"}</span></div>${row.differences?.length?`<div class="warning-list">${row.differences.map(message=>`<span>${escapeHtml(message)}</span>`).join("")}</div>`:`<p class="status ok">Price, compare-at price, Sale collections, and Product Status match.</p>`}</article>`).join("");
+    el("variant-dialog").showModal();
+    el("status-note").className=data.ok?"status ok":"status err";el("status-note").textContent=el("variant-note").textContent;
+  }catch(error){el("status-note").className="status err";el("status-note").textContent=error.message;}
 }
 
 ["search","status-filter","type-filter","discount-filter","warning-filter"].forEach(id=>el(id).addEventListener("input",renderTable));
@@ -647,6 +895,15 @@ async function startJob(mode){
 el("refresh-btn").addEventListener("click",()=>loadPlanner());
 el("plan-select").addEventListener("change",()=>loadPlanner(val("plan-select")));
 el("save-mapping-btn").addEventListener("click",saveMapping);
+el("refresh-collections-btn").addEventListener("click",refreshCollections);
+el("new-plan-btn").addEventListener("click",()=>savePlanAction("create"));
+el("rename-plan-btn").addEventListener("click",()=>savePlanAction("rename"));
+el("duplicate-plan-btn").addEventListener("click",()=>savePlanAction("duplicate"));
+el("review-date-btn").addEventListener("click",scheduleReview);
+el("submit-plan-btn").addEventListener("click",()=>savePlanAction("submit"));
+el("approve-plan-btn").addEventListener("click",()=>savePlanAction("approve"));
+el("reopen-plan-btn").addEventListener("click",()=>savePlanAction("reopen"));
+el("archive-plan-btn").addEventListener("click",()=>savePlanAction("archive"));
 el("refresh-analysis-btn").addEventListener("click",refreshAnalysis);
 el("select-all-btn").addEventListener("click",()=>setAllVisible(true));
 el("clear-selected-btn").addEventListener("click",()=>setAllVisible(false));
@@ -660,6 +917,10 @@ el("clear-filters-btn").addEventListener("click",clearFilters);
 el("remove-plan-btn").addEventListener("click",()=>removePlanItems());
 el("apply-btn").addEventListener("click",()=>startJob("apply"));
 el("remove-btn").addEventListener("click",()=>startJob("remove"));
+el("reconcile-btn").addEventListener("click",reconcileSelected);
+el("confirm-job-btn").addEventListener("click",confirmPendingJob);
+el("export-preflight-btn").addEventListener("click",exportPreflightCsv);
+document.querySelectorAll("[data-close-dialog]").forEach(button=>button.addEventListener("click",()=>el(button.dataset.closeDialog)?.close()));
 loadPlanner(new URLSearchParams(location.search).get("planId")||"");
 </script>
 </body>

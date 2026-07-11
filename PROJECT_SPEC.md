@@ -83,7 +83,7 @@ Primary table groups:
 - Collection reorder: `collection_reorder_audit`.
 - Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
 - Weekly actions: `weekly_actions`, `weekly_action_events`.
-- Sale planner: `sale_plans`, `sale_plan_items`, `sale_plan_events`, plus Sale collection mapping stored in `app_settings.salePlannerCollections`.
+- Sale planner: `sale_plans`, `sale_plan_items`, `sale_plan_events`, the variant restoration ledger in `sale_state_ledger`, markdown outcomes/actions, durable `sale_planner_jobs` and `sale_planner_job_items`, plus Sale collection mapping stored in `app_settings.salePlannerCollections`.
 - P&L planner: reusable `pnl_cost_rules`, dated manual/automated `pnl_marketing_spend` entries, raw `pnl_marketing_spend_actuals` rows for Windsor campaign spend, and `pnl_windsor_sync_runs` for sync coverage/cooldown tracking.
 - Email merchandising: `email_campaigns`, immutable product snapshots in `email_campaign_products`, and source-specific `email_campaign_metric_snapshots`.
 
@@ -260,8 +260,13 @@ Shopify and Google:
 - `POST /api/sale-planner/items/update`
 - `POST /api/sale-planner/items/remove`
 - `POST /api/sale-planner/config`
+- `POST /api/sale-planner/collections/refresh`
+- `POST /api/sale-planner/plans/save`
+- `POST /api/sale-planner/preflight`
+- `POST /api/sale-planner/reconcile`
 - `POST /api/sale-planner/apply/start`
 - `GET /api/sale-planner/apply/status`
+- `POST /api/sale-planner/jobs/resume`
 - `POST /api/sale-planner/remove/start`
 - `GET /api/google-auth/start`
 - `GET /api/google-auth/callback`
@@ -435,20 +440,23 @@ The Sale Planner is the operational markdown workflow for Shopify sale changes.
 Key principles:
 
 - Buyer, Merchandising, and Admin users can import products, review suggested markdowns, and edit sale-plan items. Only Admin users can apply or remove live Shopify sale state.
+- Plans can be created, renamed, duplicated, given a review date, and archived once they have no live Applied rows. Users submit an editable plan for approval; an Admin approves a SHA-256 snapshot of its items, variant targets, and collection targets. Any later item, import, removal, or propagated mapping edit invalidates that approval. Shopify apply requires the current plan to match its approved snapshot.
 - Products can be imported from Weekly Actions or Product Merchandising. Importing Weekly Action rows sets open markdown actions to `In progress` and records a weekly action event.
 - Non-applied rows can be removed from the planner without changing Shopify. Applied rows must use the remove-from-sale workflow first, preserving the audit trail and stored collection targets.
 - Suggested markdowns use a risk ladder of 10%, 20%, 30%, 40%, and 50%. The score considers stock, cover weeks, sell-through, weak sales, stock value, age, season, existing markdown state, and failed/deeper markdown signals.
 - Sale prices round to the nearest pound by default. Existing markdowns use `compareAtPrice` as the original price and only recommend the same or a deeper markdown step.
-- Multi-variant products receive the same discount percentage per variant, calculated from each variant's own original/current price. Manual target-price edits update every stored variant target so Shopify receives the visible plan price. The planner shows target GP% using `(((retail price / 1.2) - cost price) / (retail price / 1.2))`, with the row value using the lowest variant GP%. Warnings are shown for missing variants, missing prices, final-clearance markdowns, missing Sale collections, and target prices below cost.
-- Sale collection mapping auto-detects the root `Sale` collection and child collections such as `Sale Tops`; Admin users can save overrides in `app_settings.salePlannerCollections`.
+- Multi-variant products receive the same discount percentage per variant, calculated from each variant's own original/current price. Manual target-price edits update every stored variant target so Shopify receives the visible plan price. The planner shows requested and effective variant markdowns plus target GP% using `(((retail price / 1.2) - cost price) / (retail price / 1.2))`, with the row value using the lowest variant GP%. Missing cost is visible; by default cost is required at 40%+ markdown (`SALE_PLANNER_REQUIRE_COST_AT_DISCOUNT`) and target GP cannot fall below `SALE_PLANNER_MIN_GP_PCT`, defaulting to 0%.
+- Apply preflight blocks incompatible row states, missing Shopify/variant/original-price data, zero or above-RRP targets, no live stock, inactive/unpublished products, gift cards, missing root Sale collection, unapproved snapshots, and stale Shopify price state. Child collection gaps and lower-risk missing costs remain visible warnings. Apply accepts only Planned/Error rows and removal accepts only Applied rows.
+- Sale collection mapping auto-detects the root `Sale` collection and child collections such as `Sale Tops`; Admin users can save overrides in `app_settings.salePlannerCollections`. Shopify collections are cached for 15 minutes by default (`SALE_PLANNER_COLLECTION_CACHE_MINUTES`), the page receives only relevant Sale candidates plus saved selections, and saving a mapping propagates it to editable rows while leaving Applied rows' removal targets unchanged.
 - Applying sale state preflights the live Shopify product and blocks stale plans when planned variant prices no longer match Shopify. Successful applies update variant `price` and `compareAtPrice`, then add the product to the root Sale collection and mapped child Sale collection.
 - Applying sale state also writes Shopify `custom.product_status` to `S`. Removing sale state writes it back to `N`.
 - Sale state keeps a local variant-level ledger of the first true RRP, so incremental markdowns and final restore actions use the original RRP rather than a previous markdown price.
 - Removing sale state restores each variant to the ledger RRP, falling back to live `compareAtPrice`, clears `compareAtPrice`, and removes the product from the stored root/child Sale collections. If no restore price exists, the current price is left unchanged and a warning is recorded.
-- Sale analysis compares saved pre/post markdown report data, including sell-through and GA CVR, and stores outcomes as `worked`, `watch`, `deepen`, or `remove`. Those outcomes inform future markdown step recommendations for similar product type/season combinations.
+- Sale analysis compares equal numbers of non-overlapping completed Monday-Sunday pre/post reports, including sell-through and GA CVR, and stores outcomes as `worked`, `watch`, `deepen`, or `remove` with comparable-week confidence. Only medium/high-confidence outcomes train future markdown steps, and learning requires multiple corroborating successes/failures for the same product type/season.
 - Analysis refresh also creates a persistent action queue for the small number of changed recommendations from a large sale plan. Queue actions include deeper markdowns, sale removals, and low-view markdowns where poor performance may be an exposure issue rather than a price issue.
 - Users can mark analysis actions as `Pending`, `Accepted`, `Ignored`, `Snoozed`, or `Applied`. Selected deepen/remove actions can create a follow-up sale plan containing only those products, so Admin users can apply the existing Shopify job workflow without re-reviewing the full original sale list.
-- Apply and remove jobs are kept in memory while running and write item-level results plus `sale_plan_events` audit rows. If the server restarts, users should refresh the planner and verify Shopify before retrying.
+- Apply and remove jobs preflight the complete selection before the first Shopify mutation. Jobs and item-level price/collection/metafield checkpoints are durable in SQLite; partial failures can be resumed idempotently after a server restart. Item results and plan events retain the audit trail. A read-only reconciliation action compares Applied rows with live variant prices, compare-at prices, Sale collection membership, and `custom.product_status`.
+- The planner keeps the primary product review ahead of analysis, uses one searchable Sale-collection datalist, exposes filtered/selected retail and GP totals, provides mobile product cards and variant detail, and offers a downloadable CSV of the immutable preflight diff. Analysis/action areas become compact when no comparable outcome data exists.
 
 ### P&L Planner
 

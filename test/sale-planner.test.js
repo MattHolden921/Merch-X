@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   collectionMembershipForProduct,
+  effectiveDiscountPercent,
   gpPercentFromRetail,
   matchSaleChildCollection,
   markdownActionRecommendation,
@@ -16,6 +17,7 @@ const {
   removeSaleTargets,
   roundSalePrice,
   targetPriceForDiscount,
+  validateSaleItem,
   variantSaleTargets
 } = require("../lib/sale-planner");
 
@@ -146,12 +148,44 @@ test("learning nudges future markdown steps from similar outcomes", () => {
   const product = { productType: "Dresses", season: "SS26" };
   assert.equal(markdownLearningStep(product, 20, [
     { productType: "Dresses", season: "SS26", discountPercent: 20, outcome: "deepen" },
+    { productType: "Dresses", season: "SS26", discountPercent: 20, outcome: "deepen" },
+    { productType: "Dresses", season: "SS26", discountPercent: 30, outcome: "worked" },
     { productType: "Dresses", season: "SS26", discountPercent: 30, outcome: "worked" }
   ]), 30);
   assert.equal(markdownLearningStep(product, 30, [
     { productType: "Dresses", season: "SS26", discountPercent: 10, outcome: "worked" },
-    { productType: "Dresses", season: "SS26", discountPercent: 20, outcome: "worked" }
+    { productType: "Dresses", season: "SS26", discountPercent: 20, outcome: "worked" },
+    { productType: "Dresses", season: "SS26", discountPercent: 20, outcome: "worked" },
+    { productType: "Dresses", season: "SS26", discountPercent: 30, outcome: "watch" }
   ]), 20);
+  assert.equal(markdownLearningStep(product, 20, [
+    { productType: "Dresses", season: "SS26", discountPercent: 20, outcome: "deepen" },
+    { productType: "Dresses", season: "SS26", discountPercent: 30, outcome: "worked" }
+  ]), 20);
+});
+
+test("validates sale state, price, collection, stock, cost, and GP guardrails", () => {
+  assert.equal(effectiveDiscountPercent(49, 39), 20.4);
+  const valid = validateSaleItem({
+    status: "Planned",
+    shopifyProductId: "gid://shopify/Product/1",
+    stock: 12,
+    rootSaleCollectionId: "gid://shopify/Collection/1",
+    childSaleCollectionId: "gid://shopify/Collection/2",
+    variants: [{ id: "v1", sku: "A", originalPrice: 60, targetPrice: 42, cost: 20 }]
+  }, { mode: "apply", minGpPct: 20, requireCostAtDiscount: 40 });
+  assert.deepEqual(valid.errors, []);
+
+  const blocked = validateSaleItem({
+    status: "Applied",
+    shopifyProductId: "gid://shopify/Product/1",
+    stock: 0,
+    variants: [{ id: "", sku: "A", originalPrice: 50, targetPrice: 55, cost: null }]
+  }, { mode: "apply", minGpPct: 20, requireCostAtDiscount: 40 });
+  assert.ok(blocked.errors.some(message => message.includes("requires Planned")));
+  assert.ok(blocked.errors.some(message => message.includes("no stock")));
+  assert.ok(blocked.errors.some(message => message.includes("Root Sale")));
+  assert.ok(blocked.errors.some(message => message.includes("cannot exceed")));
 });
 
 test("builds action recommendations and flags low views before deeper markdowns", () => {

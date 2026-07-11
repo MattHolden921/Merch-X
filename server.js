@@ -4123,6 +4123,38 @@ function openOrderSqliteDb() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS sale_planner_jobs (
+      id TEXT PRIMARY KEY,
+      plan_id TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      actor_name TEXT,
+      total_items INTEGER NOT NULL DEFAULT 0,
+      processed_items INTEGER NOT NULL DEFAULT 0,
+      ok_items INTEGER NOT NULL DEFAULT 0,
+      error_items INTEGER NOT NULL DEFAULT 0,
+      message TEXT,
+      error TEXT,
+      results_json TEXT,
+      started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      finished_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sale_planner_job_items (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      plan_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      steps_json TEXT,
+      error TEXT,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS pnl_cost_rules (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -4285,6 +4317,9 @@ function openOrderSqliteDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_actions_unique ON sale_analysis_actions(plan_id, item_id, action_type);
     CREATE INDEX IF NOT EXISTS idx_sale_actions_plan_status ON sale_analysis_actions(plan_id, status, changed, updated_at);
     CREATE INDEX IF NOT EXISTS idx_sale_actions_type ON sale_analysis_actions(action_type, status, priority);
+    CREATE INDEX IF NOT EXISTS idx_sale_jobs_plan ON sale_planner_jobs(plan_id, started_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_job_items_unique ON sale_planner_job_items(job_id, item_id);
+    CREATE INDEX IF NOT EXISTS idx_sale_job_items_status ON sale_planner_job_items(job_id, status, updated_at);
     CREATE INDEX IF NOT EXISTS idx_pnl_cost_rules_status ON pnl_cost_rules(status, category, updated_at);
     CREATE INDEX IF NOT EXISTS idx_pnl_marketing_spend_dates ON pnl_marketing_spend(start_date, end_date, channel);
     CREATE INDEX IF NOT EXISTS idx_pnl_marketing_actuals_dates ON pnl_marketing_spend_actuals(source, connector, spend_date);
@@ -9032,10 +9067,33 @@ function ensureSalePlan(body = {}, req = {}) {
   return salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(id));
 }
 
-async function fetchShopifyCollectionsForSalePlanner() {
+let salePlannerCollectionCache = { fetchedAt: 0, result: null };
+
+function salePlannerCollectionCacheMs() {
+  return Math.max(60_000, Number(process.env.SALE_PLANNER_COLLECTION_CACHE_MINUTES || 15) * 60_000);
+}
+
+function salePlannerCollectionChoices(collections = [], config = {}, items = []) {
+  const selectedIds = new Set([
+    config.rootSaleCollectionId,
+    ...Object.values(config.childCollectionByType || {}),
+    ...items.flatMap(item => [item.rootSaleCollectionId, item.childSaleCollectionId])
+  ].filter(Boolean).map(String));
+  const candidates = collections.filter(collection => {
+    const key = salePlanner.normalizeKey(collection.handle || collection.title);
+    const titleKey = salePlanner.normalizeKey(collection.title);
+    return selectedIds.has(String(collection.id)) || key === "sale" || titleKey === "sale" || key.startsWith("sale-") || titleKey.startsWith("sale-");
+  });
+  return candidates.sort((left, right) => String(left.title || "").localeCompare(String(right.title || "")));
+}
+
+async function fetchShopifyCollectionsForSalePlanner(options = {}) {
   const { shop, clientId, clientSecret } = shopifyConfig();
   if (!shop || !clientId || !clientSecret) {
     return { configured: false, message: "Set Shopify credentials to map sale collections.", collections: [] };
+  }
+  if (!options.force && salePlannerCollectionCache.result && Date.now() - salePlannerCollectionCache.fetchedAt < salePlannerCollectionCacheMs()) {
+    return { ...salePlannerCollectionCache.result, cached: true };
   }
   const query = `
     query SalePlannerCollections($limit: Int!, $cursor: String) {
@@ -9062,7 +9120,9 @@ async function fetchShopifyCollectionsForSalePlanner() {
     hasNextPage = Boolean(data.collections?.pageInfo?.hasNextPage);
     cursor = data.collections?.pageInfo?.endCursor || null;
   }
-  return { configured: true, collections };
+  const result = { configured: true, collections, fetchedAt: new Date().toISOString() };
+  salePlannerCollectionCache = { fetchedAt: Date.now(), result };
+  return result;
 }
 
 async function fetchShopifyProductSaleState(productId) {
@@ -9335,7 +9395,8 @@ function readMarkdownLearningOutcomes(limit = 250) {
     SELECT product_type AS productType,
            season,
            discount_percent AS discountPercent,
-           outcome
+           outcome,
+           data
     FROM sale_markdown_outcomes
     WHERE outcome IN ('worked', 'remove', 'deepen', 'failed')
     ORDER BY updated_at DESC
@@ -9344,8 +9405,9 @@ function readMarkdownLearningOutcomes(limit = 250) {
     productType: row.productType || "",
     season: row.season || "",
     discountPercent: Number(row.discountPercent || 0),
-    outcome: row.outcome || ""
-  }));
+    outcome: row.outcome || "",
+    confidence: parseJson(row.data, {}).confidence || "unavailable"
+  })).filter(row => ["medium", "high"].includes(row.confidence));
 }
 
 function salePlanItemParams(plan, product, collections, config, options = {}) {
@@ -9474,8 +9536,23 @@ function upsertSalePlanItem(params, actor = "") {
     `).run(payload);
     recordSalePlanEvent(params.planId, id, "imported", actor, "Product added to sale plan", { title: params.title });
   }
-  db.prepare("UPDATE sale_plans SET updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(params.planId);
+  invalidateSalePlanApproval(params.planId);
   return salePlanItemFromRow(db.prepare("SELECT * FROM sale_plan_items WHERE id = ?").get(id));
+}
+
+function invalidateSalePlanApproval(planId) {
+  const db = openOrderSqliteDb();
+  const plan = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(planId));
+  if (!plan) return;
+  const data = { ...(plan.data || {}) };
+  delete data.approvedAt;
+  delete data.approvedBy;
+  delete data.approvedSnapshotHash;
+  delete data.submittedAt;
+  delete data.submittedBy;
+  delete data.submittedSnapshotHash;
+  const status = ["Ready", "Awaiting approval"].includes(plan.status) ? "Draft" : plan.status;
+  db.prepare("UPDATE sale_plans SET status = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, JSON.stringify(data), planId);
 }
 
 async function handleSalePlannerImport(req, res) {
@@ -9606,16 +9683,36 @@ function aggregateSaleMetricRows(rows = [], fallbackStock = 0) {
   };
 }
 
+function comparableSaleMetricPeriods(rows = [], appliedDate) {
+  const unique = new Map();
+  for (const row of rows) {
+    if (dateDiffInclusive(row.start_date, row.end_date) !== 7) continue;
+    if (reportUtcDate(row.start_date).getUTCDay() !== 1) continue;
+    unique.set(`${row.start_date}|${row.end_date}`, row);
+  }
+  const periods = [...unique.values()].sort((left, right) => String(left.start_date).localeCompare(String(right.start_date)));
+  const before = periods.filter(row => row.end_date < appliedDate);
+  const after = periods.filter(row => row.start_date >= appliedDate);
+  const count = Math.min(4, before.length, after.length);
+  return {
+    preRows: count ? before.slice(-count) : [],
+    postRows: count ? after.slice(0, count) : [],
+    comparableWeeks: count,
+    confidence: count >= 4 ? "high" : count >= 2 ? "medium" : count === 1 ? "low" : "unavailable"
+  };
+}
+
 function analyseSalePlanItem(item, now = new Date()) {
   const appliedDate = String(item.appliedAt || item.data?.appliedAt || "").slice(0, 10);
   if (!appliedDate) return null;
   const rows = metricRowsForSaleItem(item, appliedDate);
-  const preRows = rows.filter(row => row.end_date < appliedDate).slice(-4);
-  const postRows = rows.filter(row => row.start_date >= appliedDate).slice(0, 4);
+  const comparable = comparableSaleMetricPeriods(rows, appliedDate);
+  const preRows = comparable.preRows;
+  const postRows = comparable.postRows;
   const pre = aggregateSaleMetricRows(preRows, item.stock);
   const post = aggregateSaleMetricRows(postRows, item.stock);
   const latestEndDate = post.endDate || now.toISOString().slice(0, 10);
-  const daysObserved = postRows.length ? Math.min(28, Math.max(dateDiffInclusive(appliedDate, latestEndDate), 0)) : 0;
+  const daysObserved = comparable.comparableWeeks * 7;
   const outcome = salePlanner.markdownOutcome({
     preUnits: pre.units,
     preStock: pre.stock,
@@ -9628,9 +9725,9 @@ function analyseSalePlanItem(item, now = new Date()) {
     daysObserved,
     startStock: Number(item.stock || 0) + Number(pre.units || 0)
   });
-  if (!postRows.length) {
+  if (!comparable.comparableWeeks) {
     outcome.outcome = "watch";
-    outcome.reason = "No post-markdown report data yet.";
+    outcome.reason = "Comparable completed Monday-Sunday weeks are not available yet.";
     outcome.early = true;
   }
   return {
@@ -9653,7 +9750,9 @@ function analyseSalePlanItem(item, now = new Date()) {
       imageUrl: item.imageUrl,
       originalPrice: item.originalPrice,
       currentPrice: item.currentPrice,
-      targetPrice: item.targetPrice
+      targetPrice: item.targetPrice,
+      comparableWeeks: comparable.comparableWeeks,
+      confidence: comparable.confidence
     }
   };
 }
@@ -9748,6 +9847,7 @@ function saleOutcomeFromRow(row) {
 }
 
 function saleAnalysisSummary(outcomes = [], items = []) {
+  const comparable = outcomes.filter(row => ["medium", "high"].includes(row.data?.confidence));
   const summary = {
     analysed: outcomes.length,
     appliedItems: items.filter(item => item.appliedAt || item.status === "Applied" || item.status === "Removed").length,
@@ -9756,12 +9856,15 @@ function saleAnalysisSummary(outcomes = [], items = []) {
     deepen: outcomes.filter(row => row.outcome === "deepen").length,
     remove: outcomes.filter(row => row.outcome === "remove").length,
     early: outcomes.filter(row => Number(row.daysObserved || 0) < 14).length,
+    comparable: comparable.length,
+    highConfidence: outcomes.filter(row => row.data?.confidence === "high").length,
+    unavailable: outcomes.filter(row => !row.data?.comparableWeeks).length,
     avgSellThroughLift: 0,
     avgCvrLift: 0
   };
-  if (outcomes.length) {
-    summary.avgSellThroughLift = Math.round((outcomes.reduce((sum, row) => sum + Number(row.sellThroughLift || 0), 0) / outcomes.length) * 1000) / 1000;
-    summary.avgCvrLift = Math.round((outcomes.reduce((sum, row) => sum + Number(row.cvrLift || 0), 0) / outcomes.length) * 1000) / 1000;
+  if (comparable.length) {
+    summary.avgSellThroughLift = Math.round((comparable.reduce((sum, row) => sum + Number(row.sellThroughLift || 0), 0) / comparable.length) * 1000) / 1000;
+    summary.avgCvrLift = Math.round((comparable.reduce((sum, row) => sum + Number(row.cvrLift || 0), 0) / comparable.length) * 1000) / 1000;
   }
   return summary;
 }
@@ -9781,6 +9884,8 @@ function compactSaleOutcome(row) {
     postStock: row.postStock,
     sellThroughLift: row.sellThroughLift,
     cvrLift: row.cvrLift,
+    comparableWeeks: Number(row.data?.comparableWeeks || 0),
+    confidence: row.data?.confidence || "unavailable",
     updatedAt: row.updatedAt
   };
 }
@@ -9847,6 +9952,7 @@ function buildSaleAnalysisActions(planId, outcomes = [], items = []) {
       minDays: 7
     });
     if (!recommendation) return null;
+    if (["deepen", "remove"].includes(recommendation.actionType) && !["medium", "high"].includes(outcome.data?.confidence)) return null;
     const lowViews = recommendation.data?.lowViews || {};
     const action = {
       id: crypto.randomUUID(),
@@ -10060,7 +10166,7 @@ function refreshSalePlannerAnalysis(plan, items = []) {
 
 async function readSalePlannerResponse(req, selectedPlanId = "") {
   const db = openOrderSqliteDb();
-  const plans = db.prepare("SELECT * FROM sale_plans ORDER BY updated_at DESC LIMIT 25").all().map(salePlanFromRow);
+  const plans = db.prepare("SELECT * FROM sale_plans ORDER BY CASE WHEN status = 'Archived' THEN 1 ELSE 0 END, updated_at DESC LIMIT 100").all().map(salePlanFromRow);
   const selectedId = selectedPlanId || plans[0]?.id || "";
   const plan = selectedId ? salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(selectedId)) : null;
   const items = plan ? readSalePlannerItems(plan.id) : [];
@@ -10071,6 +10177,7 @@ async function readSalePlannerResponse(req, selectedPlanId = "") {
     collectionResult = { configured: true, message: error.message, collections: [] };
   }
   const config = readSalePlannerConfig();
+  const collections = salePlannerCollectionChoices(collectionResult.collections || [], config, items);
   return {
     plans,
     plan,
@@ -10079,10 +10186,17 @@ async function readSalePlannerResponse(req, selectedPlanId = "") {
     metrics: salePlannerMetrics(items),
     analysis: plan ? readSalePlannerAnalysis(plan.id, items) : readSalePlannerAnalysis("", []),
     collectionConfig: config,
-    collections: collectionResult.collections || [],
+    collections,
+    collectionCount: Number((collectionResult.collections || []).length),
+    collectionsCached: Boolean(collectionResult.cached),
     shopifyConfigured: collectionResult.configured,
     shopifyMessage: collectionResult.message || "",
     canApply: userHasRole(req.currentUser, ["Admin"]),
+    recentJobs: plan ? recentSalePlannerJobs(plan.id) : [],
+    policies: {
+      minGpPct: Number(process.env.SALE_PLANNER_MIN_GP_PCT || 0),
+      requireCostAtDiscount: Number(process.env.SALE_PLANNER_REQUIRE_COST_AT_DISCOUNT || 40)
+    },
     generatedAt: new Date().toISOString()
   };
 }
@@ -10095,7 +10209,156 @@ async function handleSalePlannerGet(req, res) {
 async function handleSalePlannerConfig(req, res) {
   const body = await readJsonBody(req);
   const config = writeSalePlannerConfig(body.config || body);
-  sendJson(res, 200, { ok: true, config, ...(await readSalePlannerResponse(req, body.planId || "")) });
+  const planId = String(body.planId || "").trim();
+  let propagated = 0;
+  if (planId && body.applyToPlan !== false) {
+    const collectionResult = await fetchShopifyCollectionsForSalePlanner();
+    const collections = collectionResult.collections || [];
+    const db = openOrderSqliteDb();
+    const items = readSalePlannerItems(planId).filter(item => ["Planned", "Error"].includes(item.status));
+    const update = db.prepare(`
+      UPDATE sale_plan_items
+      SET root_sale_collection_id = ?,
+          child_sale_collection_id = ?,
+          warnings_json = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+    const transaction = db.transaction(rows => {
+      for (const item of rows) {
+        const membership = salePlanner.collectionMembershipForProduct(item, collections, config.childCollectionByType);
+        const rootId = config.rootSaleCollectionId || membership.rootSale?.id || "";
+        const childId = config.childCollectionByType[item.productType] || membership.childSale?.id || "";
+        const warnings = (item.warnings || []).filter(warning => !/Sale collection|Root Sale collection|Sale child collection/i.test(String(warning)));
+        if (!rootId) warnings.push("Root Sale collection not found.");
+        if (!childId) warnings.push(`Sale child collection not found for ${item.productType || "product type"}.`);
+        update.run(rootId, childId, JSON.stringify([...new Set(warnings)]), item.id);
+      }
+    });
+    transaction(items);
+    propagated = items.length;
+    if (propagated) {
+      invalidateSalePlanApproval(planId);
+      recordSalePlanEvent(planId, "", "mapping_propagated", actorName(req), `Sale collection mapping applied to ${propagated} editable item${propagated === 1 ? "" : "s"}`, actorData(req));
+    }
+  }
+  sendJson(res, 200, { ok: true, config, propagated, ...(await readSalePlannerResponse(req, planId)) });
+}
+
+async function handleSalePlannerCollectionsRefresh(req, res) {
+  const body = await readJsonBody(req);
+  await fetchShopifyCollectionsForSalePlanner({ force: true });
+  sendJson(res, 200, { ok: true, ...(await readSalePlannerResponse(req, body.planId || "")) });
+}
+
+function salePlanSnapshotHash(items = []) {
+  const payload = items.map(item => ({
+    id: item.id, productKey: item.productKey, targetPrice: item.targetPrice,
+    discountPercent: item.discountPercent, root: item.rootSaleCollectionId,
+    child: item.childSaleCollectionId, variants: item.variants
+  })).sort((left, right) => left.id.localeCompare(right.id));
+  return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
+async function handleSalePlannerPlanSave(req, res) {
+  const body = await readJsonBody(req);
+  const action = String(body.action || "create").trim().toLowerCase();
+  const db = openOrderSqliteDb();
+  let plan = null;
+  if (action === "create") {
+    plan = createSalePlanRecord({ name: String(body.name || `Sale plan ${todayIsoDate()}`).trim(), status: "Draft", sourceType: "manual", sourceLabel: "Sale Planner" }, req);
+  } else {
+    const planId = String(body.planId || "").trim();
+    const source = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(planId));
+    if (!source) throw new Error("Sale plan not found.");
+    if (action === "rename") {
+      const name = String(body.name || "").trim();
+      if (!name) throw new Error("Enter a sale plan name.");
+      db.prepare("UPDATE sale_plans SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(name, planId);
+      recordSalePlanEvent(planId, "", "renamed", actorName(req), `Sale plan renamed to ${name}`, actorData(req));
+      plan = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(planId));
+    } else if (action === "archive") {
+      const applied = db.prepare("SELECT COUNT(*) AS count FROM sale_plan_items WHERE plan_id = ? AND status = 'Applied'").get(planId)?.count || 0;
+      if (applied) throw new Error("Remove all live sale items before archiving this plan.");
+      db.prepare("UPDATE sale_plans SET status = 'Archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(planId);
+      recordSalePlanEvent(planId, "", "archived", actorName(req), "Sale plan archived", actorData(req));
+      plan = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(planId));
+    } else if (action === "duplicate") {
+      const sourceItems = readSalePlannerItems(planId).filter(item => ["Planned", "Error"].includes(item.status));
+      if (!sourceItems.length) throw new Error("This plan has no editable rows to duplicate.");
+      plan = createSalePlanRecord({
+        name: String(body.name || `${source.name} copy`).trim(),
+        status: "Draft",
+        sourceType: "sale_plan_copy",
+        sourceLabel: source.name,
+        data: { ...(source.data || {}), sourcePlanId: source.id }
+      }, req);
+      for (const item of sourceItems) {
+        upsertSalePlanItem({
+          id: crypto.randomUUID(), planId: plan.id, productKey: item.productKey,
+          shopifyProductId: item.shopifyProductId, legacyResourceId: item.legacyResourceId,
+          title: item.title, handle: item.handle, sku: item.sku, productType: item.productType,
+          season: item.season, imageUrl: item.imageUrl, currentPrice: item.currentPrice,
+          originalPrice: item.originalPrice, compareAtPrice: item.compareAtPrice,
+          targetPrice: item.targetPrice, discountPercent: item.discountPercent, stock: item.stock,
+          units: item.units, revenue: item.revenue, coverWks: item.coverWks, riskScore: item.riskScore,
+          rootSaleCollectionId: item.rootSaleCollectionId, childSaleCollectionId: item.childSaleCollectionId,
+          status: "Planned", warningsJson: JSON.stringify(item.warnings || []),
+          variantsJson: JSON.stringify(item.variants || []), metricsJson: JSON.stringify(item.metrics || {}),
+          data: JSON.stringify({ ...(item.data || {}), sourcePlanId: source.id, sourceItemId: item.id }),
+          sourceType: "sale_plan_copy", sourceId: item.id, lastError: ""
+        }, actorName(req));
+      }
+    } else if (action === "schedule") {
+      const reviewDate = reportUtcDate(body.reviewDate);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.reviewDate || "")) || !Number.isFinite(reviewDate.getTime()) || reviewDate.toISOString().slice(0, 10) !== body.reviewDate) throw new Error("Choose a valid review date.");
+      const data = { ...(source.data || {}), reviewDate: body.reviewDate };
+      db.prepare("UPDATE sale_plans SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(data), planId);
+      recordSalePlanEvent(planId, "", "review_scheduled", actorName(req), `Sale review scheduled for ${body.reviewDate}`, actorData(req));
+      plan = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(planId));
+    } else if (["submit", "approve", "reopen"].includes(action)) {
+      const items = readSalePlannerItems(planId).filter(item => ["Planned", "Error"].includes(item.status));
+      if (action !== "reopen" && !items.length) throw new Error("Add editable products before submitting this plan.");
+      if (["submit", "approve"].includes(action) && items.some(item => item.status === "Error")) throw new Error("Resolve Error rows before submitting or approving this plan.");
+      if (["submit", "approve"].includes(action)) {
+        const blockers = items.flatMap(item => salePlanner.validateSaleItem(item, {
+          mode: "apply",
+          minGpPct: Number(process.env.SALE_PLANNER_MIN_GP_PCT || 0),
+          requireCostAtDiscount: Number(process.env.SALE_PLANNER_REQUIRE_COST_AT_DISCOUNT || 40)
+        }).errors.map(message => `${item.title}: ${message}`));
+        if (blockers.length) throw new Error(`Resolve plan blockers before approval: ${blockers.slice(0, 8).join(" ")}`);
+      }
+      if (action === "approve" && !userHasRole(req.currentUser, ["Admin"])) throw new Error("Only Admin users can approve sale plans.");
+      if (action === "approve" && source.status !== "Awaiting approval") throw new Error("Submit the plan for approval before approving it.");
+      const data = { ...(source.data || {}) };
+      const snapshotHash = salePlanSnapshotHash(readSalePlannerItems(planId).filter(item => item.status !== "Removed"));
+      let status = "Draft";
+      let message = "Sale plan reopened for editing";
+      if (action === "submit") {
+        status = "Awaiting approval";
+        data.submittedAt = new Date().toISOString();
+        data.submittedBy = actorName(req);
+        data.submittedSnapshotHash = snapshotHash;
+        message = "Sale plan submitted for Admin approval";
+      } else if (action === "approve") {
+        status = "Ready";
+        data.approvedAt = new Date().toISOString();
+        data.approvedBy = actorName(req);
+        data.approvedSnapshotHash = snapshotHash;
+        message = "Sale plan approved for Shopify apply";
+      } else {
+        delete data.approvedAt;
+        delete data.approvedBy;
+        delete data.approvedSnapshotHash;
+      }
+      db.prepare("UPDATE sale_plans SET status = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, JSON.stringify(data), planId);
+      recordSalePlanEvent(planId, "", action, actorName(req), message, { snapshotHash, ...actorData(req) });
+      plan = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(planId));
+    } else {
+      throw new Error("Choose create, rename, duplicate, archive, schedule, submit, approve, or reopen.");
+    }
+  }
+  sendJson(res, 200, { ok: true, plan, ...(await readSalePlannerResponse(req, plan.id)) });
 }
 
 async function handleSalePlannerAnalysisRefresh(req, res) {
@@ -10322,7 +10585,15 @@ async function handleSalePlannerItemsUpdate(req, res) {
   for (const id of ids) {
     const current = salePlanItemFromRow(db.prepare("SELECT * FROM sale_plan_items WHERE id = ?").get(id));
     if (!current) continue;
-    let discountPercent = Object.prototype.hasOwnProperty.call(patch, "discountPercent") ? Math.max(0, Math.min(90, Number(patch.discountPercent || 0))) : current.discountPercent;
+    const currentPlan = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(current.planId));
+    if (currentPlan?.status === "Archived") throw new Error("Archived sale plans are read-only.");
+    if (!["Planned", "Error"].includes(current.status)) throw new Error(`${current.title} is ${current.status} and cannot be edited. Use the dedicated apply or remove workflow.`);
+    if (Object.prototype.hasOwnProperty.call(patch, "status")) throw new Error("Sale item status is controlled by the apply and remove workflows.");
+    const requestedDiscount = Number(patch.discountPercent);
+    if (Object.prototype.hasOwnProperty.call(patch, "discountPercent") && (!Number.isFinite(requestedDiscount) || requestedDiscount < 0 || requestedDiscount > 90)) {
+      throw new Error("Discount must be between 0% and 90%.");
+    }
+    let discountPercent = Object.prototype.hasOwnProperty.call(patch, "discountPercent") ? requestedDiscount : current.discountPercent;
     let variants = current.variants || [];
     let targetPrice = current.targetPrice;
     if (Object.prototype.hasOwnProperty.call(patch, "discountPercent")) {
@@ -10335,14 +10606,29 @@ async function handleSalePlannerItemsUpdate(req, res) {
       variants = saleItemVariantsWithGp(variants);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "targetPrice")) {
-      targetPrice = Math.max(0, Number(patch.targetPrice || 0));
+      targetPrice = Number(patch.targetPrice);
+      if (!Number.isFinite(targetPrice) || targetPrice <= 0) throw new Error("Target price must be greater than zero.");
+      if (current.originalPrice > 0 && targetPrice > current.originalPrice) throw new Error("Target price cannot exceed the original price.");
       if (current.originalPrice > 0 && targetPrice > 0) discountPercent = Math.round(((current.originalPrice - targetPrice) / current.originalPrice) * 100);
       variants = saleItemVariantsForManualTarget(variants, targetPrice, discountPercent);
     }
     const metrics = { ...(current.metrics || {}), targetGpPct: saleItemTargetGpPct(variants) };
-    const warnings = new Set((current.warnings || []).filter(warning => !/below variant cost/i.test(String(warning))));
+    const warnings = new Set((current.warnings || []).filter(warning => !/below variant cost|cost is missing|target GP/i.test(String(warning))));
     for (const variant of variants) for (const warning of variant.warnings || []) warnings.add(warning);
-    const nextStatus = Object.prototype.hasOwnProperty.call(patch, "status") ? String(patch.status || current.status).trim() : current.status;
+    const validation = salePlanner.validateSaleItem({
+      ...current,
+      targetPrice,
+      discountPercent,
+      rootSaleCollectionId: Object.prototype.hasOwnProperty.call(patch, "rootSaleCollectionId") ? String(patch.rootSaleCollectionId || "") : current.rootSaleCollectionId,
+      childSaleCollectionId: Object.prototype.hasOwnProperty.call(patch, "childSaleCollectionId") ? String(patch.childSaleCollectionId || "") : current.childSaleCollectionId,
+      variants
+    }, {
+      mode: "apply",
+      allowRetry: true,
+      minGpPct: Number(process.env.SALE_PLANNER_MIN_GP_PCT || 0),
+      requireCostAtDiscount: Number(process.env.SALE_PLANNER_REQUIRE_COST_AT_DISCOUNT || 40)
+    });
+    for (const warning of validation.warnings) warnings.add(warning);
     db.prepare(`
       UPDATE sale_plan_items
       SET target_price = @targetPrice,
@@ -10361,7 +10647,7 @@ async function handleSalePlannerItemsUpdate(req, res) {
       discountPercent,
       rootSaleCollectionId: Object.prototype.hasOwnProperty.call(patch, "rootSaleCollectionId") ? String(patch.rootSaleCollectionId || "") : current.rootSaleCollectionId,
       childSaleCollectionId: Object.prototype.hasOwnProperty.call(patch, "childSaleCollectionId") ? String(patch.childSaleCollectionId || "") : current.childSaleCollectionId,
-      status: ["Planned", "Applied", "Removed", "Error"].includes(nextStatus) ? nextStatus : current.status,
+      status: current.status === "Error" ? "Planned" : current.status,
       warningsJson: JSON.stringify([...warnings]),
       variantsJson: JSON.stringify(variants),
       metricsJson: JSON.stringify(metrics)
@@ -10370,6 +10656,7 @@ async function handleSalePlannerItemsUpdate(req, res) {
     updated.push(salePlanItemFromRow(db.prepare("SELECT * FROM sale_plan_items WHERE id = ?").get(id)));
   }
   const planId = updated[0]?.planId || body.planId || "";
+  if (planId && updated.length) invalidateSalePlanApproval(planId);
   sendJson(res, 200, { ok: true, updated, ...(await readSalePlannerResponse(req, planId)) });
 }
 
@@ -10380,6 +10667,10 @@ async function handleSalePlannerItemsRemove(req, res) {
   const db = openOrderSqliteDb();
   const rows = ids.map(id => salePlanItemFromRow(db.prepare("SELECT * FROM sale_plan_items WHERE id = ?").get(id))).filter(Boolean);
   if (!rows.length) throw new Error("Sale plan items were not found.");
+  const planIds = [...new Set(rows.map(item => item.planId))];
+  if (planIds.length !== 1 || (body.planId && String(body.planId) !== planIds[0])) throw new Error("Selected rows must belong to the current sale plan.");
+  const plan = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(planIds[0]));
+  if (plan?.status === "Archived") throw new Error("Archived sale plans are read-only.");
   const applied = rows.filter(item => item.status === "Applied");
   if (applied.length) {
     throw new Error("Applied sale items must be removed from sale before they can be removed from the planner.");
@@ -10394,11 +10685,135 @@ async function handleSalePlannerItemsRemove(req, res) {
     });
   }
   db.prepare(`DELETE FROM sale_plan_items WHERE id IN (${placeholders})`).run(...rows.map(item => item.id));
-  db.prepare("UPDATE sale_plans SET updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(planId);
+  invalidateSalePlanApproval(planId);
   sendJson(res, 200, { ok: true, removed: rows.map(item => item.id), ...(await readSalePlannerResponse(req, planId)) });
 }
 
 const salePlannerJobs = new Map();
+
+function salePlannerJobFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    mode: row.mode,
+    status: row.status,
+    planId: row.plan_id,
+    totalItems: Number(row.total_items || 0),
+    processedItems: Number(row.processed_items || 0),
+    okItems: Number(row.ok_items || 0),
+    errorItems: Number(row.error_items || 0),
+    message: row.message || "",
+    error: row.error || "",
+    results: parseJson(row.results_json, []),
+    actor: row.actor_name || "",
+    startedAt: row.started_at || "",
+    finishedAt: row.finished_at || ""
+  };
+}
+
+function salePlannerJobItemFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    jobId: row.job_id,
+    planId: row.plan_id,
+    itemId: row.item_id,
+    mode: row.mode,
+    status: row.status,
+    steps: parseJson(row.steps_json, {}),
+    error: row.error || "",
+    data: parseJson(row.data, {}),
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function persistSalePlannerJob(job) {
+  openOrderSqliteDb().prepare(`
+    INSERT INTO sale_planner_jobs (
+      id, plan_id, mode, status, actor_name, total_items, processed_items,
+      ok_items, error_items, message, error, results_json, started_at, finished_at, updated_at
+    ) VALUES (
+      @id, @planId, @mode, @status, @actor, @totalItems, @processedItems,
+      @okItems, @errorItems, @message, @error, @resultsJson, @startedAt, @finishedAt, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      status = excluded.status,
+      total_items = excluded.total_items,
+      processed_items = excluded.processed_items,
+      ok_items = excluded.ok_items,
+      error_items = excluded.error_items,
+      message = excluded.message,
+      error = excluded.error,
+      results_json = excluded.results_json,
+      finished_at = excluded.finished_at,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    ...job,
+    resultsJson: JSON.stringify(job.results || []),
+    finishedAt: job.finishedAt || null
+  });
+  salePlannerJobs.set(job.id, job);
+  return job;
+}
+
+function createSalePlannerJobItems(job, itemIds = []) {
+  const db = openOrderSqliteDb();
+  const insert = db.prepare(`
+    INSERT INTO sale_planner_job_items (
+      id, job_id, plan_id, item_id, mode, status, steps_json, error, data, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'queued', '{}', '', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(job_id, item_id) DO NOTHING
+  `);
+  const transaction = db.transaction(ids => {
+    for (const itemId of ids) insert.run(crypto.randomUUID(), job.id, job.planId, itemId, job.mode);
+  });
+  transaction(itemIds);
+}
+
+function readSalePlannerJob(jobId) {
+  const memory = salePlannerJobs.get(jobId);
+  if (memory) return memory;
+  return salePlannerJobFromRow(openOrderSqliteDb().prepare("SELECT * FROM sale_planner_jobs WHERE id = ?").get(jobId));
+}
+
+function readSalePlannerJobItems(jobId) {
+  return openOrderSqliteDb().prepare(`
+    SELECT * FROM sale_planner_job_items WHERE job_id = ? ORDER BY created_at, id
+  `).all(jobId).map(salePlannerJobItemFromRow).filter(Boolean);
+}
+
+function updateSalePlannerJobItem(jobId, itemId, patch = {}) {
+  const db = openOrderSqliteDb();
+  const current = salePlannerJobItemFromRow(db.prepare("SELECT * FROM sale_planner_job_items WHERE job_id = ? AND item_id = ?").get(jobId, itemId));
+  if (!current) return null;
+  const steps = { ...(current.steps || {}), ...(patch.steps || {}) };
+  const data = { ...(current.data || {}), ...(patch.data || {}) };
+  db.prepare(`
+    UPDATE sale_planner_job_items
+    SET status = @status,
+        steps_json = @stepsJson,
+        error = @error,
+        data = @dataJson,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE job_id = @jobId AND item_id = @itemId
+  `).run({
+    jobId,
+    itemId,
+    status: patch.status || current.status,
+    stepsJson: JSON.stringify(steps),
+    error: Object.prototype.hasOwnProperty.call(patch, "error") ? String(patch.error || "") : current.error,
+    dataJson: JSON.stringify(data)
+  });
+  return salePlannerJobItemFromRow(db.prepare("SELECT * FROM sale_planner_job_items WHERE job_id = ? AND item_id = ?").get(jobId, itemId));
+}
+
+function recentSalePlannerJobs(planId, limit = 8) {
+  if (!planId) return [];
+  return openOrderSqliteDb().prepare(`
+    SELECT * FROM sale_planner_jobs WHERE plan_id = ? ORDER BY started_at DESC LIMIT ?
+  `).all(planId, limit).map(salePlannerJobFromRow).filter(Boolean).map(publicSalePlannerJob);
+}
 
 function publicSalePlannerJob(job) {
   if (!job) return null;
@@ -10476,7 +10891,8 @@ function validateLiveVariantState(item, liveProduct) {
       continue;
     }
     const alreadyOnSale = Number(live.compareAtPrice || 0) > Number(live.price || 0);
-    if (!priceClose(live.price, planned.currentPrice) && !(item.status === "Applied" && alreadyOnSale)) {
+    const matchesPlannedTarget = priceClose(live.price, planned.targetPrice);
+    if (!priceClose(live.price, planned.currentPrice) && !matchesPlannedTarget && !(item.status === "Applied" && alreadyOnSale)) {
       errors.push(`Variant ${planned.sku || planned.id} price changed from ${planned.currentPrice} to ${live.price}.`);
     }
     const ledger = ledgerRowForVariant(ledgerLookup, planned);
@@ -10515,7 +10931,7 @@ async function submitCollectionAddProducts(collectionId, productIds) {
     }
   `, { id: collectionId, productIds });
   const payload = data.collectionAddProducts || {};
-  const errors = payload.userErrors || [];
+  const errors = (payload.userErrors || []).filter(error => !/already.*collection|already exists|already contains/i.test(String(error.message || "")));
   if (errors.length) throw new Error(errors.map(error => error.message).join("; "));
   return payload.collection || null;
 }
@@ -10531,7 +10947,7 @@ async function submitCollectionRemoveProducts(collectionId, productIds) {
     }
   `, { id: collectionId, productIds });
   const payload = data.collectionRemoveProducts || {};
-  const errors = payload.userErrors || [];
+  const errors = (payload.userErrors || []).filter(error => !/not.*collection|does not contain|not found in collection/i.test(String(error.message || "")));
   if (errors.length) throw new Error(errors.map(error => error.message).join("; "));
   if (payload.job?.id) await pollShopifyJob(payload.job.id);
   return payload.job || null;
@@ -10565,6 +10981,33 @@ function validateLiveProductStatus(liveProduct) {
   const status = String(liveProduct?.productStatusCode || "").trim().toUpperCase();
   if (status && !["N", "S"].includes(status)) return [`Product Status metafield is ${status}; expected N or S.`];
   return [];
+}
+
+function salePlannerItemPreflight(item, mode, liveProduct) {
+  const storedVariants = mode === "apply" ? salePlanVariantsForApply(item) : item.variants || [];
+  const plannedVariants = mode === "apply" && liveProduct ? prepareSaleVariantsWithLedger(item, liveProduct, storedVariants) : storedVariants;
+  const plannedItem = { ...item, stock: liveProduct?.stock ?? item.stock, variants: plannedVariants };
+  const validation = salePlanner.validateSaleItem(plannedItem, {
+    mode,
+    allowRetry: true,
+    minGpPct: Number(process.env.SALE_PLANNER_MIN_GP_PCT || 0),
+    requireCostAtDiscount: Number(process.env.SALE_PLANNER_REQUIRE_COST_AT_DISCOUNT || 40)
+  });
+  const errors = [...validation.errors];
+  const warnings = [...validation.warnings];
+  if (mode === "apply" && plannedVariants.some((variant, index) => {
+    const stored = storedVariants[index] || {};
+    return !priceClose(variant.originalPrice, stored.originalPrice) || !priceClose(variant.targetPrice, stored.targetPrice);
+  })) errors.push("Original RRP or target prices changed after ledger reconciliation. Reopen and refresh this plan before approval.");
+  if (!liveProduct) errors.push("Product was not found in Shopify.");
+  if (mode === "apply" && liveProduct) {
+    if (String(liveProduct.status || "").toUpperCase() !== "ACTIVE") errors.push(`Shopify product is ${liveProduct.status || "not active"}.`);
+    if (!liveProduct.publishedAt) errors.push("Shopify product is not published.");
+    if (/gift\s*card/i.test(String(liveProduct.productType || liveProduct.title || ""))) errors.push("Gift cards are not eligible for Sale Planner markdowns.");
+    errors.push(...validateLiveVariantState(plannedItem, liveProduct));
+  }
+  if (liveProduct) errors.push(...validateLiveProductStatus(liveProduct));
+  return { errors: [...new Set(errors)], warnings: [...new Set(warnings)], plannedVariants };
 }
 
 function prepareSaleVariantsWithLedger(item, liveProduct, plannedVariants) {
@@ -10771,7 +11214,7 @@ function markSaleItemResult(item, status, result = {}) {
   recordSalePlanEvent(item.planId, item.id, status.toLowerCase(), result.actor || "", result.message || `Sale item ${status.toLowerCase()}`, result.data || {});
 }
 
-async function applySalePlanItem(job, item) {
+async function applySalePlanItem(job, item, context = {}) {
   if (!item.shopifyProductId) throw new Error("Shopify product ID is missing.");
   let plannedVariants = salePlanVariantsForApply(item);
   if (!plannedVariants.length) throw new Error("Variant price targets are missing.");
@@ -10779,9 +11222,9 @@ async function applySalePlanItem(job, item) {
     persistSaleItemVariantPlan(item, plannedVariants);
     item = { ...item, variants: plannedVariants, metrics: { ...(item.metrics || {}), targetGpPct: saleItemTargetGpPct(plannedVariants) } };
   }
-  const live = await fetchShopifyProductSaleState(item.shopifyProductId);
-  const staleErrors = [...validateLiveVariantState(item, live), ...validateLiveProductStatus(live)];
-  if (staleErrors.length) throw new Error(`Plan is stale: ${staleErrors.join(" ")}`);
+  const live = context.liveProduct || await fetchShopifyProductSaleState(item.shopifyProductId);
+  const preflight = salePlannerItemPreflight({ ...item, variants: plannedVariants }, "apply", live);
+  if (preflight.errors.length) throw new Error(`Preflight blocked: ${preflight.errors.join(" ")}`);
   plannedVariants = prepareSaleVariantsWithLedger(item, live, plannedVariants);
   persistSaleItemVariantPlan(item, plannedVariants);
   const variantInputs = plannedVariants.map(variant => ({
@@ -10789,14 +11232,25 @@ async function applySalePlanItem(job, item) {
     price: String(Number(variant.targetPrice || 0).toFixed(2)),
     compareAtPrice: String(Number(variant.saleOriginalPrice || variant.originalPrice || item.originalPrice || 0).toFixed(2))
   }));
-  await submitProductVariantPriceUpdate(item.shopifyProductId, variantInputs, false);
-  persistSaleLedgerApply(item, plannedVariants);
-  persistSaleItemAppliedPricing(item, plannedVariants);
-  const collectionIds = [...new Set([item.rootSaleCollectionId, item.childSaleCollectionId].filter(Boolean))];
-  for (const collectionId of collectionIds) {
-    await submitCollectionAddProducts(collectionId, [item.shopifyProductId]);
+  let jobItem = context.jobItem || updateSalePlannerJobItem(job.id, item.id, { status: "running", error: "" });
+  if (!jobItem?.steps?.prices) {
+    await submitProductVariantPriceUpdate(item.shopifyProductId, variantInputs, false);
+    persistSaleLedgerApply(item, plannedVariants);
+    persistSaleItemAppliedPricing(item, plannedVariants);
+    jobItem = updateSalePlannerJobItem(job.id, item.id, { steps: { prices: true }, data: { warnings: preflight.warnings } });
   }
-  await submitProductStatusMetafield(item.shopifyProductId, "S");
+  const collectionIds = [...new Set([item.rootSaleCollectionId, item.childSaleCollectionId].filter(Boolean))];
+  for (const [index, collectionId] of collectionIds.entries()) {
+    const step = `collection_${index}`;
+    if (!jobItem?.steps?.[step]) {
+      await submitCollectionAddProducts(collectionId, [item.shopifyProductId]);
+      jobItem = updateSalePlannerJobItem(job.id, item.id, { steps: { [step]: true } });
+    }
+  }
+  if (!jobItem?.steps?.metafield) {
+    await submitProductStatusMetafield(item.shopifyProductId, "S");
+    jobItem = updateSalePlannerJobItem(job.id, item.id, { steps: { metafield: true } });
+  }
   markSaleItemResult(item, "Applied", {
     actor: job.actor,
     message: "Sale prices applied to Shopify",
@@ -10804,26 +11258,37 @@ async function applySalePlanItem(job, item) {
   });
 }
 
-async function removeSalePlanItem(job, item) {
+async function removeSalePlanItem(job, item, context = {}) {
   if (!item.shopifyProductId) throw new Error("Shopify product ID is missing.");
-  const live = await fetchShopifyProductSaleState(item.shopifyProductId);
+  const live = context.liveProduct || await fetchShopifyProductSaleState(item.shopifyProductId);
   if (!live) throw new Error("Product was not found in Shopify.");
-  const statusErrors = validateLiveProductStatus(live);
-  if (statusErrors.length) throw new Error(`Plan is stale: ${statusErrors.join(" ")}`);
+  const preflight = salePlannerItemPreflight(item, "remove", live);
+  if (preflight.errors.length) throw new Error(`Preflight blocked: ${preflight.errors.join(" ")}`);
   const targets = saleRemoveTargetsWithLedger(item, live);
   const variantInputs = targets.map(target => ({
     id: target.id,
     price: String(Number(target.restoredPrice || 0).toFixed(2)),
     compareAtPrice: null
   }));
-  await submitProductVariantPriceUpdate(item.shopifyProductId, variantInputs, false);
-  const collectionIds = [...new Set([item.rootSaleCollectionId, item.childSaleCollectionId].filter(Boolean))];
-  for (const collectionId of collectionIds) {
-    await submitCollectionRemoveProducts(collectionId, [item.shopifyProductId]);
+  let jobItem = context.jobItem || updateSalePlannerJobItem(job.id, item.id, { status: "running", error: "" });
+  if (!jobItem?.steps?.prices) {
+    await submitProductVariantPriceUpdate(item.shopifyProductId, variantInputs, false);
+    markSaleLedgerRemoved(item, variantInputs.map(variant => variant.id).filter(Boolean));
+    persistSaleItemRemovedPricing(item, targets);
+    jobItem = updateSalePlannerJobItem(job.id, item.id, { steps: { prices: true }, data: { warnings: preflight.warnings } });
   }
-  await submitProductStatusMetafield(item.shopifyProductId, "N");
-  markSaleLedgerRemoved(item, variantInputs.map(variant => variant.id).filter(Boolean));
-  persistSaleItemRemovedPricing(item, targets);
+  const collectionIds = [...new Set([item.rootSaleCollectionId, item.childSaleCollectionId].filter(Boolean))];
+  for (const [index, collectionId] of collectionIds.entries()) {
+    const step = `collection_${index}`;
+    if (!jobItem?.steps?.[step]) {
+      await submitCollectionRemoveProducts(collectionId, [item.shopifyProductId]);
+      jobItem = updateSalePlannerJobItem(job.id, item.id, { steps: { [step]: true } });
+    }
+  }
+  if (!jobItem?.steps?.metafield) {
+    await submitProductStatusMetafield(item.shopifyProductId, "N");
+    jobItem = updateSalePlannerJobItem(job.id, item.id, { steps: { metafield: true } });
+  }
   markSaleItemResult(item, "Removed", {
     actor: job.actor,
     message: "Product removed from sale",
@@ -10831,26 +11296,175 @@ async function removeSalePlanItem(job, item) {
   });
 }
 
+async function preflightSalePlannerItems(planId, itemIds, mode) {
+  const items = readSalePlannerItems(planId).filter(item => itemIds.includes(item.id));
+  const rows = [];
+  for (const item of items) {
+    let live = null;
+    let failure = "";
+    try {
+      live = item.shopifyProductId ? await fetchShopifyProductSaleState(item.shopifyProductId) : null;
+    } catch (error) {
+      failure = error.message || "Could not read live Shopify state.";
+    }
+    const check = salePlannerItemPreflight(item, mode, live);
+    if (failure) check.errors.unshift(failure);
+    const liveById = variantsById(live?.variants || []);
+    rows.push({
+      itemId: item.id,
+      title: item.title,
+      sku: item.sku,
+      status: item.status,
+      stock: item.stock,
+      originalPrice: item.originalPrice,
+      currentPrice: item.currentPrice,
+      targetPrice: item.targetPrice,
+      discountPercent: item.discountPercent,
+      targetGpPct: item.metrics?.targetGpPct ?? null,
+      rootSaleCollectionId: item.rootSaleCollectionId,
+      childSaleCollectionId: item.childSaleCollectionId,
+      errors: check.errors,
+      warnings: check.warnings,
+      variants: check.plannedVariants.map(variant => {
+        const liveVariant = liveById.get(String(variant.id || "")) || {};
+        return {
+          id: variant.id,
+          sku: variant.sku,
+          title: variant.title,
+          livePrice: Number(liveVariant.price || 0),
+          liveCompareAtPrice: liveVariant.compareAtPrice == null ? null : Number(liveVariant.compareAtPrice || 0),
+          originalPrice: Number(variant.saleOriginalPrice || variant.originalPrice || item.originalPrice || 0),
+          targetPrice: Number(variant.targetPrice || item.targetPrice || 0),
+          cost: variant.cost == null ? null : Number(variant.cost),
+          targetGpPct: variant.targetGpPct == null ? null : Number(variant.targetGpPct)
+        };
+      })
+    });
+  }
+  const summary = rows.reduce((result, row) => {
+    const units = Number(row.stock || 0);
+    const original = Number(row.originalPrice || row.currentPrice || 0) * units;
+    const target = Number(mode === "remove" ? row.originalPrice : row.targetPrice || 0) * units;
+    const gp = row.targetGpPct == null ? NaN : Number(row.targetGpPct);
+    result.stockUnits += units;
+    result.originalRetail += original;
+    result.targetRetail += target;
+    result.markdownInvestment += Math.max(0, original - target);
+    if (Number.isFinite(gp)) result.projectedGrossProfit += (target / 1.2) * (gp / 100);
+    if (row.errors.length) result.blocked += 1;
+    if (row.warnings.length) result.warningRows += 1;
+    return result;
+  }, { products: rows.length, stockUnits: 0, originalRetail: 0, targetRetail: 0, markdownInvestment: 0, projectedGrossProfit: 0, blocked: 0, warningRows: 0 });
+  for (const key of ["originalRetail", "targetRetail", "markdownInvestment", "projectedGrossProfit"]) summary[key] = salePlanner.money(summary[key]);
+  return { rows, summary, ok: rows.length > 0 && rows.every(row => !row.errors.length) };
+}
+
+async function handleSalePlannerPreflight(req, res) {
+  const body = await readJsonBody(req);
+  const planId = String(body.planId || "").trim();
+  const mode = String(body.mode || "apply").trim().toLowerCase();
+  const itemIds = (body.itemIds || []).map(String).filter(Boolean);
+  if (!planId || !itemIds.length) throw new Error("Choose sale plan rows to preflight.");
+  if (!["apply", "remove"].includes(mode)) throw new Error("Choose apply or remove preflight mode.");
+  const preflight = await preflightSalePlannerItems(planId, itemIds, mode);
+  sendJson(res, 200, { ok: preflight.ok, preflight });
+}
+
+async function handleSalePlannerReconcile(req, res) {
+  const body = await readJsonBody(req);
+  const planId = String(body.planId || "").trim();
+  const requested = (body.itemIds || []).map(String).filter(Boolean);
+  if (!planId) throw new Error("Choose a sale plan to reconcile.");
+  const items = readSalePlannerItems(planId).filter(item => item.status === "Applied" && (!requested.length || requested.includes(item.id)));
+  if (!items.length) throw new Error("Choose Applied rows to reconcile.");
+  const rows = [];
+  for (const item of items) {
+    const differences = [];
+    let live = null;
+    try {
+      live = await fetchShopifyProductSaleState(item.shopifyProductId);
+    } catch (error) {
+      differences.push(error.message || "Could not read Shopify state.");
+    }
+    if (!live) differences.push("Product was not found in Shopify.");
+    if (live) {
+      const liveById = variantsById(live.variants || []);
+      for (const planned of item.variants || []) {
+        const variant = liveById.get(String(planned.id || ""));
+        if (!variant) differences.push(`Variant ${planned.sku || planned.id} is missing.`);
+        else {
+          if (!priceClose(variant.price, planned.targetPrice || item.currentPrice)) differences.push(`Variant ${planned.sku || planned.id} live price is ${variant.price}, expected ${planned.targetPrice || item.currentPrice}.`);
+          const original = Number(planned.saleOriginalPrice || planned.originalPrice || item.originalPrice || 0);
+          if (original > 0 && !priceClose(variant.compareAtPrice, original)) differences.push(`Variant ${planned.sku || planned.id} compare-at price differs from ${original}.`);
+        }
+      }
+      const memberships = new Set((live.collections || []).map(collection => String(collection.id)));
+      for (const collectionId of [item.rootSaleCollectionId, item.childSaleCollectionId].filter(Boolean)) {
+        if (!memberships.has(String(collectionId))) differences.push(`Product is missing Sale collection ${collectionId}.`);
+      }
+      if (String(live.productStatusCode || "").trim().toUpperCase() !== "S") differences.push(`Product Status is ${live.productStatusCode || "blank"}, expected S.`);
+    }
+    rows.push({ itemId: item.id, title: item.title, sku: item.sku, ok: !differences.length, differences });
+  }
+  recordSalePlanEvent(planId, "", "reconciled", actorName(req), `Reconciled ${rows.length} live sale item${rows.length === 1 ? "" : "s"}`, {
+    drifted: rows.filter(row => !row.ok).length,
+    ...actorData(req)
+  });
+  sendJson(res, 200, { ok: rows.every(row => row.ok), rows, summary: { checked: rows.length, matched: rows.filter(row => row.ok).length, drifted: rows.filter(row => !row.ok).length } });
+}
+
 async function runSalePlannerJob(job) {
   try {
     job.status = "running";
+    const durableItems = readSalePlannerJobItems(job.id);
+    job.itemIds = durableItems.map(item => item.itemId);
     const items = readSalePlannerItems(job.planId).filter(item => job.itemIds.includes(item.id));
+    const durableByItemId = new Map(durableItems.map(item => [item.itemId, item]));
+    const pendingItems = items.filter(item => durableByItemId.get(item.id)?.status !== "complete");
     job.totalItems = items.length;
+    persistSalePlannerJob(job);
     openOrderSqliteDb().prepare("UPDATE sale_plans SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(job.mode === "remove" ? "Removing" : "Applying", job.planId);
-    for (const item of items) {
+
+    job.message = `Preflighting ${pendingItems.length} product${pendingItems.length === 1 ? "" : "s"} against Shopify...`;
+    persistSalePlannerJob(job);
+    const preflight = pendingItems.length
+      ? await preflightSalePlannerItems(job.planId, pendingItems.map(item => item.id), job.mode)
+      : { ok: true, rows: [], summary: { blocked: 0 } };
+    if (!preflight.ok) {
+      for (const row of preflight.rows.filter(row => row.errors.length)) {
+        updateSalePlannerJobItem(job.id, row.itemId, { status: "error", error: row.errors.join(" "), data: { warnings: row.warnings } });
+      }
+      job.status = "error";
+      job.errorItems = preflight.summary.blocked;
+      job.message = `Preflight blocked ${preflight.summary.blocked} product${preflight.summary.blocked === 1 ? "" : "s"}; Shopify was not changed.`;
+      job.results = preflight.rows.map(row => ({ itemId: row.itemId, title: row.title, ok: !row.errors.length, error: row.errors.join(" "), warnings: row.warnings }));
+      job.finishedAt = new Date().toISOString();
+      openOrderSqliteDb().prepare("UPDATE sale_plans SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(job.mode === "remove" ? "Applied" : "Ready", job.planId);
+      persistSalePlannerJob(job);
+      recordSalePlanEvent(job.planId, "", "preflight_blocked", job.actor, job.message, { job: publicSalePlannerJob(job) });
+      return;
+    }
+
+    for (const item of pendingItems) {
+      const durable = salePlannerJobItemFromRow(openOrderSqliteDb().prepare("SELECT * FROM sale_planner_job_items WHERE job_id = ? AND item_id = ?").get(job.id, item.id));
       job.message = `${job.mode === "remove" ? "Removing" : "Applying"} ${item.title}...`;
+      persistSalePlannerJob(job);
       try {
-        if (job.mode === "remove") await removeSalePlanItem(job, item);
-        else await applySalePlanItem(job, item);
+        updateSalePlannerJobItem(job.id, item.id, { status: "running", error: "" });
+        if (job.mode === "remove") await removeSalePlanItem(job, item, { jobItem: durable });
+        else await applySalePlanItem(job, item, { jobItem: durable });
+        updateSalePlannerJobItem(job.id, item.id, { status: "complete", error: "", steps: { complete: true } });
         job.okItems += 1;
         job.results.push({ itemId: item.id, title: item.title, ok: true });
       } catch (error) {
         job.errorItems += 1;
         const message = error.message || "Shopify sale update failed.";
+        updateSalePlannerJobItem(job.id, item.id, { status: "error", error: message });
         markSaleItemResult(item, "Error", { actor: job.actor, error: message, message, data: { mode: job.mode } });
         job.results.push({ itemId: item.id, title: item.title, ok: false, error: message });
       }
       job.processedItems += 1;
+      persistSalePlannerJob(job);
     }
     const finalStatus = job.errorItems ? "error" : "complete";
     job.status = finalStatus;
@@ -10859,9 +11473,11 @@ async function runSalePlannerJob(job) {
       : `${job.okItems} item${job.okItems === 1 ? "" : "s"} ${job.mode === "remove" ? "removed from sale" : "applied to sale"}.`;
     job.finishedAt = new Date().toISOString();
     const remaining = readSalePlannerItems(job.planId);
-    const planStatus = job.mode === "remove"
-      ? remaining.some(item => item.status !== "Removed") ? "Applied" : "Removed"
-      : remaining.some(item => item.status === "Planned") ? "Ready" : "Applied";
+    const planStatus = job.errorItems
+      ? "Needs review"
+      : job.mode === "remove"
+        ? remaining.some(item => item.status !== "Removed") ? "Applied" : "Removed"
+        : remaining.some(item => item.status === "Planned") ? "Ready" : "Applied";
     openOrderSqliteDb().prepare(`
       UPDATE sale_plans
       SET status = @status,
@@ -10870,12 +11486,14 @@ async function runSalePlannerJob(job) {
           removed_at = CASE WHEN @mode = 'remove' AND @errorItems = 0 THEN CURRENT_TIMESTAMP ELSE removed_at END
       WHERE id = @planId
     `).run({ status: planStatus, mode: job.mode, errorItems: job.errorItems, planId: job.planId });
+    persistSalePlannerJob(job);
     recordSalePlanEvent(job.planId, "", job.mode === "remove" ? "remove_job" : "apply_job", job.actor, job.message, { job: publicSalePlannerJob(job) });
   } catch (error) {
     job.status = "error";
     job.error = error.message;
     job.message = error.message;
     job.finishedAt = new Date().toISOString();
+    persistSalePlannerJob(job);
   }
 }
 
@@ -10886,8 +11504,19 @@ async function startSalePlannerJob(req, res, mode = "apply") {
   const db = openOrderSqliteDb();
   const plan = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(planId));
   if (!plan) throw new Error("Sale plan not found.");
+  if (plan.status === "Archived") throw new Error("Archived sale plans are read-only.");
+  if (mode === "apply") {
+    if (plan.status !== "Ready" || !plan.data?.approvedSnapshotHash) throw new Error("Submit this plan and obtain Admin approval before applying Shopify changes.");
+    const currentSnapshotHash = salePlanSnapshotHash(readSalePlannerItems(planId).filter(item => item.status !== "Removed"));
+    if (currentSnapshotHash !== plan.data.approvedSnapshotHash) throw new Error("The approved plan snapshot has changed. Reopen, review, and approve it again.");
+  }
   const requested = (body.itemIds || []).map(String).filter(Boolean);
-  const items = readSalePlannerItems(planId).filter(item => requested.length ? requested.includes(item.id) : mode === "remove" ? item.status === "Applied" : item.status === "Planned");
+  const allItems = readSalePlannerItems(planId);
+  const selected = allItems.filter(item => requested.length ? requested.includes(item.id) : mode === "remove" ? item.status === "Applied" : item.status === "Planned");
+  const allowedStatuses = mode === "remove" ? new Set(["Applied"]) : new Set(["Planned", "Error"]);
+  const invalid = selected.filter(item => !allowedStatuses.has(item.status));
+  if (invalid.length) throw new Error(`${mode === "remove" ? "Remove" : "Apply"} cannot run for ${invalid.map(item => `${item.title} (${item.status})`).join(", ")}.`);
+  const items = selected;
   if (!items.length) throw new Error(mode === "remove" ? "Choose applied sale items to remove." : "Choose planned sale items to apply.");
   const confirmText = String(body.confirmText || "").trim().toUpperCase();
   const hasFinal = items.some(item => Number(item.discountPercent || 0) >= 50);
@@ -10913,19 +11542,41 @@ async function startSalePlannerJob(req, res, mode = "apply") {
     startedAt: new Date().toISOString(),
     finishedAt: ""
   };
-  salePlannerJobs.set(job.id, job);
+  persistSalePlannerJob(job);
+  createSalePlannerJobItems(job, job.itemIds);
   runSalePlannerJob(job);
   sendJson(res, 202, { ok: true, job: publicSalePlannerJob(job) });
 }
 
 function getSalePlannerJob(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const job = salePlannerJobs.get(url.searchParams.get("id"));
+  const job = readSalePlannerJob(url.searchParams.get("id"));
   if (!job) {
-    sendJson(res, 404, { message: "Sale planner job not found. If the server restarted, refresh the planner and verify Shopify before retrying." });
+    sendJson(res, 404, { message: "Sale planner job not found." });
     return;
   }
-  sendJson(res, 200, { job: publicSalePlannerJob(job) });
+  sendJson(res, 200, { job: publicSalePlannerJob(job), items: readSalePlannerJobItems(job.id) });
+}
+
+async function handleSalePlannerJobResume(req, res) {
+  const body = await readJsonBody(req);
+  const job = readSalePlannerJob(String(body.jobId || "").trim());
+  if (!job) throw new Error("Sale planner job not found.");
+  if (!["error"].includes(job.status)) throw new Error("Only failed Sale Planner jobs can be resumed.");
+  const jobItems = readSalePlannerJobItems(job.id);
+  for (const item of jobItems.filter(item => item.status !== "complete")) updateSalePlannerJobItem(job.id, item.itemId, { status: "queued", error: "" });
+  job.itemIds = jobItems.map(item => item.itemId);
+  job.status = "queued";
+  job.processedItems = jobItems.filter(item => item.status === "complete").length;
+  job.okItems = job.processedItems;
+  job.errorItems = 0;
+  job.results = job.results.filter(result => result.ok);
+  job.message = "Queued Sale Planner job resume.";
+  job.error = "";
+  job.finishedAt = "";
+  persistSalePlannerJob(job);
+  runSalePlannerJob(job);
+  sendJson(res, 202, { ok: true, job: publicSalePlannerJob(job) });
 }
 
 function friendlyShopifyLookupMessage(error) {
@@ -14319,6 +14970,46 @@ async function handleApi(req, res) {
     return true;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/sale-planner/collections/refresh") {
+    if (!requireRoles(req, res, ["Admin"], "Only Admin users can refresh Sale collections.")) return true;
+    try {
+      await handleSalePlannerCollectionsRefresh(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not refresh Sale collections" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-planner/plans/save") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      await handleSalePlannerPlanSave(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not update sale plan" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-planner/preflight") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      await handleSalePlannerPreflight(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not preflight sale plan" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-planner/reconcile") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      await handleSalePlannerReconcile(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not reconcile live sale state" });
+    }
+    return true;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/sale-planner/analysis/refresh") {
     if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
     try {
@@ -14362,6 +15053,16 @@ async function handleApi(req, res) {
   if (req.method === "GET" && url.pathname === "/api/sale-planner/apply/status") {
     if (!requireRoles(req, res, ["Admin"], "Only Admin users can view Shopify sale apply jobs.")) return true;
     getSalePlannerJob(req, res);
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-planner/jobs/resume") {
+    if (!requireRoles(req, res, ["Admin"], "Only Admin users can resume Shopify sale jobs.")) return true;
+    try {
+      await handleSalePlannerJobResume(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not resume sale job" });
+    }
     return true;
   }
 
