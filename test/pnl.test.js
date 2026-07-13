@@ -164,6 +164,8 @@ test("maps ShopifyQL sales report rows to Despatch, Demand, and profit actuals",
   assert.equal(actuals.tax, 4434.37);
   assert.equal(actuals.orders, 538);
   assert.equal(actuals.units, 917);
+  assert.equal(actuals.grossUnits, 917);
+  assert.equal(actuals.returnedUnits, 238);
   assert.equal(actuals.grossProfit, 17667.89);
 
   const statement = buildPnl(actuals);

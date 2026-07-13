@@ -55,6 +55,15 @@ p.sub{font-size:13px;color:var(--text2);margin-bottom:20px}
 .card label{display:block;font-size:11px;color:var(--text2);margin-bottom:4px}
 .card span{font-size:18px;font-weight:500}
 .card small{display:block;margin-top:4px;color:var(--text3);font-size:10px;line-height:1.35}
+.metric-block{margin-bottom:18px}
+.metric-block-head{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.metric-block-head h2{font-size:13px;font-weight:650;margin:0}
+.metric-block-head span{font-size:11px;color:var(--text3)}
+.metric-block.filtered{padding:12px;border:1px solid var(--ds-action);border-radius:var(--rl);background:var(--ds-action-soft)}
+.metric-block.filtered .cards{margin-bottom:0}
+.selection-bar{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin:-4px 0 12px;padding:9px 10px;border:1px solid var(--border);border-radius:var(--r);background:var(--bg2);font-size:11px;color:var(--text2)}
+.selection-bar.show{display:flex}
+.row-select{width:16px;height:16px;accent-color:var(--ds-action);cursor:pointer}
 .ctrl-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
 .ctrl-row label{font-size:11px;color:var(--text3)}
 .cg{display:flex;align-items:center;gap:6px}
@@ -376,10 +385,9 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
   <div class="tab-bar" role="tablist" aria-label="Bestsellers report sections">
     <button class="tab-btn on" id="tab-ty" role="tab" aria-selected="true" aria-controls="ty-panel" onclick="switchReportTab('ty')">Bestsellers TY</button>
     <button class="tab-btn" id="tab-ly" role="tab" aria-selected="false" aria-controls="ly-panel" onclick="switchReportTab('ly')">Bestsellers LY</button>
-    <button class="tab-btn" id="tab-ra" role="tab" aria-selected="false" aria-controls="ra-panel" onclick="switchReportTab('ra')">Revenue Analysis</button>
+    <button class="tab-btn" id="tab-ra" role="tab" aria-selected="false" aria-controls="ra-panel" onclick="switchReportTab('ra')">Forecast &amp; Buy</button>
     <button class="tab-btn" id="tab-slow" role="tab" aria-selected="false" aria-controls="slow-panel" onclick="switchReportTab('slow')">Slow Sellers</button>
-    <button class="tab-btn" id="tab-stock" role="tab" aria-selected="false" aria-controls="stock-panel" onclick="switchReportTab('stock')">Stock Position</button>
-    <button class="tab-btn" id="tab-meth" role="tab" aria-selected="false" aria-controls="meth-panel" onclick="switchReportTab('meth')">Methodology</button>
+    <button class="tab-btn" id="tab-stock" role="tab" aria-selected="false" aria-controls="stock-panel" onclick="switchReportTab('stock')">Mix Performance</button>
     <button class="tab-btn" id="tab-trade" role="tab" aria-selected="false" aria-controls="trade-panel" onclick="switchReportTab('trade')">Trade Last Week</button>
   </div>
 
@@ -424,6 +432,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
       <button class="btn emphasis" onclick="exportSnapshot()">⬇ Share snapshot</button>
       <button class="btn" onclick="exportBestsellersXLSX()" title="Export to Excel">⬇ Excel</button>
       <button class="btn" onclick="openCatMap()" id="cat-map-btn">⊞ Group categories</button>
+      <button class="btn" onclick="switchReportTab('meth')">? How metrics work</button>
       <button class="btn" onclick="resetAll()">← New report</button>
     </div>
   </div>
@@ -447,7 +456,8 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
   </div>
   <div class="hint" id="ty-empty-state" style="display:none">Choose a saved TY period above, or use the This Year upload screen to sync Shopify.</div>
   <div class="data-quality" id="ty-data-quality" role="status" aria-live="polite"></div>
-  <div class="cards ty-data" id="cards"></div>
+  <div class="metric-block ty-data" id="overall-metrics"><div class="metric-block-head"><h2>Overall period</h2><span>Always remains visible for comparison</span></div><div class="cards" id="cards"></div></div>
+  <div class="metric-block filtered ty-data" id="filtered-metrics" style="display:none"><div class="metric-block-head"><h2 id="filtered-metrics-title">Filtered view</h2><span>Responds to season, category, search and selected products</span></div><div class="cards" id="filtered-cards"></div></div>
   <div class="main-filters ty-data" id="main-filters">
     <div class="main-filter-field" style="flex:1 1 260px">
       <label for="main-search">Search products</label>
@@ -494,6 +504,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
     </div>
   </div>
   <div class="filter-bar ty-data" id="filter-bar" style="display:none"></div>
+  <div class="selection-bar ty-data" id="selection-bar"><strong id="selection-count">0 selected</strong><button class="btn" type="button" id="selection-show" onclick="toggleSelectedOnly()">Show selected</button><button class="btn" type="button" onclick="clearProductSelection()">Clear selection</button><span>Selections stay active across pages and filters.</span></div>
   <div class="ty-data" id="tbl-scroll-bar" style="display:none;justify-content:space-between;align-items:center;margin-bottom:6px;padding:4px 0">
     <div style="display:flex;gap:8px;align-items:center">
       <button class="btn emphasis" id="periods-toggle-btn" onclick="togglePeriodCols()" style="min-height:30px">Hide periods</button>
@@ -589,7 +600,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
   <!-- Revenue Analysis panel -->
   <div id="ra-panel" style="display:none;padding-bottom:48px">
     <div class="hrow">
-      <div><h1>Revenue Analysis</h1><p class="sub" id="ra-sub">Generates from TY data — load sales files and generate TY report first</p></div>
+      <div><h1>Forecast &amp; Buy</h1><p class="sub" id="ra-sub">Generates from TY data — load sales files and generate TY report first</p></div>
       <button class="btn emphasis" onclick="exportSnapshot()">⬇ Share snapshot</button>
     </div>
     <div id="ra-content">
@@ -600,9 +611,9 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
   <!-- Stock Position panel -->
   <div id="stock-panel" style="display:none;padding-bottom:48px">
     <div class="hrow">
-      <div><h1>Stock Position</h1><p class="sub" id="stock-sub">Current inventory value by category — load an Inventory Snapshot to populate</p></div>
+      <div><h1>Mix Performance</h1><p class="sub" id="stock-sub">Compare current stock retail mix with sales mix by department, then open a department for categories</p></div>
       <div style="display:flex;gap:10px;align-items:center">
-        <button class="btn" id="stock-cat-map-btn" onclick="openStockCatMap()">⊞ Group categories</button>
+        <button class="btn" id="stock-cat-map-btn" onclick="openStockCatMap()">⊞ Edit departments</button>
         <button class="btn emphasis" onclick="exportSnapshot()">⬇ Share snapshot</button>
       </div>
     </div>
@@ -753,7 +764,7 @@ function readXLSX(file,cb){
 // ── State ─────────────────────────────────────────────────────────────────────
 const MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 let salesFiles=[],invRows=null,prodFiles=[];
-const G={col:'rev',dir:-1,cat:'All',exp:new Set(),dsExpanded:false,dsVisible:false,dsSeason:'All',view:'table',season:'All',periodFilter:'all',scope:'sold',search:'',page:1,pageSize:50};
+const G={col:'rev',dir:-1,cat:'All',exp:new Set(),selected:new Set(),selectedOnly:false,dsExpanded:false,dsVisible:false,dsSeason:'All',view:'table',season:'All',periodFilter:'all',scope:'sold',search:'',page:1,pageSize:50};
 let SYM='£';
 let serverPeriods=[];
 let refreshNeededServerPeriods=[];
@@ -785,6 +796,10 @@ function productSearchText(product){return [product?.name,product?.title,product
 function setMainSearch(value){G.search=String(value||'').trim().toLowerCase();G.page=1;render();}
 function setMainScope(scope){G.scope=scope==='all'?'all':'sold';G.page=1;G.cat='All';render();}
 function setMainPage(page){G.page=Math.max(1,Number(page)||1);render();document.getElementById('main-filters')?.scrollIntoView({block:'start'});}
+function productSelectionKey(product){return String(product?.productKey||product?.id||product?.sku||product?.name||'');}
+function toggleProductSelection(key,checked){if(!key)return;if(checked)G.selected.add(key);else G.selected.delete(key);if(!G.selected.size)G.selectedOnly=false;render();}
+function toggleSelectedOnly(){if(!G.selected.size)return;G.selectedOnly=!G.selectedOnly;G.page=1;render();}
+function clearProductSelection(){G.selected.clear();G.selectedOnly=false;G.page=1;render();}
 function largestRemainderAllocation(items,total,weightFn){
   const safeTotal=Math.max(0,Math.floor(Number(total)||0));
   if(!items.length)return[];
@@ -1137,7 +1152,13 @@ function tradingMetricsForPeriods(report={},periodLabels=[],periodFilter='all'){
     return{
       available,
       demandRevenue:available?selected.reduce((sum,metric)=>sum+Number(metric.demandRevenue||0),0):null,
-      despatchRevenue:available?selected.reduce((sum,metric)=>sum+Number(metric.despatchRevenue||0),0):null
+      despatchRevenue:available?selected.reduce((sum,metric)=>sum+Number(metric.despatchRevenue||0),0):null,
+      grossRevenue:available?selected.reduce((sum,metric)=>sum+Number(metric.bridge?.grossRevenue||0),0):null,
+      discounts:available?selected.reduce((sum,metric)=>sum+Number(metric.bridge?.discounts||0),0):null,
+      returns:available?selected.reduce((sum,metric)=>sum+Number(metric.bridge?.returns||0),0):null,
+      grossUnits:available?selected.reduce((sum,metric)=>sum+Number(metric.bridge?.grossUnits||0),0):null,
+      returnedUnits:available?selected.reduce((sum,metric)=>sum+Number(metric.bridge?.returnedUnits||0),0):null,
+      netUnits:available?selected.reduce((sum,metric)=>sum+Number(metric.bridge?.netUnits||0),0):null
     };
   }
   return{
@@ -1264,7 +1285,7 @@ function applyServerBestsellers(data){
     setRangePresetValue('ty-report-api','current');
   }
   document.getElementById('rpt-sub').textContent=`${fD(minD)} - ${fD(maxD)} · ${data.stored===false?'live ad hoc':'server cached '+(data.storedPeriodGrain||period.sourceType||'report')} · synced ${new Date(period.syncedAt||Date.now()).toLocaleString('en-GB')}`;
-  G.col='rev';G.dir=-1;G.cat='All';G.exp=new Set();G.dsExpanded=false;G.dsVisible=false;G.dsSeason='All';G.view='table';G.season='All';G.periodFilter='all';G.scope='sold';G.search='';G.page=1;
+  G.col='rev';G.dir=-1;G.cat='All';G.exp=new Set();G.selected=new Set();G.selectedOnly=false;G.dsExpanded=false;G.dsVisible=false;G.dsSeason='All';G.view='table';G.season='All';G.periodFilter='all';G.scope='sold';G.search='';G.page=1;
   const search=document.getElementById('main-search');if(search)search.value='';
   st('', '');
   updateTyPanelState();
@@ -1706,7 +1727,8 @@ function buildSeasonPills(allSeasons,active,onchangeExpr){
   if(!hasAny)return'';
   const hasSS=allSeasons.some(s=>s.toUpperCase().startsWith('SS'));
   const hasAW=allSeasons.some(s=>s.toUpperCase().startsWith('AW'));
-  const pills=['All',...(hasSS?['SS']:[]),...(hasAW?['AW']:[]),...allSeasons].map(s=>{
+  const detailedSeasons=allSeasons.filter(s=>!['SS','AW'].includes(String(s).toUpperCase()));
+  const pills=['All',...(hasSS?['SS']:[]),...(hasAW?['AW']:[]),...detailedSeasons].map(s=>{
     const isActive=active===s;
     const isGroup=s==='SS'||s==='AW';
     const label=s==='SS'?'All SS':s==='AW'?'All AW':s==='All'?'All seasons':s;
@@ -1782,6 +1804,7 @@ function render(){
   const getSalesIncVat=p=>activePeriodLabels.reduce((sum,label)=>sum+salesIncVatOf(p.periods?.[label]||{},r.financialSemantics),0);
   const getRevExVat=p=>activePeriodLabels.reduce((sum,label)=>sum+salesExVatOf(p.periods?.[label]||{},r.financialSemantics),0);
   const getGrossIncVat=p=>activePeriodLabels.reduce((sum,label)=>sum+grossSalesIncVatOf(p.periods?.[label]||{},r.financialSemantics),0);
+  const getMetric=(p,key)=>activePeriodLabels.reduce((sum,label)=>sum+Number(p.periods?.[label]?.[key]||0),0);
   const getKnownGp=p=>activePeriodLabels.reduce((sum,label)=>{const pd=p.periods?.[label]||{};return sum+Number(pd.knownGp??pd.gp??0);},0);
   const getCostedRevenueExVat=p=>activePeriodLabels.reduce((sum,label)=>{const pd=p.periods?.[label]||{};const fallback=pd.gp==null?0:(pd.revenueExVat!=null?Number(pd.revenueExVat):Number(pd.rev||0)/(r.financialSemantics?.salesValuesIncludeVat?1.2:1));return sum+Number(pd.costedRevenueExVat??fallback);},0);
   const getGP=p=>{
@@ -1797,13 +1820,23 @@ function render(){
     const wklyU=units/activeWeeks;
     const avgRevPerWeekIncVat=salesIncVat/activeWeeks;
     const knownGpValue=periodFiltered?getKnownGp(p):Number(p.knownGpValue||0),costedRevenueExVat=periodFiltered?getCostedRevenueExVat(p):Number(p.costedRevenueExVat||0);
-    return Object.assign({},p,{units,salesIncVat,revenueExVat,grossSalesIncVat,gp,knownGpValue,costedRevenueExVat,avgPIncVat,gAspIncVat:r.grossAvailable&&units?grossSalesIncVat/units:avgPIncVat,gpPct:periodFiltered?(gp!=null&&revenueExVat?gp/revenueExVat*100:null):(p.gpPct==null?null:Number(p.gpPct)),gpUnit:gp!=null&&units?gp/units:null,wklyU,avgRevPerWeekIncVat,coverWks:p.stock!=null&&wklyU>0?Number(p.stock)/wklyU:null});
+    const grossUnits=periodFiltered?getMetric(p,'grossUnits'):Number(p.grossUnits??Math.max(0,units+Number(p.returnedUnits||0)));
+    const returnedUnits=periodFiltered?getMetric(p,'returnedUnits'):Number(p.returnedUnits||0);
+    const discountsIncVat=periodFiltered?getMetric(p,'discountsIncVat'):Number(p.discountsIncVat||0);
+    const refundsIncVat=periodFiltered?getMetric(p,'refundsIncVat'):Number(p.refundsIncVat||0);
+    const rrpOpportunityIncVat=periodFiltered?getMetric(p,'rrpOpportunityIncVat'):Number(p.rrpOpportunityIncVat||0);
+    const markdownLeakageIncVat=periodFiltered?getMetric(p,'markdownLeakageIncVat'):Number(p.markdownLeakageIncVat||0);
+    const fullPriceGrossUnits=periodFiltered?getMetric(p,'fullPriceGrossUnits'):Number(p.fullPriceGrossUnits||0);
+    const markdownGrossUnits=periodFiltered?getMetric(p,'markdownGrossUnits'):Number(p.markdownGrossUnits||0);
+    return Object.assign({},p,{units,salesIncVat,revenueExVat,grossSalesIncVat,grossUnits,returnedUnits,discountsIncVat,refundsIncVat,rrpOpportunityIncVat,markdownLeakageIncVat,fullPriceGrossUnits,markdownGrossUnits,gp,knownGpValue,costedRevenueExVat,avgPIncVat,gAspIncVat:r.grossAvailable&&units?grossSalesIncVat/units:avgPIncVat,gpPct:periodFiltered?(gp!=null&&revenueExVat?gp/revenueExVat*100:null):(p.gpPct==null?null:Number(p.gpPct)),gpUnit:gp!=null&&units?gp/units:null,wklyU,avgRevPerWeekIncVat,coverWks:p.stock!=null&&wklyU>0?Number(p.stock)/wklyU:null});
   });
+  const overallProducts=activeProducts.filter(isRelevantMainProduct).filter(p=>p.units!==0||p.salesIncVat!==0||p.grossUnits>0);
   let baseProducts=activeProducts.filter(isRelevantMainProduct);
   if(G.scope==='sold')baseProducts=baseProducts.filter(p=>p.units!==0||p.salesIncVat!==0);
   else baseProducts=baseProducts.filter(p=>Number(p.stock||0)>0||p.units!==0||p.salesIncVat!==0);
   if(G.season&&G.season!=='All')baseProducts=baseProducts.filter(p=>seasonMatchFilter(p.season,G.season));
   if(G.search)baseProducts=baseProducts.filter(p=>productSearchText(p).includes(G.search));
+  if(G.selectedOnly)baseProducts=baseProducts.filter(p=>G.selected.has(productSelectionKey(p)));
 
   // Categories reflect active date, season, scope and search filters.
   const totRev=baseProducts.reduce((sum,p)=>sum+p.salesIncVat,0),rc={};
@@ -1845,7 +1878,7 @@ function render(){
   const hasCat=catList.length>2;
   const showPeriods=activePeriodLabels.length>1;
 
-  // Summary cards
+  // Summary cards: overall remains fixed while the filtered strip responds to every product filter.
   const fRev=filt.reduce((sum,p)=>sum+p.salesIncVat,0);
   const trading=tradingMetricsForPeriods(r,activePeriodLabels,G.periodFilter);
   const fU=filt.reduce((sum,p)=>sum+p.units,0);
@@ -1853,16 +1886,42 @@ function render(){
   const costedRev=filt.reduce((sum,p)=>sum+Number(p.costedRevenueExVat||0),0),fGPpct=costedRev>0?fGP/costedRev*100:null;
   const soldForGp=filt.filter(p=>p.units!==0||p.salesIncVat!==0);
   const fStock=hasStock?filt.filter(p=>p.stock!=null).reduce((a,p)=>a+p.stock,0):null;
-  const cds=[
-    {l:'Demand',v:trading.available?fMoney(trading.demandRevenue):'—',note:trading.available?'Inc VAT · after discounts, before returns':'Sync Shopify to load'},
-    {l:'Despatch',v:trading.available?fMoney(trading.despatchRevenue):'—',note:trading.available?'Shopify total sales · inc VAT':'Sync Shopify to load'},
-    {l:G.cat==='All'?'Sales inc VAT':`${G.cat} sales inc VAT`,v:fMoney(fRev)},
-    {l:soldForGp.every(p=>p.gp!=null)?'Achieved GP ex VAT':'Known GP ex VAT',v:gpKnown.length?fMoney(fGP):'Unknown'},
-    {l:'Achieved GP % (ex-VAT basis)',v:fPct(fGPpct)},
-    {l:'Units sold',v:fN(fU)},
-    fStock!=null?{l:'Visible stock',v:fN(fStock)}:null,
+  const sumMetric=(products,key)=>products.reduce((sum,p)=>sum+Number(p[key]||0),0);
+  const oGross=sumMetric(overallProducts,'grossSalesIncVat'),oDiscount=sumMetric(overallProducts,'discountsIncVat'),oRefunds=sumMetric(overallProducts,'refundsIncVat');
+  const oGrossUnits=sumMetric(overallProducts,'grossUnits'),oReturned=sumMetric(overallProducts,'returnedUnits');
+  const overallCards=[
+    {l:'Demand',v:trading.available?fMoney(trading.demandRevenue):'—',note:'Inc VAT · after discounts, before returns'},
+    {l:'Despatch',v:trading.available?fMoney(trading.despatchRevenue):'—',note:'Shopify total sales · inc VAT'},
+    {l:'Gross sales before discount',v:fMoney(oGross),note:'Inc VAT'},
+    {l:'Discount codes & order discounts',v:fMoney(oDiscount),note:oGross>0?fPct(oDiscount/oGross*100):'—'},
+    {l:'Refunds processed',v:fMoney(oRefunds),note:(sumMetric(overallProducts,'salesIncVat')+oRefunds)>0?fPct(oRefunds/(sumMetric(overallProducts,'salesIncVat')+oRefunds)*100):'—'},
+    {l:'Gross / returned / net units',v:`${fN(oGrossUnits)} / ${fN(oReturned)} / ${fN(sumMetric(overallProducts,'units'))}`,note:oGrossUnits>0?`${fPct(oReturned/oGrossUnits*100)} return rate`:'—'}
+  ];
+  const cardsHtml=cards=>cards.map(c=>`<div class="card"><label>${c.l}</label><span>${c.v}</span>${c.note?`<small>${c.note}</small>`:''}</div>`).join('');
+  document.getElementById('cards').innerHTML=cardsHtml(overallCards);
+  const fGross=sumMetric(filt,'grossSalesIncVat'),fDiscount=sumMetric(filt,'discountsIncVat'),fRefunds=sumMetric(filt,'refundsIncVat');
+  const fGrossUnits=sumMetric(filt,'grossUnits'),fReturned=sumMetric(filt,'returnedUnits'),fRrp=sumMetric(filt,'rrpOpportunityIncVat'),fLeak=sumMetric(filt,'markdownLeakageIncVat'),fFpUnits=sumMetric(filt,'fullPriceGrossUnits');
+  const filterActive=G.season!=='All'||G.cat!=='All'||Boolean(G.search)||G.selectedOnly||G.scope!=='sold';
+  const filteredBlock=document.getElementById('filtered-metrics');
+  if(filteredBlock)filteredBlock.style.display=filterActive?'block':'none';
+  const labels=[];if(G.season!=='All')labels.push(G.season);if(G.cat!=='All')labels.push(G.cat);if(G.search)labels.push(`search “${G.search}”`);if(G.selectedOnly)labels.push(`${G.selected.size} selected`);if(G.scope!=='sold')labels.push('all active stock');
+  const filteredTitle=document.getElementById('filtered-metrics-title');if(filteredTitle)filteredTitle.textContent=`Filtered view${labels.length?' — '+labels.join(' · '):''}`;
+  const filteredCards=[
+    {l:'Sales inc VAT',v:fMoney(fRev)},
+    {l:'Discounts',v:fMoney(fDiscount),note:fGross>0?fPct(fDiscount/fGross*100):'—'},
+    {l:'Refunds',v:fMoney(fRefunds),note:(fRev+fRefunds)>0?`${fPct(fRefunds/(fRev+fRefunds)*100)} of pre-refund sales`:'—'},
+    {l:soldForGp.every(p=>p.gp!=null)?'Achieved GP ex VAT':'Known GP ex VAT',v:gpKnown.length?fMoney(fGP):'Unknown',note:fPct(fGPpct)},
+    {l:'RRP value of gross units',v:fRrp>0?fMoney(fRrp):'—',note:'Inc VAT · before product markdown'},
+    {l:'Markdown leakage',v:fRrp>0?fMoney(fLeak):'—',note:'Excludes discount codes'},
+    {l:'FP unit mix',v:fGrossUnits>0?fPct(fFpUnits/fGrossUnits*100):'—',note:'Code-discounted products remain FP'},
+    {l:'Gross / returned / net units',v:`${fN(fGrossUnits)} / ${fN(fReturned)} / ${fN(fU)}`,note:fGrossUnits>0?`${fPct(fReturned/fGrossUnits*100)} return rate`:'—'},
+    fStock!=null?{l:'Visible stock',v:fN(fStock)}:null
   ].filter(Boolean);
-  document.getElementById('cards').innerHTML=cds.map(c=>`<div class="card"><label>${c.l}</label><span>${c.v}</span>${c.note?`<small>${c.note}</small>`:''}</div>`).join('');
+  const filteredCardsEl=document.getElementById('filtered-cards');if(filteredCardsEl)filteredCardsEl.innerHTML=cardsHtml(filteredCards);
+
+  const selectionBar=document.getElementById('selection-bar');if(selectionBar)selectionBar.classList.toggle('show',G.selected.size>0);
+  const selectionCount=document.getElementById('selection-count');if(selectionCount)selectionCount.textContent=`${G.selected.size} selected`;
+  const selectionShow=document.getElementById('selection-show');if(selectionShow)selectionShow.textContent=G.selectedOnly?'Show all matching':'Show selected';
 
   const filtView=filt;
   document.getElementById('scope-sold')?.classList.toggle('on',G.scope==='sold');document.getElementById('scope-sold')?.setAttribute('aria-pressed',String(G.scope==='sold'));
@@ -1883,6 +1942,7 @@ function render(){
 
   hideGrid();
   document.getElementById('thead').innerHTML=`<tr>
+    <th class="c" style="width:38px" title="Select products for comparison">Select</th>
     <th class="sl-no" style="width:30px">#</th>
     ${hasImg?'<th class="sl-img" style="width:62px">Img</th>':''}
     ${th('name','Product','sticky-l sl-pr')}
@@ -1930,6 +1990,7 @@ function render(){
     const rankBadges=`<div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:3px">${goldStar}${silverStar}</div>`;
     const forecastBuy=p.stock!=null&&p.wklyU>0?Math.max(0,Math.ceil(p.wklyU*weeksLeft)-p.stock):null;
     const cvCls=cover==null?'cv-na':cover<4?'cv-lo':cover<weeksLeft?'cv-md':'cv-ok';
+    const selectionKey=productSelectionKey(p),isSelected=G.selected.has(selectionKey);
 
     const safeImg=safeImageUrl(p.img);
     const sc=hasSeason?`<td class="c">${seasonBadge(p.season)}</td>`:'';
@@ -1942,18 +2003,20 @@ function render(){
     // Per-period sparkline cells
     const periodCells=showPeriods?activePeriodLabels.map(lbl=>{
       const u=p.periods[lbl]?.units||0;
+      const returned=Number(p.periods[lbl]?.returnedUnits||0);
       const maxForPeriod=Math.max(...srtAll.map(x=>x.periods[lbl]?.units||0),1);
       const barH=u>0?Math.max(Math.round(u/maxForPeriod*16),3):2;
       const isBest=u>0&&u===Math.max(...srtAll.map(x=>x.periods[lbl]?.units||0));
       const cls=u===0?'lo':isBest?'hi':'';
       const uColor=u<0?'var(--danger)':'';
-      return`<td class="spark-cell">
-        <div class="spark-val${u===0?' zero':''}" style="color:${uColor}">${u!==0?u:'—'}</div>
+      return`<td class="spark-cell" title="Net ${u} · returned ${returned}">
+        <div class="spark-val${u===0?' zero':''}" style="color:${uColor}">${u!==0?u:'—'}${returned>0?` <span style="font-size:9px;color:var(--danger)">↩${fN(returned)}</span>`:''}</div>
         <div class="spark-bar-wrap"><div class="spark-bar ${cls}" style="height:${barH}px;${u<0?'background:var(--danger);opacity:0.5':''}"></div></div>
       </td>`;
     }).join(''):'';
 
     html+=`<tr class="${alt}">
+      <td class="c"><input class="row-select" type="checkbox" ${isSelected?'checked':''} aria-label="Select ${escapeAttr(p.name)}" data-select-key="${escapeAttr(selectionKey)}" onchange="toggleProductSelection(this.dataset.selectKey,this.checked)"></td>
       <td class="sl-no" style="font-size:11px;color:var(--text3)">${pageStart+i+1}</td>
       ${hasImg?`<td class="sl-img" style="padding:6px 10px">${safeImg?`<img class="thumb" src="${escapeAttr(safeImg)}" onclick="openLb(this)" onerror="this.style.display='none'" alt="${escapeAttr(p.name)}">`:' <div class="thumb-e"></div>'}</td>`:''}
       <td class="sl-pr"><div class="pname" style="display:flex;align-items:flex-start;gap:6px">${showPeriods?`<button class="xbtn${isE?' open':''}" title="Show period breakdown" data-pname="${escapeAttr(p.name)}" onclick="togExpBtn(this)"><span style="font-size:10px">${isE?'▲':'▼'}</span></button>`:''}${rankBadges}${escapeHtml(p.name)}</div>${p.cat?`<div class="pcat">${escapeHtml(p.cat)}</div>`:''}<div class="bw"><div class="bf" style="width:${bw}px"></div></div></td>
@@ -1979,6 +2042,7 @@ function render(){
         const pd=p.periods[lbl]||{units:0,rev:0,gp:0};
         const u=pd.units;
         const periodSales=salesIncVatOf(pd,r.financialSemantics);
+        const returned=Number(pd.returnedUnits||0),refunds=Number(pd.refundsIncVat||0),grossUnits=Number(pd.grossUnits??Math.max(0,u+returned));
         const asp=u>0?periodSales/u:null;
         const uColor=u>0?'var(--text)':u<0?'var(--danger)':'var(--text3)';
         const uLabel=u!==0?u:'—';
@@ -2004,6 +2068,8 @@ function render(){
           <div class="pd-u" style="color:${uColor}">${uLabel}</div>
           ${barHtml}
           <div class="pd-r" style="color:${periodSales<0?'var(--danger)':'var(--text2)'}">${periodSales!==0?fMoney(periodSales):''}</div>
+          <div style="font-size:9px;color:${returned>0?'var(--danger)':'var(--text3)'};text-align:center">${grossUnits?`${fN(grossUnits)} gross · ${fN(returned)} returned`:''}</div>
+          <div style="font-size:9px;color:var(--text3);text-align:center">${refunds?`${fMoney(refunds)} refunds`:''}</div>
           ${asp!=null?`<div style="font-size:9px;color:var(--text3);text-align:center;margin-top:1px">${fMoney(asp)} avg</div>`:'<div style="font-size:9px">&nbsp;</div>'}
           <div class="pd-l">${escapeHtml(lbl)}</div>
         </div>`;
@@ -3556,6 +3622,18 @@ function openStockCatMap(){
 let stockSeasonFilter='All'; // current season filter for stock position tab
 let stockSalesPeriod='All';   // period filter for sales-by-season section
 let stockSalesSeasonFilter='All'; // season filter for sales-by-season section
+let mixExpandedDepartments=new Set(); // Mix Performance defaults to departments; categories expand beneath them
+
+function toggleMixDepartment(department){
+  if(mixExpandedDepartments.has(department))mixExpandedDepartments.delete(department);
+  else mixExpandedDepartments.add(department);
+  renderStockPanel();
+}
+
+function setAllMixDepartments(expanded){
+  mixExpandedDepartments=expanded?new Set(CAT_GROUPS):new Set();
+  renderStockPanel();
+}
 
 function renderStockPanel(){
   const el=document.getElementById('stock-panel-content');
@@ -3629,40 +3707,98 @@ function renderStockPanel(){
     sourceData=merged;
   }
 
-  // Apply category grouping if active
+  // Retain the category level, then roll it up into departments for Mix Performance.
+  // A saved category map overrides the automatic department suggestion when enabled.
   const stockByCat={};
   Object.entries(sourceData).forEach(([cat,v])=>{
-    const effective=catMapActive&&catMap[cat]?catMap[cat]:cat;
-    if(!stockByCat[effective])stockByCat[effective]={units:0,cost:0,retail:0};
-    stockByCat[effective].units+=v.units||0;
-    stockByCat[effective].cost+=v.cost||0;
-    stockByCat[effective].retail+=v.retail||0;
+    const category=cat||'Other';
+    if(!stockByCat[category])stockByCat[category]={units:0,cost:0,retail:0};
+    stockByCat[category].units+=v.units||0;
+    stockByCat[category].cost+=v.cost||0;
+    stockByCat[category].retail+=v.retail||0;
   });
 
-  const stockCatList=Object.entries(stockByCat).filter(([,v])=>v.units>0).sort((a,b)=>b[1].retail-a[1].retail);
   let totalStockUnits=0,totalStockCost=0,totalStockRetail=0;
   Object.values(stockByCat).forEach(v=>{totalStockUnits+=v.units||0;totalStockCost+=v.cost||0;totalStockRetail+=v.retail||0;});
   const stockVatDivisor=r.financialSemantics?.retailPricesIncludeVat?1.2:1;
   const stockCostCoverage=Number(r.financialSemantics?.stockCostCoveragePercent??100);
 
-  // Compute weekly units sold per effective category from _rpt products
+  // Compute weekly units sold per original category from _rpt products.
   const catWklyUnits={};
   const catTotalUnits={};
+  const catSales={};
   if(r&&r.products){
     r.products.forEach(p=>{
-      const cat=catMapActive&&catMap[p.cat]?catMap[p.cat]:(p.cat||'Other');
+      const season=String(p.season||'');
+      const inSeason=stockSeasonFilter==='All'
+        ||(stockSeasonFilter==='SS'&&season.toUpperCase().startsWith('SS'))
+        ||(stockSeasonFilter==='AW'&&season.toUpperCase().startsWith('AW'))
+        ||season===stockSeasonFilter;
+      if(!inSeason)return;
+      const cat=p.cat||'Other';
       catWklyUnits[cat]=(catWklyUnits[cat]||0)+(p.wklyU||0);
       catTotalUnits[cat]=(catTotalUnits[cat]||0)+(p.units||0);
+      catSales[cat]=(catSales[cat]||0)+Number(p.rev||p.revenueIncVat||0);
     });
   }
+  Object.keys(catSales).forEach(cat=>{if(!stockByCat[cat])stockByCat[cat]={units:0,cost:0,retail:0};});
+
+  const mixDepartments={};
+  Object.entries(stockByCat).forEach(([category,v])=>{
+    const department=departmentForCategory(category);
+    if(!mixDepartments[department])mixDepartments[department]={units:0,cost:0,retail:0,wklyU:0,sales:0,categories:[]};
+    const departmentData=mixDepartments[department];
+    departmentData.units+=v.units||0;
+    departmentData.cost+=v.cost||0;
+    departmentData.retail+=v.retail||0;
+    departmentData.wklyU+=catWklyUnits[category]||0;
+    departmentData.sales+=catSales[category]||0;
+    departmentData.categories.push([category,v]);
+  });
+  const mixDepartmentList=Object.entries(mixDepartments)
+    .filter(([,v])=>v.units>0||v.sales!==0)
+    .sort((a,b)=>(b[1].retail-a[1].retail)||(b[1].sales-a[1].sales));
+  mixDepartmentList.forEach(([,v])=>v.categories.sort((a,b)=>(b[1].retail-a[1].retail)||((catSales[b[0]]||0)-(catSales[a[0]]||0))));
   const totalWklyUnits=Object.values(catWklyUnits).reduce((a,v)=>a+v,0);
+  const totalSales=Object.values(catSales).reduce((a,v)=>a+v,0);
 
   // Bar chart widths
-  const maxRetail=stockCatList[0]?.[1]?.retail||1;
+  const renderMixRow=(label,v,wklyU,sales,isDepartment,rowIndex,hasChildren)=>{
+    const margin=v.retail>0?((v.retail/stockVatDivisor)-v.cost)/(v.retail/stockVatDivisor)*100:0;
+    const pctRetail=totalStockRetail>0?v.retail/totalStockRetail*100:0;
+    const salesMix=totalSales>0?sales/totalSales*100:0;
+    const mixGap=salesMix-pctRetail;
+    const performanceIndex=pctRetail>0?salesMix/pctRetail:null;
+    const signal=pctRetail===0&&salesMix>0?'Sold through':performanceIndex>=1.2?'Over-performing':performanceIndex!=null&&performanceIndex<=.8?'Under-performing':'Balanced';
+    const signalColor=signal==='Over-performing'||signal==='Sold through'?'var(--success)':signal==='Under-performing'?'var(--warning)':'var(--text2)';
+    const cover=wklyU>0?v.units/wklyU:null;
+    const coverCol=cover==null?'var(--text3)':cover<4?'var(--danger)':cover<12?'var(--warning)':'var(--success)';
+    const expanded=isDepartment&&mixExpandedDepartments.has(label);
+    return`<tr style="${isDepartment?'border-top:.5px solid var(--border2);font-weight:600':rowIndex%2===1?'background:var(--bg2)':''}">
+      <td style="padding:9px 12px;font-size:13px;${isDepartment?'font-weight:600':'padding-left:39px;color:var(--text2)'}">
+        ${isDepartment&&hasChildren?`<button type="button" data-dept="${escapeAttr(label)}" onclick="toggleMixDepartment(this.dataset.dept)" aria-expanded="${expanded}" aria-label="${expanded?'Collapse':'Expand'} ${escapeAttr(label)} categories" style="width:22px;height:22px;margin-right:5px;border:0;background:transparent;color:var(--text2);cursor:pointer;font-size:13px">${expanded?'▾':'▸'}</button>`:isDepartment?'<span style="display:inline-block;width:27px"></span>':''}${escapeHtml(label)}
+      </td>
+      <td style="padding:9px 12px;min-width:100px">
+        <div title="Stock mix" style="height:5px;background:var(--border);border-radius:3px;overflow:hidden;margin-bottom:3px"><div style="height:100%;width:${Math.min(100,pctRetail)}%;background:var(--info);border-radius:3px;opacity:.7"></div></div>
+        <div title="Sales mix" style="height:5px;background:var(--border);border-radius:3px;overflow:hidden"><div style="height:100%;width:${Math.min(100,salesMix)}%;background:var(--success);border-radius:3px;opacity:.75"></div></div>
+      </td>
+      <td style="padding:9px 12px;font-size:13px;text-align:right">${fN(v.units)}</td>
+      <td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--text2)">${wklyU>0?wklyU.toFixed(1):'—'}</td>
+      <td style="padding:9px 12px;font-size:13px;text-align:right;font-weight:500;color:${coverCol}">${cover!=null?cover.toFixed(1)+' wks':'—'}</td>
+      <td style="padding:9px 12px;font-size:13px;text-align:right">${fMoney(v.cost)}</td>
+      <td style="padding:9px 12px;font-size:13px;text-align:right;font-weight:500">${fMoney(v.retail)}</td>
+      <td style="padding:9px 12px;font-size:13px;text-align:right;color:${margin<20?'var(--warning)':'var(--success)'}">${fPct(margin)}</td>
+      <td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--text2)">${pctRetail.toFixed(1)}%</td>
+      <td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--text2)">${salesMix.toFixed(1)}%</td>
+      <td style="padding:9px 12px;font-size:13px;text-align:right;color:${mixGap>=0?'var(--success)':'var(--warning)'}">${mixGap>=0?'+':''}${mixGap.toFixed(1)}pp</td>
+      <td style="padding:9px 12px;font-size:13px;text-align:right;font-weight:600">${performanceIndex==null?'—':performanceIndex.toFixed(2)+'×'}</td>
+      <td style="padding:9px 12px;font-size:12px;color:${signalColor};font-weight:600">${signal}</td>
+    </tr>`;
+  };
 
   el.innerHTML=`
   ${allSeasons.length>0?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">
-    ${['All','SS','AW',...allSeasons].map(season=>{
+    ${['All','SS','AW',...allSeasons.filter(season=>!['SS','AW'].includes(String(season).toUpperCase()))].map(season=>{
       const active=stockSeasonFilter===season;
       const isGroup=season==='SS'||season==='AW';
       const label=season==='SS'?'All SS':season==='AW'?'All AW':season==='All'?'All seasons':season;
@@ -3679,42 +3815,34 @@ function renderStockPanel(){
     ${totalWklyUnits>0?`<div class="ra-card"><label>Total cover</label><span style="color:${totalStockUnits/totalWklyUnits<4?'var(--danger)':'var(--success)'}">${(totalStockUnits/totalWklyUnits).toFixed(1)} wks</span></div>`:''}
   </div>
 
+  <div style="display:flex;justify-content:flex-end;gap:6px;margin:0 0 8px">
+    <button type="button" onclick="setAllMixDepartments(true)" class="btn" style="padding:5px 10px;font-size:11px">Expand all</button>
+    <button type="button" onclick="setAllMixDepartments(false)" class="btn" style="padding:5px 10px;font-size:11px">Collapse all</button>
+  </div>
   <div class="impact-table-wrap">
     <table style="width:100%;border-collapse:collapse">
       <thead><tr style="background:var(--bg2)">
-        <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:left">Category</th>
-        <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:left">Mix</th>
+        <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:left">Department / category</th>
+        <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:left">Mix comparison</th>
         <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Stock units</th>
         <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Units/wk</th>
         <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Cover wks</th>
         <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Stock at cost</th>
         <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Stock at retail</th>
         <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Margin %</th>
-        <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">% of retail</th>
+        <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Stock mix</th>
+        <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Sales mix</th>
+        <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Gap</th>
+        <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Index</th>
+        <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:left">Signal</th>
       </tr></thead>
       <tbody>
-        ${stockCatList.map(([cat,v],i)=>{
-          const margin=v.retail>0?((v.retail/stockVatDivisor)-v.cost)/(v.retail/stockVatDivisor)*100:0;
-          const pctRetail=totalStockRetail>0?v.retail/totalStockRetail*100:0;
-          const barW=Math.round(v.retail/maxRetail*100);
-          const wklyU=catWklyUnits[cat]||0;
-          const cover=wklyU>0?v.units/wklyU:null;
-          const coverCol=cover==null?'var(--text3)':cover<4?'var(--danger)':cover<12?'var(--warning)':'var(--success)';
-          return`<tr style="${i%2===1?'background:var(--bg2)':''}">
-            <td style="padding:9px 12px;font-size:13px;font-weight:500">${escapeHtml(cat)}</td>
-            <td style="padding:9px 12px;min-width:100px">
-              <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
-                <div style="height:100%;width:${barW}%;background:var(--info);border-radius:3px;opacity:.7"></div>
-              </div>
-            </td>
-            <td style="padding:9px 12px;font-size:13px;text-align:right">${fN(v.units)}</td>
-            <td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--text2)">${wklyU>0?wklyU.toFixed(1):'—'}</td>
-            <td style="padding:9px 12px;font-size:13px;text-align:right;font-weight:500;color:${coverCol}">${cover!=null?cover.toFixed(1)+' wks':'—'}</td>
-            <td style="padding:9px 12px;font-size:13px;text-align:right">${fMoney(v.cost)}</td>
-            <td style="padding:9px 12px;font-size:13px;text-align:right;font-weight:500">${fMoney(v.retail)}</td>
-            <td style="padding:9px 12px;font-size:13px;text-align:right;color:${margin<20?'var(--warning)':'var(--success)'}">${fPct(margin)}</td>
-            <td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--text2)">${pctRetail.toFixed(1)}%</td>
-          </tr>`;
+        ${mixDepartmentList.map(([department,v],i)=>{
+          const rows=[renderMixRow(department,v,v.wklyU,v.sales,true,i,v.categories.length>0)];
+          if(mixExpandedDepartments.has(department))v.categories.forEach(([category,categoryStock],categoryIndex)=>{
+            rows.push(renderMixRow(category,categoryStock,catWklyUnits[category]||0,catSales[category]||0,false,categoryIndex,false));
+          });
+          return rows.join('');
         }).join('')}
         <tr style="border-top:.5px solid var(--border2);font-weight:600;background:var(--bg2)">
           <td style="padding:9px 12px;font-size:13px">Total</td>
@@ -3726,12 +3854,16 @@ function renderStockPanel(){
           <td style="padding:9px 12px;font-size:13px;text-align:right">${fMoney(totalStockRetail)}</td>
           <td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--success)">${totalStockRetail>0?fPct(((totalStockRetail/stockVatDivisor)-totalStockCost)/(totalStockRetail/stockVatDivisor)*100):'—'}</td>
           <td style="padding:9px 12px;font-size:13px;text-align:right">100%</td>
+          <td style="padding:9px 12px;font-size:13px;text-align:right">${totalSales>0?'100%':'—'}</td>
+          <td style="padding:9px 12px;font-size:13px;text-align:right">0.0pp</td>
+          <td style="padding:9px 12px;font-size:13px;text-align:right">1.00×</td>
+          <td style="padding:9px 12px;font-size:13px">—</td>
         </tr>
       </tbody>
     </table>
   </div>
   ${renderSalesBySeason(r,salesFiles,stockSalesPeriod,stockSalesSeasonFilter)}`;
-  document.getElementById('stock-sub').textContent=`${fN(totalStockUnits)} units across ${stockCatList.length} categories · Retail value ${fMoney(totalStockRetail)}`;
+  document.getElementById('stock-sub').textContent=`Current stock retail mix vs ${r.weeks?.toFixed?r.weeks.toFixed(1):r.weeks||1}-week sales mix · ${fN(totalStockUnits)} units · ${fMoney(totalStockRetail)} retail value`;
 }
 
 function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
@@ -5232,9 +5364,13 @@ function renderMeth(){
     ${row('Demand card', 'Shopify product sales including VAT, after discounts and before returns. It uses the same ShopifyQL formula as the P&L Planner.', 'This is a loaded-range trading total rather than a product/category-filtered subtotal.')}
     ${row('Despatch card', 'ShopifyQL total sales for the loaded range, matching the P&L Planner Despatch definition.', 'This is a loaded-range trading total rather than a product/category-filtered subtotal.')}
     ${row('Units', 'Total units sold across all loaded periods.', '')}
-    ${row('Monthly columns', 'Units sold in each period. Bars scale against the best-selling product in that period. The bar is green for the top product, grey for others, faded for zero sales.', '')}
+    ${row('Weekly columns', 'Net units sold in each period, with returned units shown beside them. Expanding a product shows gross units, returned units, refund value and net sales for every week.', '')}
     ${row('Avg price (ASP)', 'Visible sales inc VAT ÷ net items sold across the active range.', '')}
     ${row('Gross sales', 'Shopify gross sales before discounts and returns, displayed including VAT.', '')}
+    ${row('Discounts', 'Shopify discount-code and order-discount value. Discount codes do not make a product a markdown or sale product.', 'Discount % = discounts ÷ gross sales before discount.')}
+    ${row('Refunds and return rate', 'Refund value is shown as a percentage of sales before refunds. Unit return rate is returned units ÷ gross units ordered.', 'Refunds are processed in the selected period and can relate to an earlier sale.')}
+    ${row('Full-price classification', 'The sale line price before discount codes is compared with RRP (compare-at price where available, otherwise current price). It is markdown only when that pre-discount price is below RRP.', 'A discount code does not change the FP classification; a product restored to RRP can still be recognised as a historical markdown.')}
+    ${row('RRP value and markdown leakage', 'RRP value prices gross sold units at compare-at RRP for marked-down variants and current price for FP variants. Markdown leakage is RRP value minus gross sales before order discounts.', 'This keeps product markdown separate from discount-code value.')}
     ${row('Sales', 'Shopify sales after discounts and sales reversals for the selected dates, displayed including VAT.', '')}
     ${row('Total GP', 'Shopify gross profit: net sales ex VAT minus Shopify cost of goods sold for the selected dates.', '')}
     ${row('GP / unit', 'Total GP ÷ total units sold.', '')}
@@ -5252,7 +5388,7 @@ function renderMeth(){
     ${info('If GP% looks different between Bestsellers TY and Revenue Analysis, check whether you are comparing the same period. Revenue Analysis uses last period only; Bestsellers TY shows the total across all loaded periods.')}
   `)}
 
-  ${sec('Revenue Analysis — sales forecast','How the 2-period forward projection works.',`
+  ${sec('Forecast & Buy — sales forecast','How the 2-period forward projection works.',`
     ${row('Forecast horizon',
       'Two periods forward. Each period equals the same number of days as your last loaded file. If last period was April (30 days), M1 = next 30 days, M2 = the 30 days after that.',
       'This ensures the "Potential" figure (fully stocked at current ROS) equals last period\'s net sales — a natural sanity check.')}
@@ -5527,6 +5663,12 @@ function autoSuggestGroup(cat){
   const lc=cat.toLowerCase();
   for(const r of CAT_RULES){if(r.keywords.some(k=>lc.includes(k)))return r.group;}
   return'Other';
+}
+
+function departmentForCategory(cat){
+  if(catMapActive&&catMap[cat])return catMap[cat];
+  if(CAT_GROUPS.includes(cat))return cat;
+  return autoSuggestGroup(cat);
 }
 
 function openCatMap(){

@@ -51,8 +51,57 @@ test("order aggregation keeps genuine gross and discounted net values, prorates 
   assert.equal(metrics.get("p1").units, 3);
   assert.equal(metrics.get("p1").revenue, 67.5);
   assert.equal(metrics.get("p1").grossSales, 90);
+  assert.equal(metrics.get("p1").discounts, 22.5);
+  assert.equal(metrics.get("p1").returns, 22.5);
+  assert.equal(metrics.get("p1").grossUnits, 4);
+  assert.equal(metrics.get("p1").returnedUnits, 1);
   assert.equal(metrics.get("p1").salesIncludeVat, false);
   assert.equal(metrics.get("p1").variants.get("v1").units, 3);
+});
+
+test("full-price classification ignores discount codes and only treats compare-at markdowns as sale", () => {
+  const result = bestsellers.calculateProductFinancials({
+    source: "shopifyql_sales",
+    salesIncludeVat: false,
+    revenue: 160 / 1.2,
+    grossSales: 170 / 1.2,
+    discounts: 10 / 1.2,
+    returns: 0,
+    units: 3,
+    grossUnits: 3,
+    returnedUnits: 0,
+    grossProfit: 80,
+    costOfGoods: 160 / 1.2 - 80,
+    variants: new Map([
+      ["v1", { units: 2, grossUnits: 2, revenue: 100, grossSales: 120 / 1.2 }],
+      ["v2", { units: 1, grossUnits: 1, revenue: 160 / 1.2 - 100, grossSales: 50 / 1.2 }]
+    ])
+  }, [
+    { id: "v1", price: 60, compareAtPrice: null, cost: 20 },
+    { id: "v2", price: 50, compareAtPrice: 90, cost: 25 }
+  ]);
+  assert.equal(result.fullPriceGrossUnits, 2);
+  assert.equal(result.markdownGrossUnits, 1);
+  assert.equal(result.rrpOpportunityIncVat, 210);
+  assert.ok(Math.abs(result.markdownLeakageIncVat - 40) < 1e-9);
+  assert.ok(Math.abs(result.discountsIncVat - 10) < 1e-9);
+});
+
+test("pre-discount selling price preserves historical markdown classification after a product returns to RRP", () => {
+  const result = bestsellers.calculateProductFinancials({
+    source: "shopifyql_sales",
+    revenue: 40,
+    grossSales: 40,
+    units: 1,
+    grossUnits: 1,
+    grossProfit: 20,
+    costOfGoods: 20,
+    variants: new Map([["v1", { units: 1, grossUnits: 1, revenue: 40, grossSales: 40 }]])
+  }, [{ id: "v1", price: 60, compareAtPrice: null, cost: 20 }]);
+  assert.equal(result.markdownGrossUnits, 1);
+  assert.equal(result.fullPriceGrossUnits, 0);
+  assert.equal(result.rrpOpportunityIncVat, 60);
+  assert.equal(result.markdownLeakageIncVat, 12);
 });
 
 test("ex-VAT GP is variant-sales-weighted when every sold unit has cost", () => {
@@ -162,8 +211,8 @@ test("saved ex-VAT periods expose VAT-inclusive display values without changing 
 
 test("Demand and Despatch combine only when every selected Bestsellers period has P&L-aligned metrics", () => {
   const combined = bestsellers.combineTradingMetrics([
-    { label: "29 Jun", summary: { tradingMetrics: { demandRevenue: 108, despatchRevenue: 102, grossRevenue: 100, discounts: 10, netRevenue: 80, shippingRevenue: 5, tax: 17, returnFees: 0 } } },
-    { label: "6 Jul", summary: { tradingMetrics: { demandRevenue: 216, despatchRevenue: 204, grossRevenue: 200, discounts: 20, netRevenue: 160, shippingRevenue: 10, tax: 34, returnFees: 0 } } }
+    { label: "29 Jun", summary: { tradingMetrics: { demandRevenue: 108, despatchRevenue: 102, grossRevenue: 100, discounts: 10, returns: 5, netRevenue: 80, shippingRevenue: 5, tax: 17, returnFees: 0, grossUnits: 20, returnedUnits: 2, netUnits: 18 } } },
+    { label: "6 Jul", summary: { tradingMetrics: { demandRevenue: 216, despatchRevenue: 204, grossRevenue: 200, discounts: 20, returns: 10, netRevenue: 160, shippingRevenue: 10, tax: 34, returnFees: 0, grossUnits: 40, returnedUnits: 4, netUnits: 36 } } }
   ]);
   assert.equal(combined.available, true);
   assert.equal(combined.demandRevenue, 324);
@@ -171,10 +220,13 @@ test("Demand and Despatch combine only when every selected Bestsellers period ha
   assert.equal(combined.periods["29 Jun"].demandRevenue, 108);
   assert.equal(combined.selections.last1.demandRevenue, 216);
   assert.equal(combined.selections.last1.despatchRevenue, 204);
+  assert.equal(combined.returns, 15);
+  assert.equal(combined.grossUnits, 60);
+  assert.equal(combined.returnedUnits, 6);
   assert.equal(combined.version, bestsellers.TRADE_METRICS_VERSION);
 
   const incomplete = bestsellers.combineTradingMetrics([
-    { label: "29 Jun", summary: { tradingMetrics: { demandRevenue: 108, despatchRevenue: 102, grossRevenue: 100, discounts: 10, netRevenue: 80, shippingRevenue: 5, tax: 17, returnFees: 0 } } },
+    { label: "29 Jun", summary: { tradingMetrics: { demandRevenue: 108, despatchRevenue: 102, grossRevenue: 100, discounts: 10, returns: 5, netRevenue: 80, shippingRevenue: 5, tax: 17, returnFees: 0, grossUnits: 20, returnedUnits: 2, netUnits: 18 } } },
     { label: "6 Jul", summary: {} }
   ]);
   assert.equal(incomplete.available, false);

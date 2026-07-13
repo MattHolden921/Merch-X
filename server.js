@@ -674,8 +674,20 @@ function normalizeProduct(product, orderMetrics) {
     grossSales: Math.round(financials.grossSalesIncVat * 100) / 100,
     grossSalesIncVat: Math.round(financials.grossSalesIncVat * 100) / 100,
     grossSalesExVat: Math.round(financials.grossSalesExVat * 100) / 100,
+    discountsExVat: Math.round(financials.discountsExVat * 100) / 100,
+    discountsIncVat: Math.round(financials.discountsIncVat * 100) / 100,
+    refundsExVat: Math.round(financials.refundsExVat * 100) / 100,
+    refundsIncVat: Math.round(financials.refundsIncVat * 100) / 100,
     salesDisplayBasis: "inc_vat",
     units: financials.units,
+    grossUnits: financials.grossUnits,
+    returnedUnits: financials.returnedUnits,
+    fullPriceGrossUnits: financials.fullPriceGrossUnits,
+    markdownGrossUnits: financials.markdownGrossUnits,
+    fullPriceGrossSalesIncVat: Math.round(financials.fullPriceGrossSalesIncVat * 100) / 100,
+    markdownGrossSalesIncVat: Math.round(financials.markdownGrossSalesIncVat * 100) / 100,
+    rrpOpportunityIncVat: Math.round(financials.rrpOpportunityIncVat * 100) / 100,
+    markdownLeakageIncVat: Math.round(financials.markdownLeakageIncVat * 100) / 100,
     grossProfit: financials.grossProfit == null ? null : Math.round(financials.grossProfit * 100) / 100,
     knownGrossProfit: Math.round(financials.knownGrossProfit * 100) / 100,
     costOfGoods: financials.costOfGoods,
@@ -989,8 +1001,8 @@ async function fetchShopifyQlProductMetrics(range, products = []) {
   for (let offset = 0; offset < 50_000; offset += pageSize) {
     const reportQuery = `
       FROM sales
-      SHOW product_title, product_variant_sku, gross_sales, net_sales,
-        gross_profit, cost_of_goods_sold, net_items_sold
+      SHOW product_title, product_variant_sku, gross_sales, net_sales, discounts, returns,
+        gross_profit, cost_of_goods_sold, quantity_ordered, quantity_returned, net_items_sold
       GROUP BY product_title, product_variant_sku
       SINCE ${range.startDate}
       UNTIL ${range.endDate}
@@ -1042,7 +1054,11 @@ async function fetchShopifyQlProductMetrics(range, products = []) {
       grossSales: 0,
       grossProfit: 0,
       costOfGoods: 0,
+      discounts: 0,
+      returns: 0,
       units: 0,
+      grossUnits: 0,
+      returnedUnits: 0,
       salesIncludeVat: false,
       source: "shopifyql_sales",
       variants: new Map()
@@ -1052,17 +1068,29 @@ async function fetchShopifyQlProductMetrics(range, products = []) {
       grossSales: Number(row.gross_sales || 0),
       grossProfit: Number(row.gross_profit || 0),
       costOfGoods: Number(row.cost_of_goods_sold || 0),
-      units: Number(row.net_items_sold || 0)
+      discounts: Math.abs(Number(row.discounts || 0)),
+      returns: Math.abs(Number(row.returns || 0)),
+      units: Number(row.net_items_sold || 0),
+      grossUnits: Math.max(0, Number(row.quantity_ordered || 0)),
+      returnedUnits: Math.abs(Number(row.quantity_returned || 0))
     };
     current.revenue += sold.revenue;
     current.grossSales += sold.grossSales;
     current.grossProfit += sold.grossProfit;
     current.costOfGoods += sold.costOfGoods;
+    current.discounts += sold.discounts;
+    current.returns += sold.returns;
     current.units += sold.units;
-    const variant = current.variants.get(target.variantId) || { revenue: 0, grossSales: 0, units: 0 };
+    current.grossUnits += sold.grossUnits;
+    current.returnedUnits += sold.returnedUnits;
+    const variant = current.variants.get(target.variantId) || { revenue: 0, grossSales: 0, discounts: 0, returns: 0, units: 0, grossUnits: 0, returnedUnits: 0 };
     variant.revenue += sold.revenue;
     variant.grossSales += sold.grossSales;
+    variant.discounts += sold.discounts;
+    variant.returns += sold.returns;
     variant.units += sold.units;
+    variant.grossUnits += sold.grossUnits;
+    variant.returnedUnits += sold.returnedUnits;
     current.variants.set(target.variantId, variant);
     metrics.set(target.productId, current);
   }
@@ -2015,8 +2043,18 @@ function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
         img: row.image_url || "",
         imageUrl: row.image_url || "",
         units: 0,
+        grossUnits: 0,
+        returnedUnits: 0,
         rev: 0,
         revenueExVat: 0,
+        discountsExVat: 0,
+        discountsIncVat: 0,
+        refundsExVat: 0,
+        refundsIncVat: 0,
+        rrpOpportunityIncVat: 0,
+        markdownLeakageIncVat: 0,
+        fullPriceGrossUnits: 0,
+        markdownGrossUnits: 0,
         gpKnown: 0,
         gpComplete: true,
         gross: 0,
@@ -2049,8 +2087,24 @@ function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
       });
       const knownGp = data.knownGrossProfit == null ? Number(gp || 0) : Number(data.knownGrossProfit || 0);
       existing.units += units;
+      const grossUnits = Number(data.grossUnits ?? Math.max(0, units + Number(data.returnedUnits || 0)));
+      const returnedUnits = Number(data.returnedUnits ?? Math.max(0, grossUnits - units));
+      const discountsExVat = Number(data.discountsExVat || 0);
+      const discountsIncVat = Number(data.discountsIncVat ?? finance.includingVat(discountsExVat, { includesVat: false }));
+      const refundsExVat = Number(data.refundsExVat || 0);
+      const refundsIncVat = Number(data.refundsIncVat ?? finance.includingVat(refundsExVat, { includesVat: false }));
+      existing.grossUnits += grossUnits;
+      existing.returnedUnits += returnedUnits;
       existing.rev += rev;
       existing.revenueExVat += revenueExVat;
+      existing.discountsExVat += discountsExVat;
+      existing.discountsIncVat += discountsIncVat;
+      existing.refundsExVat += refundsExVat;
+      existing.refundsIncVat += refundsIncVat;
+      existing.rrpOpportunityIncVat += Number(data.rrpOpportunityIncVat || 0);
+      existing.markdownLeakageIncVat += Number(data.markdownLeakageIncVat || 0);
+      existing.fullPriceGrossUnits += Number(data.fullPriceGrossUnits || 0);
+      existing.markdownGrossUnits += Number(data.markdownGrossUnits || 0);
       existing.gpKnown += knownGp;
       if (gp == null && units > 0) existing.gpComplete = false;
       existing.gross += gross;
@@ -2065,12 +2119,22 @@ function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
       existing.gaRevenue += Number(row.ga_revenue || 0);
       existing.periods[period.label] = {
         units,
+        grossUnits,
+        returnedUnits,
         rev,
         revIncVat: rev,
         revenueExVat,
         gross,
         grossIncVat: gross,
         grossExVat,
+        discountsExVat,
+        discountsIncVat,
+        refundsExVat,
+        refundsIncVat,
+        rrpOpportunityIncVat: Number(data.rrpOpportunityIncVat || 0),
+        markdownLeakageIncVat: Number(data.markdownLeakageIncVat || 0),
+        fullPriceGrossUnits: Number(data.fullPriceGrossUnits || 0),
+        markdownGrossUnits: Number(data.markdownGrossUnits || 0),
         gp,
         knownGp,
         costedUnits: Number(data.costedUnits ?? (gp == null ? 0 : units)),
@@ -2118,6 +2182,20 @@ function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
       gp,
       revenueIncVat: product.rev,
       grossSalesIncVat: product.gross,
+      discountsExVat: product.discountsExVat,
+      discountsIncVat: product.discountsIncVat,
+      refundsExVat: product.refundsExVat,
+      refundsIncVat: product.refundsIncVat,
+      grossUnits: product.grossUnits,
+      returnedUnits: product.returnedUnits,
+      netUnits: product.units,
+      returnRate: product.grossUnits > 0 ? product.returnedUnits / product.grossUnits * 100 : 0,
+      refundRate: product.rev + product.refundsIncVat > 0 ? product.refundsIncVat / (product.rev + product.refundsIncVat) * 100 : 0,
+      rrpOpportunityIncVat: product.rrpOpportunityIncVat,
+      markdownLeakageIncVat: product.markdownLeakageIncVat,
+      fullPriceGrossUnits: product.fullPriceGrossUnits,
+      markdownGrossUnits: product.markdownGrossUnits,
+      fullPriceUnitMix: product.grossUnits > 0 ? product.fullPriceGrossUnits / product.grossUnits * 100 : 0,
       avgP,
       gAsp: product.units > 0 ? product.gross / product.units : avgP,
       gpPct,
@@ -2191,6 +2269,12 @@ function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
       totRevExVat: products.reduce((sum, product) => sum + Number(product.revenueExVat || 0), 0),
       tradingMetrics,
       totUnits: totalUnits,
+      totGrossUnits: products.reduce((sum, product) => sum + Number(product.grossUnits || 0), 0),
+      totReturnedUnits: products.reduce((sum, product) => sum + Number(product.returnedUnits || 0), 0),
+      totDiscountsIncVat: products.reduce((sum, product) => sum + Number(product.discountsIncVat || 0), 0),
+      totRefundsIncVat: products.reduce((sum, product) => sum + Number(product.refundsIncVat || 0), 0),
+      totRrpOpportunityIncVat: products.reduce((sum, product) => sum + Number(product.rrpOpportunityIncVat || 0), 0),
+      totMarkdownLeakageIncVat: products.reduce((sum, product) => sum + Number(product.markdownLeakageIncVat || 0), 0),
       totGP: grossProfitComplete ? totalKnownGp : null,
       totGPKnown: totalKnownGp,
       invTotalStock: products.reduce((sum, product) => sum + Number(product.stock || 0), 0),
@@ -2284,6 +2368,17 @@ function buildTransientBestsellersPayload(range, products, meta = {}) {
       grossIncVat: gross,
       grossSalesIncVat: gross,
       grossExVat,
+      grossUnits: Number(product.grossUnits ?? Math.max(0, units + Number(product.returnedUnits || 0))),
+      returnedUnits: Number(product.returnedUnits || 0),
+      netUnits: units,
+      discountsExVat: Number(product.discountsExVat || 0),
+      discountsIncVat: Number(product.discountsIncVat || 0),
+      refundsExVat: Number(product.refundsExVat || 0),
+      refundsIncVat: Number(product.refundsIncVat || 0),
+      fullPriceGrossUnits: Number(product.fullPriceGrossUnits || 0),
+      markdownGrossUnits: Number(product.markdownGrossUnits || 0),
+      rrpOpportunityIncVat: Number(product.rrpOpportunityIncVat || 0),
+      markdownLeakageIncVat: Number(product.markdownLeakageIncVat || 0),
       avgP,
       gAsp: units > 0 ? gross / units : avgP,
       gpPct: gp != null && revenueExVat > 0 ? gp / revenueExVat * 100 : null,
@@ -2315,12 +2410,22 @@ function buildTransientBestsellersPayload(range, products, meta = {}) {
       gaRevenue: Number(product.gaRevenue || 0),
       periods: { [label]: {
         units,
+        grossUnits: Number(product.grossUnits ?? Math.max(0, units + Number(product.returnedUnits || 0))),
+        returnedUnits: Number(product.returnedUnits || 0),
         rev,
         revIncVat: rev,
         revenueExVat,
         gross,
         grossIncVat: gross,
         grossExVat,
+        discountsExVat: Number(product.discountsExVat || 0),
+        discountsIncVat: Number(product.discountsIncVat || 0),
+        refundsExVat: Number(product.refundsExVat || 0),
+        refundsIncVat: Number(product.refundsIncVat || 0),
+        fullPriceGrossUnits: Number(product.fullPriceGrossUnits || 0),
+        markdownGrossUnits: Number(product.markdownGrossUnits || 0),
+        rrpOpportunityIncVat: Number(product.rrpOpportunityIncVat || 0),
+        markdownLeakageIncVat: Number(product.markdownLeakageIncVat || 0),
         gp,
         knownGp,
         costedRevenueExVat: Number(product.costedRevenueExVat ?? (gp == null ? 0 : revenueExVat))
@@ -2398,6 +2503,12 @@ function buildTransientBestsellersPayload(range, products, meta = {}) {
         available: Boolean(meta.tradingMetrics),
         demandRevenue: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.demandRevenue || 0),
         despatchRevenue: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.despatchRevenue || 0),
+        grossRevenue: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.grossRevenue || 0),
+        discounts: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.discounts || 0),
+        returns: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.returns || 0),
+        grossUnits: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.grossUnits || 0),
+        returnedUnits: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.returnedUnits || 0),
+        netUnits: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.netUnits || 0),
         periods: {
           [label]: {
             available: Boolean(meta.tradingMetrics),
@@ -2730,6 +2841,10 @@ async function fetchShopifyBestsellersProducts(range) {
       shippingRevenue: Number(trading.actuals?.shippingRevenue || 0),
       tax: Number(trading.actuals?.tax || 0),
       returnFees: Number(trading.actuals?.returnFees || 0),
+      returns: Number(trading.actuals?.returns || 0),
+      grossUnits: Number(trading.actuals?.grossUnits || trading.actuals?.units || 0),
+      returnedUnits: Number(trading.actuals?.returnedUnits || 0),
+      netUnits: Math.max(0, Number(trading.actuals?.grossUnits || trading.actuals?.units || 0) - Number(trading.actuals?.returnedUnits || 0)),
       source: trading.sourceType || "shopifyql_sales"
     };
   } catch (error) {
