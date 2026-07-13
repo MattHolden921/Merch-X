@@ -563,7 +563,7 @@ function renderPnl(){
     row("Taxes",gbp(s.tax,true)),
     row("Despatch",gbp(s.despatchRevenue,true),"Total sales"),
     section("Product profit"),
-    row("COGS",gbp(s.cogs,true),"Current Shopify unit cost", "bad"),
+    row("COGS",gbp(s.cogs,true),"ShopifyQL reported for the selected dates", "bad"),
     row("Gross profit",gbp(s.grossProfit,true),pct(s.grossMargin),"good"),
     section("Operating costs"),
     row("Marketing spend",gbp(s.marketingSpend,true)),
@@ -886,7 +886,7 @@ async function loadActuals(){
     state.statement=data.statement;
     state.scenario=null;state.sensitivity=null;
     state.scenarioComparisons=[];
-    const sourceType=data.source?.type==="shopifyql_sales"?"ShopifyQL report actuals":`${Number(data.source?.orderCount||0).toLocaleString("en-GB")} Shopify orders`;
+    const sourceType=data.source?.type==="shopifyql_sales"?"ShopifyQL dated sales, GP and COGS":`${Number(data.source?.orderCount||0).toLocaleString("en-GB")} Shopify orders`;
     el("source-note").textContent=`${sourceType} fetched for ${data.range?.startDate||val("date-from")} to ${data.range?.endDate||val("date-to")} ${data.source?.fetchedAt?`at ${new Date(data.source.fetchedAt).toLocaleString("en-GB")}`:""}`;
     applyStatementDefaults();
     const autoSync=data.windsorSync||{};

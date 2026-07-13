@@ -165,6 +165,12 @@ test("maps ShopifyQL sales report rows to Despatch, Demand, and profit actuals",
   assert.equal(actuals.orders, 538);
   assert.equal(actuals.units, 917);
   assert.equal(actuals.grossProfit, 17667.89);
+
+  const statement = buildPnl(actuals);
+  assert.equal(statement.cogs, 2362.02);
+  assert.equal(statement.grossProfit, 17667.89);
+  assert.equal(statement.grossMargin, 17667.89 / 21466.39);
+  assert.equal(statement.operatingProfit, 17667.89);
 });
 
 test("scenario scales sales, AOV, marketing, and variable costs while fixed costs stay fixed", () => {

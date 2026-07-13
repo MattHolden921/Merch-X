@@ -54,6 +54,7 @@ p.sub{font-size:13px;color:var(--text2);margin-bottom:20px}
 .card{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px}
 .card label{display:block;font-size:11px;color:var(--text2);margin-bottom:4px}
 .card span{font-size:18px;font-weight:500}
+.card small{display:block;margin-top:4px;color:var(--text3);font-size:10px;line-height:1.35}
 .ctrl-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
 .ctrl-row label{font-size:11px;color:var(--text3)}
 .cg{display:flex;align-items:center;gap:6px}
@@ -224,6 +225,30 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
 .comparison-card .big{font-size:20px;font-weight:600}
 .comparison-card .delta{font-size:11px;margin-top:4px;color:var(--text2)}
 .comparison-card .gp-line{font-size:11px;margin-top:2px;color:var(--success)}
+
+/* Bestsellers report usability and responsive containment */
+.data-quality{display:none;gap:10px;align-items:flex-start;justify-content:space-between;margin:0 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--r);background:var(--bg2);font-size:11px;color:var(--text2);line-height:1.55}
+.data-quality.show{display:flex}.data-quality strong{color:var(--text)}.data-quality.warn{border-color:#e9c876;background:#fff9e8}.data-quality.bad{border-color:#efb5b0;background:#fdf0ef}
+.main-filters{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--r);background:var(--bg)}
+.main-filter-field{display:flex;flex-direction:column;gap:4px}.main-filter-field label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em}
+.main-search{width:min(320px,70vw);min-height:34px;padding:0 10px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text);font:inherit;font-size:12px}
+.scope-toggle{display:flex;gap:3px;padding:3px;border-radius:var(--r);background:var(--bg2)}
+.scope-btn{min-height:28px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--text2);font-size:11px;font-weight:650;cursor:pointer}.scope-btn.on{background:var(--bg);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.pagination{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;font-size:11px;color:var(--text2)}
+.empty-table{padding:30px 16px;text-align:center;color:var(--text2);font-size:13px}
+.tw,.impact-table-wrap,.ra-chart-wrap{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+@media(max-width:640px){
+  html,body{max-width:100%;overflow-x:hidden}body{padding:14px 10px 36px}.wrap{width:100%;min-width:0}
+  h1{font-size:21px}.hrow,.server-cache-top{display:block}.hrow>div:last-child,.server-controls,#ty-actions{width:100%;margin-top:10px;display:flex;flex-wrap:wrap!important;align-items:stretch!important}
+  .server-controls .field,.server-period-select,.server-week-select,.server-controls input{width:100%}.server-controls .btn,.server-controls .btn-primary{flex:1}
+  .tab-bar{flex-wrap:nowrap;overflow-x:auto;padding-bottom:8px;scrollbar-width:thin}.tab-btn{flex:0 0 auto}
+  .grid2,.grid3,.ra-forecast-grid,.impact-grid,.ra-forecast-grid[style],.ra-forecast-grid,.ra-section>div[style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr!important}
+  .ctrl-row,.main-filters{align-items:stretch}.ctrl-row>.cg,.main-filter-field{width:100%;margin-left:0!important}.ctrl-row>.cg select,.ctrl-row>.cg input,.main-search{width:100%!important;max-width:none}
+  .scope-toggle{width:100%}.scope-btn{flex:1}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.card{min-width:0}.card span{font-size:16px}
+  .prod-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.prod-card-body{padding:8px}.prod-card-name{font-size:12px}
+  .cat-map-box{width:calc(100% - 20px);padding:16px}.cat-map-row{grid-template-columns:1fr}.data-quality{flex-direction:column}
+  #tbl-scroll-bar{align-items:flex-start!important;gap:8px;flex-wrap:wrap}#tbl-scroll-bar>div{max-width:100%;flex-wrap:wrap}
+}
 </style>
 </head>
 <body>
@@ -236,9 +261,9 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
 <div id="upload-sec">
   <h1>Bestsellers report</h1>
   <p class="sub">Sync Shopify data by week, or load legacy Shopify sales exports where needed. Stored TY reports use Monday-Sunday weeks.</p>
-  <div class="tab-bar">
-    <button class="tab-btn on" id="tab-ty-upload" onclick="switchUploadTab('ty')">This Year</button>
-    <button class="tab-btn" id="tab-ly-upload" onclick="switchUploadTab('ly')">Last Year</button>
+  <div class="tab-bar" role="tablist" aria-label="Upload year">
+    <button class="tab-btn on" id="tab-ty-upload" role="tab" aria-selected="true" aria-controls="ty-upload-panel" onclick="switchUploadTab('ty')">This Year</button>
+    <button class="tab-btn" id="tab-ly-upload" role="tab" aria-selected="false" aria-controls="ly-upload-panel" onclick="switchUploadTab('ly')">Last Year</button>
   </div>
   <!-- TY upload -->
   <div id="ty-upload-panel">
@@ -249,7 +274,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
         <p>Cached TY reports are built from Monday-Sunday weeks. Current week is shown live week-to-date and is not saved until it becomes a complete week.</p>
       </div>
       <div class="server-controls">
-        <div class="field"><label>Quick range</label><select class="server-period-select server-week-select" id="api-range-preset" onchange="applyTyRangePreset('api',this.value)"><option value="current">Current week to date</option><option value="lastWeek">Last completed week</option><option value="latest">Latest saved week</option><option value="last4">Last 4 saved weeks</option><option value="last8">Last 8 saved weeks</option><option value="season">All saved weeks</option><option value="custom">Custom week range</option></select></div>
+        <div class="field"><label>Quick range</label><select class="server-period-select server-week-select" id="api-range-preset" onchange="applyTyRangePreset('api',this.value)"><option value="current">Current week to date</option><option value="lastWeek">Last completed week</option><option value="last2">Last 2 completed weeks</option><option value="last4">Last 4 completed weeks</option><option value="last8">Last 8 completed weeks</option><option value="latest">Latest saved week</option><option value="season">Latest contiguous saved run</option><option value="custom">Custom week range</option></select></div>
         <div class="field"><label>From week</label><select class="server-period-select server-week-select" id="api-from-week" onchange="applyTyWeekRange('api')"></select></div>
         <div class="field"><label>To week</label><select class="server-period-select server-week-select" id="api-to-week" onchange="applyTyWeekRange('api')"></select></div>
         <input type="hidden" id="api-start-date">
@@ -348,25 +373,25 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
 
 <!-- Report -->
 <div id="report-sec" style="display:none">
-  <div class="tab-bar">
-    <button class="tab-btn on" id="tab-ty" onclick="switchReportTab('ty')">Bestsellers TY</button>
-    <button class="tab-btn" id="tab-ly" onclick="switchReportTab('ly')">Bestsellers LY</button>
-    <button class="tab-btn" id="tab-ra" onclick="switchReportTab('ra')">Revenue Analysis</button>
-    <button class="tab-btn" id="tab-slow" onclick="switchReportTab('slow')">Slow Sellers</button>
-    <button class="tab-btn" id="tab-stock" onclick="switchReportTab('stock')">Stock Position</button>
-    <button class="tab-btn" id="tab-meth" onclick="switchReportTab('meth')">Methodology</button>
-    <button class="tab-btn" id="tab-trade" onclick="switchReportTab('trade')">Trade Last Week</button>
+  <div class="tab-bar" role="tablist" aria-label="Bestsellers report sections">
+    <button class="tab-btn on" id="tab-ty" role="tab" aria-selected="true" aria-controls="ty-panel" onclick="switchReportTab('ty')">Bestsellers TY</button>
+    <button class="tab-btn" id="tab-ly" role="tab" aria-selected="false" aria-controls="ly-panel" onclick="switchReportTab('ly')">Bestsellers LY</button>
+    <button class="tab-btn" id="tab-ra" role="tab" aria-selected="false" aria-controls="ra-panel" onclick="switchReportTab('ra')">Revenue Analysis</button>
+    <button class="tab-btn" id="tab-slow" role="tab" aria-selected="false" aria-controls="slow-panel" onclick="switchReportTab('slow')">Slow Sellers</button>
+    <button class="tab-btn" id="tab-stock" role="tab" aria-selected="false" aria-controls="stock-panel" onclick="switchReportTab('stock')">Stock Position</button>
+    <button class="tab-btn" id="tab-meth" role="tab" aria-selected="false" aria-controls="meth-panel" onclick="switchReportTab('meth')">Methodology</button>
+    <button class="tab-btn" id="tab-trade" role="tab" aria-selected="false" aria-controls="trade-panel" onclick="switchReportTab('trade')">Trade Last Week</button>
   </div>
 
   <!-- Category mapping modal -->
-  <div id="cat-map-modal" class="cat-map-modal" style="display:none" onclick="if(event.target===this)closeCatMap()">
-    <div class="cat-map-box">
+  <div id="cat-map-modal" class="cat-map-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="cat-map-title" onclick="if(event.target===this)closeCatMap()">
+    <div class="cat-map-box" tabindex="-1">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <div>
-          <h2 style="font-size:16px;font-weight:600;margin-bottom:2px">Category grouping</h2>
+          <h2 id="cat-map-title" style="font-size:16px;font-weight:600;margin-bottom:2px">Category grouping</h2>
           <p style="font-size:12px;color:var(--text2)">Assign each product type to a simplified top-level group</p>
         </div>
-        <button onclick="closeCatMap()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2)">×</button>
+        <button onclick="closeCatMap()" aria-label="Close category grouping" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2)">×</button>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
         <button class="btn" onclick="autoMapCats()">Auto-suggest</button>
@@ -409,7 +434,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
         <p>Load saved Monday-Sunday weeks, or show current week live to date.</p>
       </div>
       <div class="server-controls">
-        <div class="field"><label>Quick range</label><select class="server-period-select server-week-select" id="ty-report-api-range-preset" onchange="applyTyRangePreset('ty-report-api',this.value)"><option value="current">Current week to date</option><option value="lastWeek">Last completed week</option><option value="latest">Latest saved week</option><option value="last4">Last 4 saved weeks</option><option value="last8">Last 8 saved weeks</option><option value="season">All saved weeks</option><option value="custom">Custom week range</option></select></div>
+        <div class="field"><label>Quick range</label><select class="server-period-select server-week-select" id="ty-report-api-range-preset" onchange="applyTyRangePreset('ty-report-api',this.value)"><option value="current">Current week to date</option><option value="lastWeek">Last completed week</option><option value="last2">Last 2 completed weeks</option><option value="last4">Last 4 completed weeks</option><option value="last8">Last 8 completed weeks</option><option value="latest">Latest saved week</option><option value="season">Latest contiguous saved run</option><option value="custom">Custom week range</option></select></div>
         <div class="field"><label>From week</label><select class="server-period-select server-week-select" id="ty-report-api-from-week" onchange="applyTyWeekRange('ty-report-api')"></select></div>
         <div class="field"><label>To week</label><select class="server-period-select server-week-select" id="ty-report-api-to-week" onchange="applyTyWeekRange('ty-report-api')"></select></div>
         <input type="hidden" id="ty-report-api-start-date">
@@ -421,16 +446,34 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
     <div class="server-periods" id="ty-report-api-periods"></div>
   </div>
   <div class="hint" id="ty-empty-state" style="display:none">Choose a saved TY period above, or use the This Year upload screen to sync Shopify.</div>
+  <div class="data-quality" id="ty-data-quality" role="status" aria-live="polite"></div>
   <div class="cards ty-data" id="cards"></div>
+  <div class="main-filters ty-data" id="main-filters">
+    <div class="main-filter-field" style="flex:1 1 260px">
+      <label for="main-search">Search products</label>
+      <input class="main-search" id="main-search" type="search" placeholder="Name, SKU, supplier or category" autocomplete="off" oninput="setMainSearch(this.value)">
+    </div>
+    <div class="main-filter-field">
+      <label>Products shown</label>
+      <div class="scope-toggle" role="group" aria-label="Products shown">
+        <button type="button" class="scope-btn on" id="scope-sold" onclick="setMainScope('sold')">Sold products</button>
+        <button type="button" class="scope-btn" id="scope-all" onclick="setMainScope('all')">All active stock</button>
+      </div>
+    </div>
+    <div class="main-filter-field">
+      <label for="main-page-size">Rows per page</label>
+      <select class="ctrl" id="main-page-size" onchange="G.pageSize=this.value==='all'?'all':(parseInt(this.value,10)||50);G.page=1;render()"><option>25</option><option selected>50</option><option>100</option><option>200</option><option value="all">All matching products</option></select>
+    </div>
+  </div>
   <div class="ctrl-row ty-data">
     <div class="cg"><label>Sort by</label>
       <select class="ctrl" id="sort-sel" onchange="G.col=this.value;render()">
-        <option value="rev">Net sales</option>
+        <option value="rev">Sales inc VAT</option>
         <option value="gp">Total GP</option>
         <option value="gpPct">GP %</option>
         <option value="gpUnit">GP / unit</option>
         <option value="units">Units sold</option>
-        <option value="avgP">Avg price</option>
+        <option value="avgP">Avg selling price inc VAT</option>
         <option value="stock">Stock</option>
         <option value="coverWks">Cover weeks</option>
         <option value="forecastBuy">Forecast buy</option>
@@ -462,6 +505,7 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
     </div>
   </div>
   <div class="tw ty-data" id="ty-tw"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+  <div class="pagination ty-data" id="main-pagination" aria-label="Bestsellers pages"></div>
   <div class="tfoot ty-data" id="tfoot"></div>
   </div><!-- /ty-panel -->
 
@@ -709,7 +753,7 @@ function readXLSX(file,cb){
 // ── State ─────────────────────────────────────────────────────────────────────
 const MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 let salesFiles=[],invRows=null,prodFiles=[];
-const G={col:'rev',dir:-1,cat:'All',exp:new Set(),dsExpanded:false,dsVisible:false,dsSeason:'All',view:'table',season:'All',periodFilter:'all'};
+const G={col:'rev',dir:-1,cat:'All',exp:new Set(),dsExpanded:false,dsVisible:false,dsSeason:'All',view:'table',season:'All',periodFilter:'all',scope:'sold',search:'',page:1,pageSize:50};
 let SYM='£';
 let serverPeriods=[];
 let refreshNeededServerPeriods=[];
@@ -720,6 +764,38 @@ const fMoney=v=>v==null||isNaN(v)?'—':SYM+Math.round(Math.abs(v)).toLocaleStri
 const fPct=v=>v==null||isNaN(v)?'—':v.toFixed(1)+'%';
 const fN=v=>v==null||isNaN(v)?'—':Math.round(v).toLocaleString();
 const fD=d=>d?d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'';
+function escapeHtml(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
+function escapeAttr(value){return escapeHtml(value).replace(/`/g,'&#96;');}
+function safeImageUrl(value){
+  const url=String(value||'').trim();
+  if(!url)return'';
+  try{
+    const parsed=new URL(url,window.location.origin);
+    if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)return'';
+    return parsed.href;
+  }catch(_){return'';}
+}
+function isGiftCardProduct(product){return /gift\s*card|gift\s*voucher/i.test(`${product?.name||''} ${product?.cat||product?.productType||''}`);}
+function isRelevantMainProduct(product){
+  if(isGiftCardProduct(product))return false;
+  const status=String(product?.shopifyStatus||product?.status||product?.productStatus||'').toUpperCase();
+  return !['DRAFT','ARCHIVED'].includes(status);
+}
+function productSearchText(product){return [product?.name,product?.title,product?.sku,...(product?.skus||[]),product?.cat,product?.productType,product?.vendor,product?.season].filter(Boolean).join(' ').toLowerCase();}
+function setMainSearch(value){G.search=String(value||'').trim().toLowerCase();G.page=1;render();}
+function setMainScope(scope){G.scope=scope==='all'?'all':'sold';G.page=1;G.cat='All';render();}
+function setMainPage(page){G.page=Math.max(1,Number(page)||1);render();document.getElementById('main-filters')?.scrollIntoView({block:'start'});}
+function largestRemainderAllocation(items,total,weightFn){
+  const safeTotal=Math.max(0,Math.floor(Number(total)||0));
+  if(!items.length)return[];
+  const weights=items.map(item=>Math.max(0,Number(weightFn(item))||0));
+  const weightTotal=weights.reduce((sum,value)=>sum+value,0);
+  const shares=weights.map(weight=>weightTotal>0?safeTotal*weight/weightTotal:safeTotal/items.length);
+  const result=shares.map(Math.floor);
+  let remaining=safeTotal-result.reduce((sum,value)=>sum+value,0);
+  shares.map((share,index)=>({index,remainder:share-result[index]})).sort((a,b)=>b.remainder-a.remainder||a.index-b.index).forEach(item=>{if(remaining-->0)result[item.index]++;});
+  return result;
+}
 function getWeeksLeft(){const v=document.getElementById('end-date');const end=v?new Date(v.value):new Date('2026-09-01');return Math.max((end-new Date())/6048e5,0);}
 async function apiJson(path,options){
   const response=await fetch(path,options);
@@ -767,10 +843,16 @@ function lastCompletedWeekRange(){
   start.setDate(start.getDate()-6);
   return{startDate:localIsoDate(start),endDate:localIsoDate(end)};
 }
+function completedWeeksRange(count){
+  const latest=lastCompletedWeekRange();
+  const start=new Date(`${latest.startDate}T00:00:00Z`);
+  start.setUTCDate(start.getUTCDate()-7*(Math.max(1,Number(count)||1)-1));
+  return{startDate:start.toISOString().slice(0,10),endDate:latest.endDate};
+}
 function daysInclusive(startDate,endDate){
-  const start=new Date(`${startDate}T00:00:00`);
-  const end=new Date(`${endDate}T00:00:00`);
-  return Math.max((end-start)/864e5+1,1);
+  const start=Date.parse(`${startDate}T00:00:00Z`);
+  const end=Date.parse(`${endDate}T00:00:00Z`);
+  return Math.max(Math.round((end-start)/864e5)+1,1);
 }
 function isCurrentWeekToDateRange(startDate,endDate){
   const current=currentWeekToDateRange();
@@ -794,16 +876,38 @@ function setRangePresetValue(prefix,value){
   if(el)el.value=value;
 }
 function cachedTyPeriods(){
-  return serverPeriods.filter(period=>period.sourceType==='shopify_api'&&!period.needsRefresh).sort((a,b)=>b.startDate.localeCompare(a.startDate));
+  return serverPeriods.filter(period=>period.sourceType==='shopify_api'&&!period.needsRefresh&&isCanonicalSavedWeek(period)).sort((a,b)=>b.startDate.localeCompare(a.startDate));
+}
+function isCanonicalSavedWeek(period){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(period?.startDate||'')||!/^\d{4}-\d{2}-\d{2}$/.test(period?.endDate||''))return false;
+  const start=new Date(`${period.startDate}T00:00:00Z`),end=new Date(`${period.endDate}T00:00:00Z`);
+  return start.getUTCDay()===1&&Math.round((end-start)/864e5)===6;
+}
+function latestContiguousTyPeriods(){
+  const periods=cachedTyPeriods();
+  if(!periods.length)return[];
+  const result=[periods[0]];
+  for(let index=1;index<periods.length;index++){
+    const expectedEnd=new Date(`${result[result.length-1].startDate}T00:00:00Z`);
+    expectedEnd.setUTCDate(expectedEnd.getUTCDate()-1);
+    if(periods[index].endDate!==expectedEnd.toISOString().slice(0,10))break;
+    result.push(periods[index]);
+  }
+  return result;
 }
 function setWeekSelectValues(prefix,startDate,endDate){
   const from=document.getElementById(`${prefix}-from-week`);
   const to=document.getElementById(`${prefix}-to-week`);
-  const periods=cachedTyPeriods();
+  const periods=[...cachedTyPeriods(),...refreshNeededServerPeriods.filter(period=>period.sourceType==='shopify_api'&&isCanonicalSavedWeek(period))];
   const fromPeriod=periods.find(period=>period.startDate===startDate);
   const toPeriod=periods.find(period=>period.endDate===endDate);
   const current=currentWeekToDateRange();
   const lastWeek=lastCompletedWeekRange();
+  const ensureOption=(select,weekStart,weekEnd)=>{if(!select||[...select.options].some(option=>option.value===`${weekStart}|${weekEnd}`))return;const option=document.createElement('option');option.value=`${weekStart}|${weekEnd}`;option.textContent=`${weekStart} - ${weekEnd} (will sync)`;select.appendChild(option);};
+  const fromEnd=new Date(`${startDate}T00:00:00Z`);fromEnd.setUTCDate(fromEnd.getUTCDate()+6);
+  const toStart=new Date(`${endDate}T00:00:00Z`);toStart.setUTCDate(toStart.getUTCDate()-6);
+  ensureOption(from,startDate,fromEnd.toISOString().slice(0,10));
+  ensureOption(to,toStart.toISOString().slice(0,10),endDate);
   if(from&&startDate===current.startDate)from.value=`${current.startDate}|${current.endDate}`;
   else if(from&&startDate===lastWeek.startDate)from.value=`${lastWeek.startDate}|${lastWeek.endDate}`;
   else
@@ -834,6 +938,7 @@ function applyTyWeekRange(prefix='api'){
 }
 function applyTyRangePreset(prefix='api',preset='latest'){
   const periods=cachedTyPeriods();
+  const contiguous=latestContiguousTyPeriods();
   if(preset==='current'){
     const range=currentWeekToDateRange();
     setApiDateParams(prefix,range.startDate,range.endDate);
@@ -850,14 +955,20 @@ function applyTyRangePreset(prefix='api',preset='latest'){
     loadCachedBestsellers(prefix);
     return;
   }
+  if(/^last(2|4|8)$/.test(preset)){
+    const range=completedWeeksRange(Number(preset.slice(4)));
+    setApiDateParams(prefix,range.startDate,range.endDate);
+    setWeekSelectValues(prefix,range.startDate,range.endDate);
+    setRangePresetValue(prefix,preset);
+    loadCachedBestsellers(prefix);
+    return;
+  }
   if(!periods.length)return;
   let chosen=[];
-  if(preset==='last4')chosen=periods.slice(0,4);
-  else if(preset==='last8')chosen=periods.slice(0,8);
-  else if(preset==='season')chosen=periods;
+  if(preset==='season')chosen=contiguous;
   else if(preset==='custom'){setRangePresetValue(prefix,'custom');applyTyWeekRange(prefix);return;}
   else chosen=periods.slice(0,1);
-  if(!chosen.length)return;
+  if(!chosen.length){st(`A contiguous ${preset==='last4'?'4-week':preset==='last8'?'8-week':'saved-week'} range is not available yet.`,'err');setRangePresetValue(prefix,'latest');return;}
   const chronological=[...chosen].sort((a,b)=>a.startDate.localeCompare(b.startDate));
   setApiDateParams(prefix,chronological[0].startDate,chronological[chronological.length-1].endDate);
   setWeekSelectValues(prefix,chronological[0].startDate,chronological[chronological.length-1].endDate);
@@ -867,7 +978,7 @@ function applyTyRangePreset(prefix='api',preset='latest'){
 function renderServerPeriods(){
   const refreshNeededTyPeriods=refreshNeededServerPeriods.filter(period=>period.sourceType==='shopify_api');
   const refreshHint=refreshNeededTyPeriods.length
-    ? ` ${refreshNeededTyPeriods.length} partial cached TY week${refreshNeededTyPeriods.length===1?' was':'s were'} skipped; sync Shopify to refresh.`
+    ? ` ${refreshNeededTyPeriods.length} stale cached TY week${refreshNeededTyPeriods.length===1?' needs':'s need'} a live refresh; loading one of those ranges will sync automatically.`
     : '';
   const renderTyWeekRange=(items,prefix)=>{
     const from=document.getElementById(`${prefix}-from-week`);
@@ -878,10 +989,18 @@ function renderServerPeriods(){
     const currentOption=`<option value="${current.startDate}|${current.endDate}">Current week to date (live)</option>`;
     const hasLastWeek=items.some(period=>period.startDate===lastWeek.startDate&&period.endDate===lastWeek.endDate);
     const lastWeekOption=hasLastWeek?'':`<option value="${lastWeek.startDate}|${lastWeek.endDate}">Last completed week (live if not saved)</option>`;
-    const chronological=[...items].sort((a,b)=>a.startDate.localeCompare(b.startDate));
-    const options=currentOption+lastWeekOption+chronological.map(period=>`<option value="${period.startDate}|${period.endDate}">${period.label}</option>`).join('');
+    const refreshItems=refreshNeededTyPeriods.filter(period=>isCanonicalSavedWeek(period));
+    const rangeItems=[...items,...refreshItems].filter((period,index,all)=>all.findIndex(other=>other.startDate===period.startDate&&other.endDate===period.endDate)===index);
+    const chronological=rangeItems.sort((a,b)=>a.startDate.localeCompare(b.startDate));
+    const options=currentOption+lastWeekOption+chronological.map(period=>`<option value="${escapeAttr(period.startDate)}|${escapeAttr(period.endDate)}">${escapeHtml(period.label)}</option>`).join('');
     from.innerHTML=options;
     to.innerHTML=options;
+    const preset=document.getElementById(`${prefix}-range-preset`);
+    const contiguous=latestContiguousTyPeriods();
+    if(preset){
+      const setAvailability=(value,available,reason)=>{const option=preset.querySelector(`option[value="${value}"]`);if(option){option.disabled=!available;option.title=available?'':reason;}};
+      setAvailability('season',contiguous.length>0,'No contiguous saved weeks available');
+    }
   };
   const renderTySelect=(items,wrapId,noteId,emptyText,prefix)=>{
     const wrap=document.getElementById(wrapId);
@@ -893,11 +1012,13 @@ function renderServerPeriods(){
       return;
     }
     const latest=items[0];
-    note.textContent=`${items.length} saved TY week${items.length===1?'':'s'} available. Saved ranges load whole Monday-Sunday weeks.${refreshHint}`;
+    const contiguousCount=latestContiguousTyPeriods().length;
+    const gapHint=contiguousCount<items.length?` Latest continuous run: ${contiguousCount} week${contiguousCount===1?'':'s'}; older weeks after a gap remain individually available.`:'';
+    note.textContent=`${items.length} saved TY week${items.length===1?'':'s'} available. Saved ranges load whole Monday-Sunday weeks.${gapHint}${refreshHint}`;
     const options=items.map(period=>{
       const value=`${period.startDate}|${period.endDate}`;
       const selected=period===latest?' selected':'';
-      return`<option value="${value}"${selected}>${period.label} · ${period.summary?.productCount||0} lines</option>`;
+      return`<option value="${escapeAttr(value)}"${selected}>${escapeHtml(period.label)} · ${Number(period.summary?.productCount||0).toLocaleString()} lines</option>`;
     }).join('');
     wrap.innerHTML=`<div class="field"><label>Saved week</label><select class="server-period-select" onchange="setServerPeriodFromSelect(this.value,'${prefix}',true)">${options}</select></div>`;
     setApiDateParams(prefix,latest.startDate,latest.endDate);
@@ -915,7 +1036,7 @@ function renderServerPeriods(){
     }
     note.textContent=`${items.length} saved period${items.length===1?'':'s'} available.`;
     wrap.innerHTML=items.slice(0,18).map(period=>
-      `<button class="server-period" type="button" data-start="${period.startDate}" data-end="${period.endDate}" onclick="${onClickName}(this.dataset.start,this.dataset.end,'${prefix}')">${period.label} · ${period.summary?.productCount||0} lines</button>`
+      `<button class="server-period" type="button" data-start="${escapeAttr(period.startDate)}" data-end="${escapeAttr(period.endDate)}" onclick="${onClickName}(this.dataset.start,this.dataset.end,'${prefix}')">${escapeHtml(period.label)} · ${Number(period.summary?.productCount||0).toLocaleString()} lines</button>`
     ).join('');
   };
   const tyPeriods=cachedTyPeriods();
@@ -933,10 +1054,22 @@ async function loadServerPeriods(){
     serverPeriods=data.periods||[];
     refreshNeededServerPeriods=data.refreshNeededPeriods||[];
     renderServerPeriods();
+    await loadUrlReferencedPeriod();
   }catch(error){
     const note=document.getElementById('api-cache-note');
     if(note)note.textContent=error.message;
   }
+}
+let urlPeriodHandled=false;
+async function loadUrlReferencedPeriod(){
+  if(urlPeriodHandled)return;
+  const params=new URLSearchParams(window.location.search);
+  const startDate=params.get('startDate')||'',endDate=params.get('endDate')||'';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(startDate)||!/^\d{4}-\d{2}-\d{2}$/.test(endDate)||startDate>endDate)return;
+  urlPeriodHandled=true;
+  setApiDateParams('api',startDate,endDate);setApiDateParams('ty-report-api',startDate,endDate);
+  setWeekSelectValues('api',startDate,endDate);setWeekSelectValues('ty-report-api',startDate,endDate);
+  await loadCachedBestsellers('api');
 }
 function stockByCategoryFromProducts(products){
   const stockByCat={};
@@ -944,14 +1077,124 @@ function stockByCategoryFromProducts(products){
     const stock=Number(product.stock||0);
     if(stock<=0)return;
     const cat=product.cat||product.productType||'Other';
-    if(!stockByCat[cat])stockByCat[cat]={units:0,cost:0,retail:0};
-    const cost=Number(product.cost||product.avgCost||0);
-    const retail=Number(product.rrp||product.avgP||0);
+    if(!stockByCat[cat])stockByCat[cat]={units:0,cost:0,retail:0,costedUnits:0,uncostedUnits:0};
+    const fallbackCost=product.cost??product.avgCost;
+    const fallbackRetail=product.rrp??product.avgP;
     stockByCat[cat].units+=stock;
-    stockByCat[cat].cost+=stock*cost;
-    stockByCat[cat].retail+=stock*retail;
+    stockByCat[cat].cost+=product.stockCostValue==null?(fallbackCost==null?0:stock*Number(fallbackCost)):Number(product.stockCostValue||0);
+    stockByCat[cat].retail+=product.stockRetailValue==null?(fallbackRetail==null?0:stock*Number(fallbackRetail)):Number(product.stockRetailValue||0);
+    stockByCat[cat].costedUnits+=Number(product.stockCostedUnits??(fallbackCost==null?0:stock));
+    stockByCat[cat].uncostedUnits+=Number(product.stockUncostedUnits??(fallbackCost==null?stock:0));
   });
   return stockByCat;
+}
+function stockBySeasonFromProducts(products){
+  const result={};
+  products.forEach(product=>{
+    const stock=Number(product.stock||0);if(stock<=0)return;
+    const season=product.season||'Unknown',cat=product.cat||product.productType||'Other';
+    if(!result[season])result[season]={};
+    if(!result[season][cat])result[season][cat]={units:0,cost:0,retail:0,costedUnits:0,uncostedUnits:0};
+    result[season][cat].units+=stock;
+    const fallbackCost=product.cost??product.avgCost,fallbackRetail=product.rrp??product.avgP;
+    result[season][cat].cost+=product.stockCostValue==null?(fallbackCost==null?0:stock*Number(fallbackCost)):Number(product.stockCostValue||0);
+    result[season][cat].retail+=product.stockRetailValue==null?(fallbackRetail==null?0:stock*Number(fallbackRetail)):Number(product.stockRetailValue||0);
+    result[season][cat].costedUnits+=Number(product.stockCostedUnits??(fallbackCost==null?0:stock));
+    result[season][cat].uncostedUnits+=Number(product.stockUncostedUnits??(fallbackCost==null?stock:0));
+  });
+  return result;
+}
+function reportVatDivisor(semantics={}){return 1+Number(semantics.vatRate??0.2);}
+function salesValueIncVat(value,exVatValue,semantics={}){
+  if(exVatValue!=null)return Number(exVatValue||0)*reportVatDivisor(semantics);
+  const amount=Number(value||0);
+  return semantics.salesValuesIncludeVat===false?amount*reportVatDivisor(semantics):amount;
+}
+function salesIncVatOf(value={},semantics=window._rpt?.financialSemantics||{}){
+  return Number(value.salesIncVat??value.netSalesIncVat??value.revenueIncVat??salesValueIncVat(value.rev??value.revenue,value.revenueExVat,semantics));
+}
+function grossSalesIncVatOf(value={},semantics=window._rpt?.financialSemantics||{}){
+  return Number(value.grossSalesIncVat??value.grossIncVat??salesValueIncVat(value.gross??value.grossSales,value.grossExVat??value.grossSalesExVat,semantics));
+}
+function grossSalesExVatOf(value={},semantics=window._rpt?.financialSemantics||{}){
+  if(value.grossExVat!=null||value.grossSalesExVat!=null)return Number(value.grossExVat??value.grossSalesExVat??0);
+  const amount=Number(value.gross??value.grossSales??0);
+  return semantics.salesValuesIncludeVat===true?amount/reportVatDivisor(semantics):amount;
+}
+function salesExVatOf(value={},semantics=window._rpt?.financialSemantics||{}){
+  if(value.revenueExVat!=null)return Number(value.revenueExVat||0);
+  const amount=Number(value.rev??value.revenue??0);
+  return semantics.salesValuesIncludeVat===true?amount/reportVatDivisor(semantics):amount;
+}
+function tradingMetricsForPeriods(report={},periodLabels=[],periodFilter='all'){
+  const trading=report.tradingMetrics||{};
+  const periods=trading.periods||{};
+  if(periodFilter!=='all'&&trading.selections?.[periodFilter])return trading.selections[periodFilter];
+  if(periodFilter==='all'&&trading.available)return trading;
+  if(periodLabels.length&&Object.keys(periods).length){
+    const selected=periodLabels.map(label=>periods[label]);
+    const available=selected.length===periodLabels.length&&selected.every(metric=>metric?.available&&Number.isFinite(Number(metric.demandRevenue))&&Number.isFinite(Number(metric.despatchRevenue)));
+    return{
+      available,
+      demandRevenue:available?selected.reduce((sum,metric)=>sum+Number(metric.demandRevenue||0),0):null,
+      despatchRevenue:available?selected.reduce((sum,metric)=>sum+Number(metric.despatchRevenue||0),0):null
+    };
+  }
+  return{
+    available:Boolean(trading.available)&&Number.isFinite(Number(trading.demandRevenue))&&Number.isFinite(Number(trading.despatchRevenue)),
+    demandRevenue:trading.demandRevenue==null?null:Number(trading.demandRevenue),
+    despatchRevenue:trading.despatchRevenue==null?null:Number(trading.despatchRevenue)
+  };
+}
+function normalizeServerProduct(product,semantics={}){
+  const gp=product.gp==null?null:Number(product.gp);
+  const units=Number(product.units||0),rev=Number(product.rev??product.revenue??0),gross=Number(product.gross??product.grossSales??0);
+  const salesIncVat=Number(product.salesIncVat??product.netSalesIncVat??product.revenueIncVat??salesValueIncVat(rev,product.revenueExVat,semantics));
+  const grossSalesIncVat=Number(product.grossSalesIncVat??product.grossIncVat??salesValueIncVat(gross,product.grossExVat??product.grossSalesExVat,semantics));
+  const periods=Object.fromEntries(Object.entries(product.periods||{}).map(([label,pd])=>[label,{...pd,salesIncVat:salesIncVatOf(pd,semantics),grossSalesIncVat:grossSalesIncVatOf(pd,semantics)}]));
+  const decisionRevenue=product.decisionAvgRevPerWeek??product.decisionWeeklyRevenue??product.rosBasis?.weeklyRevenue??product.avgRevPerWeek??0;
+  const decisionRevenueExVat=product.decisionAvgRevPerWeekExVat??product.decisionWeeklyRevenueExVat??product.rosBasis?.weeklyRevenueExVat;
+  return{
+    ...product,
+    name:String(product.name||product.title||''),
+    cat:String(product.cat||product.productType||''),
+    img:String(product.img||product.imageUrl||''),
+    units,rev,gross,gp,periods,salesIncVat,grossSalesIncVat,
+    revenueExVat:salesExVatOf(product,semantics),
+    avgP:Number(product.avgP??(units?rev/units:product.rrp||0)),
+    avgPIncVat:units?salesIncVat/units:Number(product.rrp||0),
+    gAsp:Number(product.gAsp??(units?gross/units:product.rrp||0)),
+    gAspIncVat:units?grossSalesIncVat/units:Number(product.rrp||0),
+    gpPct:product.gpPct==null||gp==null?null:Number(product.gpPct),
+    gpUnit:product.gpUnit==null||gp==null?null:Number(product.gpUnit),
+    knownGpValue:Number(product.gpKnown??gp??0),
+    costedRevenueExVat:Number(product.costedRevenueExVat??(gp==null?0:salesExVatOf(product,semantics))),
+    gpKnown:product.gpComplete!==false&&gp!=null,
+    wklyU:Number(product.decisionWklyU??product.decisionWeeklyUnits??product.rosBasis?.weeklyUnits??product.wklyU??0),
+    avgRevPerWeek:Number(decisionRevenue||0),
+    avgRevPerWeekIncVat:salesValueIncVat(decisionRevenue,decisionRevenueExVat,semantics)
+  };
+}
+function renderDataQualityBanner(){
+  const el=document.getElementById('ty-data-quality'),r=window._rpt;if(!el||!r)return;
+  const quality=r.dataQuality||{};
+  const coverage=r.costCoverage||quality.costCoverage||{},semantics=r.financialSemantics||{};
+  const total=Number(coverage.totalProducts??coverage.totalLines??r.products.length)||r.products.length;
+  const costed=Number(coverage.costedProducts??coverage.costedLines??r.products.filter(p=>p.gpKnown).length);
+  const uncostedUnits=Number(semantics.uncostedUnits??0),missing=Math.max(0,Number(coverage.missingCostProducts??coverage.missingCostLines??(total-costed))||0);
+  const notes=[];
+  if(missing)notes.push(`${missing.toLocaleString()} of ${total.toLocaleString()} products have incomplete cost; row GP stays unknown and summary GP uses costed units only.`);
+  if(uncostedUnits)notes.push(`${uncostedUnits.toLocaleString()} sold units have unknown cost; GP totals cover costed sales only.`);
+  if(quality.completeOrderMetrics===false||quality.ordersAvailable===false||quality.orderMetricsAvailable===false)notes.push('Shopify order metrics were incomplete; sales-based decisions may be incomplete.');
+  const truncated=Number(quality.truncatedVariantProductCount??quality.truncatedVariantProducts??0);if(truncated>0)notes.push(`${truncated.toLocaleString()} products have incomplete variant coverage.`);
+  const unmatchedLedgerRows=Number(quality.unmatchedShopifyQlRows||0),ambiguousLedgerRows=Number(quality.ambiguousShopifyQlRows||0);if(unmatchedLedgerRows||ambiguousLedgerRows)notes.push(`${(unmatchedLedgerRows+ambiguousLedgerRows).toLocaleString()} Shopify sales-ledger row${unmatchedLedgerRows+ambiguousLedgerRows===1?' could':'s could'} not be mapped uniquely to a current product (commonly gift-card or renamed-product adjustments); they remain in P&L but are excluded from product rankings.`);
+  const legacyFinancialPeriods=Number(quality.legacyFinancialEstimatePeriodCount||0);if(legacyFinancialPeriods>0)notes.push(`${legacyFinancialPeriods.toLocaleString()} saved period${legacyFinancialPeriods===1?' uses':'s use'} rebased legacy cost estimates; sync Shopify again for sold-variant cost accuracy.`);
+  if(r.grossAvailable===false)notes.push('Gross-before-discount sales were not supplied, so discount metrics are hidden.');
+  const source=r.sourceLabel||'Shopify report';
+  const synced=r.syncedAt?` · synced ${new Date(r.syncedAt).toLocaleString('en-GB')}`:'';
+  el.className=`data-quality show${quality.completeOrderMetrics===false||quality.ordersAvailable===false?' bad':notes.length?' warn':''}`;
+  const coverageLabel=semantics.costCoveragePercent!=null?`${Number(semantics.costCoveragePercent).toFixed(0)}% unit cost coverage`:`${costed.toLocaleString()}/${total.toLocaleString()} products costed`;
+  el.innerHTML=`<div><strong>${escapeHtml(source)}</strong>${escapeHtml(synced)}<br>${notes.length?notes.map(escapeHtml).join(' '):'Sales, stock and cost coverage checks passed for the available report data.'}</div><div style="white-space:nowrap"><strong>${escapeHtml(coverageLabel)}</strong></div>`;
 }
 function applyServerBestsellers(data){
   const report=data.report;
@@ -965,25 +1208,50 @@ function applyServerBestsellers(data){
     const end=new Date(`${item.endDate}T00:00:00`);
     return{filename:`server:${item.id}`,label:item.label,start,end,days:Math.max((end-start)/864e5+1,1),rows:[],source:'server'};
   });
+  const financialSemantics=report.financialSemantics||data.financialSemantics||{};
+  const products=(report.products||[]).map(product=>normalizeServerProduct(product,financialSemantics));
+  const productByName=new Map(products.map(product=>[product.name,product]));
+  const suppliedDeadStock=Array.isArray(report.deadStock)?report.deadStock:[];
+  const deadStock=(suppliedDeadStock.length?suppliedDeadStock:products.filter(product=>Number(product.stock||0)>0&&Number(product.units||0)<=0)).map(item=>{
+    const product=productByName.get(item.name||item.title)||{};
+    const stock=Number(item.stock??product.stock??0),retail=Number(item.price??item.rrp??product.rrp??product.avgP??0),cost=item.cost??product.cost??product.avgCost;
+    return{...product,...item,name:String(item.name||item.title||product.name||''),stock,price:retail,retail,cost:cost==null?null:Number(cost),retailValue:Number(item.retailValue??product.stockRetailValue??stock*retail),costValue:Number(item.costValue??product.stockCostValue??(cost==null?0:stock*Number(cost))),sku:item.sku||product.sku||'',season:item.season||product.season||'',img:item.img||product.img||''};
+  }).filter(item=>item.stock>0&&isRelevantMainProduct(item));
   invRows=null;
   prodFiles=[];
+  window._nameCreated={};
   window._snapshotHasInventory=true;
-  window._snapshotStockByCat=stockByCategoryFromProducts(report.products||[]);
+  const activeProducts=products.filter(isRelevantMainProduct);
+  window._snapshotStockByCat=stockByCategoryFromProducts(activeProducts);
   window._cachedStockByCat=window._snapshotStockByCat;
-  window._nameInvSku=Object.fromEntries((report.products||[]).filter(p=>p.sku).map(p=>[p.name,p.sku]));
+  window._cachedStockBySeason=stockBySeasonFromProducts(activeProducts);
+  window._nameInvSku=Object.fromEntries(products.filter(p=>p.sku).map(p=>[p.name,p.sku]));
+  const allLabels=report.allPeriodLabels||serverReportPeriods.map(item=>item.label);
+  const totalDays=serverReportPeriods.reduce((sum,item)=>sum+daysInclusive(item.startDate,item.endDate),0);
+  const grossAvailable=report.grossAvailable??report.dataQuality?.grossAvailable??products.some(product=>Object.values(product.periods).some(pd=>pd?.gross!=null&&Math.abs(Number(pd.gross)-Number(pd.rev||0))>.005));
   window._rpt={
-    products:report.products||[],
+    products,
     minD,maxD,
-    weeks:report.weeks||Math.max(days/7,1),
+    weeks:report.weeks||Math.max(totalDays/7,1),
     showPeriods:false,
-    allPeriodLabels:report.allPeriodLabels||[label],
-    orderedPeriodLabels:report.orderedPeriodLabels||[label],
-    rosLabel:report.rosLabel||label,
-    totRev:report.totRev||0,
+    allPeriodLabels:allLabels,
+    orderedPeriodLabels:report.orderedPeriodLabels||[...allLabels].reverse(),
+    rosLabel:report.rosLabel||serverReportPeriods[serverReportPeriods.length-1].label,
+    rosBasis:report.rosBasis||data.rosBasis||null,
+    rosPeriod:report.rosPeriod||data.rosPeriod||null,
+    tradingMetrics:report.tradingMetrics||data.tradingMetrics||null,
+    totRev:products.reduce((sum,product)=>sum+product.salesIncVat,0),
     totUnits:report.totUnits||0,
-    totGP:report.totGP||0,
+    totGP:report.totGP==null?null:Number(report.totGP),
     invTotalStock:report.invTotalStock||0,
-    deadStock:report.deadStock||[]
+    deadStock,
+    costCoverage:report.costCoverage||data.costCoverage||period.summary?.costCoverage||null,
+    dataQuality:report.dataQuality||data.dataQuality||{},
+    financialSemantics:{...financialSemantics,visibleSalesIncludeVat:true},
+    grossAvailable:Boolean(grossAvailable),
+    sourceLabel:data.stored===false?'Live Shopify week-to-date':'Saved Shopify report',
+    syncedAt:period.syncedAt||data.generatedAt||'',
+    metadata:data.metadata||report.metadata||{}
   };
   document.getElementById('upload-sec').style.display='none';
   document.getElementById('report-sec').style.display='block';
@@ -996,10 +1264,12 @@ function applyServerBestsellers(data){
     setRangePresetValue('ty-report-api','current');
   }
   document.getElementById('rpt-sub').textContent=`${fD(minD)} - ${fD(maxD)} · ${data.stored===false?'live ad hoc':'server cached '+(data.storedPeriodGrain||period.sourceType||'report')} · synced ${new Date(period.syncedAt||Date.now()).toLocaleString('en-GB')}`;
-  G.col='rev';G.dir=-1;G.cat='All';G.exp=new Set();G.dsExpanded=false;G.dsVisible=false;G.dsSeason='All';G.view='table';G.season='All';G.periodFilter='all';
+  G.col='rev';G.dir=-1;G.cat='All';G.exp=new Set();G.dsExpanded=false;G.dsVisible=false;G.dsSeason='All';G.view='table';G.season='All';G.periodFilter='all';G.scope='sold';G.search='';G.page=1;
+  const search=document.getElementById('main-search');if(search)search.value='';
   st('', '');
   updateTyPanelState();
   switchReportTab('ty');
+  renderDataQualityBanner();
   render();
 }
 async function loadServerPeriod(startDate,endDate,prefix='api'){
@@ -1023,13 +1293,11 @@ async function loadCachedBestsellers(prefix='api'){
     const data=await apiJson(`/api/reports/bestsellers?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&sourceType=shopify_api`);
     applyServerBestsellers(data);
   }catch(error){
-    const lastWeek=lastCompletedWeekRange();
-    const isLastWeek=range&&range.startDate===lastWeek.startDate&&range.endDate===lastWeek.endDate;
-    if(/saved before the week finished|needs refresh|BESTSELLERS_CACHE_NEEDS_REFRESH/i.test(error.message||'')){
+    if(/saved before the week finished|need(?:s)? refresh|BESTSELLERS_CACHE_NEEDS_REFRESH/i.test(error.message||'')){
       await syncBestsellersFromApi(prefix);
       return;
     }
-    if(isLastWeek&&/no cached|missing cached/i.test(error.message||'')){
+    if(/no cached|missing cached/i.test(error.message||'')){
       await syncBestsellersFromApi(prefix);
       return;
     }
@@ -1355,8 +1623,10 @@ function _build(){
   const rosLabel=recentFile?.label||'last period';
 
   const products=Object.values(stats).map(s=>{
-    const avgP=s.units>0?s.rev/s.units:0;  // net ASP (ex-VAT)
-    const gAsp=avgP*1.2;  // gross ASP inc 20% VAT = what customer paid
+    const avgP=s.units>0?s.rev/s.units:0;  // calculation ASP, ex VAT
+    const avgPIncVat=avgP*1.2;
+    const gAsp=s.units>0?Object.values(s.periods).reduce((a,pd)=>a+Number(pd.gross||0),0)/s.units:avgP;
+    const gAspIncVat=gAsp*1.2;
     const gpPct=s.rev>0?s.gp/s.rev*100:0;
     const gpUnit=s.units>0?s.gp/s.units:0;
     const avgCost=skuInvCost[s.sku]||nameInvCost[s.name]||null;
@@ -1395,7 +1665,8 @@ function _build(){
       avgRevPerWeek=totWks>0?totRev/totWks:0;
     }
     const rrp=nameInvPrice[s.name]||null;
-    return{...s,avgP,gAsp,gpPct,gpUnit,avgRevPerWeek,wklyU,avgCost,rrp};
+    const periods=Object.fromEntries(Object.entries(s.periods).map(([label,pd])=>[label,{...pd,revenueExVat:Number(pd.rev||0),grossExVat:Number(pd.gross||0),salesIncVat:Number(pd.rev||0)*1.2,grossSalesIncVat:Number(pd.gross||0)*1.2}]));
+    return{...s,periods,revenueExVat:s.rev,salesIncVat:s.rev*1.2,grossSalesIncVat:Object.values(s.periods).reduce((a,pd)=>a+Number(pd.gross||0),0)*1.2,avgP,avgPIncVat,gAsp,gAspIncVat,gpPct,gpUnit,avgRevPerWeek,avgRevPerWeekIncVat:avgRevPerWeek*1.2,wklyU,avgCost,rrp};
   });
 
   // Dead stock = in inventory with stock > 0 but no sales in any period
@@ -1407,10 +1678,10 @@ function _build(){
 
   window._nameInvSku=nameInvSku;
   window._rpt={products,minD,maxD,weeks,showPeriods,allPeriodLabels,rosLabel,
-    totRev:products.reduce((a,p)=>a+p.rev,0),
+    totRev:products.reduce((a,p)=>a+p.salesIncVat,0),
     totUnits:products.reduce((a,p)=>a+p.units,0),
     totGP:products.reduce((a,p)=>a+p.gp,0),
-    invTotalStock,deadStock,
+    invTotalStock,deadStock,financialSemantics:{salesValuesIncludeVat:false,visibleSalesIncludeVat:true,retailPricesIncludeVat:true,vatRate:0.2,grossProfitRevenueBasis:'ex_vat'},
     orderedPeriodLabels:[...allPeriodLabels].reverse()}; // newest first
 
   st('','');
@@ -1439,11 +1710,11 @@ function buildSeasonPills(allSeasons,active,onchangeExpr){
     const isActive=active===s;
     const isGroup=s==='SS'||s==='AW';
     const label=s==='SS'?'All SS':s==='AW'?'All AW':s==='All'?'All seasons':s;
-    return`<button data-sv="${s}" onclick="${onchangeExpr}" style="padding:5px 12px;border-radius:20px;border:.5px solid ${isActive?'var(--info)':'var(--border2)'};background:${isActive?'var(--info)':isGroup?'var(--bg3)':'var(--bg2)'};color:${isActive?'#fff':isGroup?'var(--text)':'var(--text2)'};font-size:11px;font-weight:${isGroup?'600':'400'};cursor:pointer;white-space:nowrap">${label}</button>`;
+    return`<button type="button" data-sv="${escapeAttr(s)}" aria-pressed="${isActive}" onclick="${onchangeExpr}" style="padding:5px 12px;border-radius:20px;border:.5px solid ${isActive?'var(--info)':'var(--border2)'};background:${isActive?'var(--info)':isGroup?'var(--bg3)':'var(--bg2)'};color:${isActive?'#fff':isGroup?'var(--text)':'var(--text2)'};font-size:11px;font-weight:${isGroup?'600':'400'};cursor:pointer;white-space:nowrap">${escapeHtml(label)}</button>`;
   }).join('');
   return`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${pills}</div>`;
 }
-function seasonBadge(s){if(!s)return'<span style="color:var(--text3);font-size:10px">—</span>';const u=s.toUpperCase();const cls=u.startsWith('SS')?'ss':u.startsWith('AW')?'aw':'os';return`<span class="badge ${cls}">${s}</span>`;}
+function seasonBadge(s){if(!s)return'<span style="color:var(--text3);font-size:10px">—</span>';const u=String(s).toUpperCase();const cls=u.startsWith('SS')?'ss':u.startsWith('AW')?'aw':'os';return`<span class="badge ${cls}">${escapeHtml(s)}</span>`;}
 
 function updateTyPanelState(){
   const hasReport=!!window._rpt;
@@ -1505,15 +1776,44 @@ function render(){
   document.getElementById('filter-bar').style.display=isGrid?'none':'';
   document.querySelectorAll('.ctrl-row').forEach(el=>el.style.display=isGrid?'none':'flex');
 
-  // Categories
-  const totRev=r.totRev,rc={};
-  r.products.forEach(p=>{const c=effectiveCat(p)||'(none)';if(!rc[c])rc[c]={rv:0,u:0,gp:0,wP:0,wQ:0};rc[c].rv+=p.rev;rc[c].u+=p.units;rc[c].gp+=p.gp;rc[c].wP+=p.avgP*p.units;rc[c].wQ+=p.units;});
+  // Active-period product values. ROS/cover use the active period when narrowed;
+  // otherwise the server's explicit decision ROS is preserved.
+  const getUnits=p=>activePeriodLabels.reduce((sum,label)=>sum+Number(p.periods?.[label]?.units||0),0);
+  const getSalesIncVat=p=>activePeriodLabels.reduce((sum,label)=>sum+salesIncVatOf(p.periods?.[label]||{},r.financialSemantics),0);
+  const getRevExVat=p=>activePeriodLabels.reduce((sum,label)=>sum+salesExVatOf(p.periods?.[label]||{},r.financialSemantics),0);
+  const getGrossIncVat=p=>activePeriodLabels.reduce((sum,label)=>sum+grossSalesIncVatOf(p.periods?.[label]||{},r.financialSemantics),0);
+  const getKnownGp=p=>activePeriodLabels.reduce((sum,label)=>{const pd=p.periods?.[label]||{};return sum+Number(pd.knownGp??pd.gp??0);},0);
+  const getCostedRevenueExVat=p=>activePeriodLabels.reduce((sum,label)=>{const pd=p.periods?.[label]||{};const fallback=pd.gp==null?0:(pd.revenueExVat!=null?Number(pd.revenueExVat):Number(pd.rev||0)/(r.financialSemantics?.salesValuesIncludeVat?1.2:1));return sum+Number(pd.costedRevenueExVat??fallback);},0);
+  const getGP=p=>{
+    const periodRows=activePeriodLabels.map(label=>p.periods?.[label]).filter(Boolean);
+    const unknown=p.gpKnown===false||periodRows.some(pd=>pd.gp==null&&Number(pd.rev||0)!==0);
+    return unknown?null:periodRows.reduce((sum,pd)=>sum+Number(pd.gp||0),0);
+  };
+  const activeProducts=r.products.map(p=>{
+    const units=periodFiltered?getUnits(p):Number(p.units||0),salesIncVat=periodFiltered?getSalesIncVat(p):salesIncVatOf(p,r.financialSemantics);
+    const gp=periodFiltered?getGP(p):(p.gpKnown===false?null:p.gp),revenueExVat=periodFiltered?getRevExVat(p):salesExVatOf(p,r.financialSemantics);
+    const grossSalesIncVat=periodFiltered?getGrossIncVat(p):grossSalesIncVatOf(p,r.financialSemantics);
+    const avgPIncVat=units?salesIncVat/units:Number(p.avgPIncVat||p.rrp||0);
+    const wklyU=units/activeWeeks;
+    const avgRevPerWeekIncVat=salesIncVat/activeWeeks;
+    const knownGpValue=periodFiltered?getKnownGp(p):Number(p.knownGpValue||0),costedRevenueExVat=periodFiltered?getCostedRevenueExVat(p):Number(p.costedRevenueExVat||0);
+    return Object.assign({},p,{units,salesIncVat,revenueExVat,grossSalesIncVat,gp,knownGpValue,costedRevenueExVat,avgPIncVat,gAspIncVat:r.grossAvailable&&units?grossSalesIncVat/units:avgPIncVat,gpPct:periodFiltered?(gp!=null&&revenueExVat?gp/revenueExVat*100:null):(p.gpPct==null?null:Number(p.gpPct)),gpUnit:gp!=null&&units?gp/units:null,wklyU,avgRevPerWeekIncVat,coverWks:p.stock!=null&&wklyU>0?Number(p.stock)/wklyU:null});
+  });
+  let baseProducts=activeProducts.filter(isRelevantMainProduct);
+  if(G.scope==='sold')baseProducts=baseProducts.filter(p=>p.units!==0||p.salesIncVat!==0);
+  else baseProducts=baseProducts.filter(p=>Number(p.stock||0)>0||p.units!==0||p.salesIncVat!==0);
+  if(G.season&&G.season!=='All')baseProducts=baseProducts.filter(p=>seasonMatchFilter(p.season,G.season));
+  if(G.search)baseProducts=baseProducts.filter(p=>productSearchText(p).includes(G.search));
+
+  // Categories reflect active date, season, scope and search filters.
+  const totRev=baseProducts.reduce((sum,p)=>sum+p.salesIncVat,0),rc={};
+  baseProducts.forEach(p=>{const c=effectiveCat(p)||'(none)';if(!rc[c])rc[c]={rv:0,xrv:0,u:0,gp:0,gpKnown:0,wP:0,wQ:0};rc[c].rv+=p.salesIncVat;rc[c].xrv+=Number(p.costedRevenueExVat||0);rc[c].u+=p.units;rc[c].gp+=Number(p.knownGpValue||0);if(Number(p.costedRevenueExVat||0)>0)rc[c].gpKnown++;rc[c].wP+=p.avgPIncVat*p.units;rc[c].wQ+=p.units;});
   const s15=Object.entries(rc).filter(([k])=>k&&k!=='(none)').sort((a,b)=>b[1].rv-a[1].rv);
   const top=s15.slice(0,15),rest=s15.slice(15);
-  if(rest.length){const o=rest.reduce((a,[,v])=>{a.rv+=v.rv;a.u+=v.u;a.gp+=v.gp;a.wP+=v.wP;a.wQ+=v.wQ;return a;},{rv:0,u:0,gp:0,wP:0,wQ:0});top.push(['Other',o]);}
+  if(rest.length){const o=rest.reduce((a,[,v])=>{a.rv+=v.rv;a.xrv+=v.xrv;a.u+=v.u;a.gp+=v.gp;a.gpKnown+=v.gpKnown||0;a.wP+=v.wP;a.wQ+=v.wQ;return a;},{rv:0,xrv:0,u:0,gp:0,gpKnown:0,wP:0,wQ:0});top.push(['Other',o]);}
   const otherN=new Set(rest.map(([k])=>k));
-  const allGP=r.products.reduce((a,p)=>a+p.gp,0);
-  const allS={rv:totRev,u:r.totUnits,gp:allGP,wP:r.products.reduce((a,p)=>a+p.avgP*p.units,0),wQ:r.totUnits};
+  const allGP=baseProducts.reduce((sum,p)=>sum+Number(p.knownGpValue||0),0);
+  const allS={rv:totRev,xrv:baseProducts.reduce((sum,p)=>sum+Number(p.costedRevenueExVat||0),0),u:baseProducts.reduce((sum,p)=>sum+p.units,0),gp:allGP,gpKnown:baseProducts.filter(p=>Number(p.costedRevenueExVat||0)>0).length,wP:baseProducts.reduce((sum,p)=>sum+p.avgPIncVat*p.units,0),wQ:baseProducts.reduce((sum,p)=>sum+p.units,0)};
   const catList=[['All',allS],...top];
   const fb=document.getElementById('filter-bar');
   if(catList.length>2){
@@ -1521,10 +1821,10 @@ function render(){
     fb.innerHTML='<span class="filter-lbl">Category</span>'+catList.map(([c,s])=>{
       const pct=totRev>0?(s.rv/totRev*100).toFixed(1):'0';
       const asp=s.wQ>0?fMoney(s.wP/s.wQ):'—';
-      const gpPct=s.rv>0?(s.gp/s.rv*100).toFixed(1):null;
+      const gpPct=s.xrv>0&&s.gpKnown?(s.gp/s.xrv*100).toFixed(1):null;
       const gpLine=gpPct?` · GP ${fMoney(s.gp)} (${gpPct}%)`:'';
-      return`<button class="cat-card${G.cat===c?' on':''}" onclick="setCat('${c.replace(/'/g,"\\'")}')">`+
-        `<span class="cat-name">${c}</span>`+
+      return`<button class="cat-card${G.cat===c?' on':''}" data-cat="${escapeAttr(c)}" onclick="setCat(this.dataset.cat)">`+
+        `<span class="cat-name">${escapeHtml(c)}</span>`+
         `<span class="cat-stat">${fMoney(s.rv)}${gpLine}</span>`+
         `<span class="cat-stat">${pct}% rev · ${fN(s.u)} units · ${asp} ASP</span></button>`;
     }).join('');
@@ -1533,21 +1833,11 @@ function render(){
   // Populate TY season pills
   const tySeasonPills=document.getElementById('ty-season-pills');
   if(tySeasonPills){
-    const seasons=[...new Set(r.products.map(p=>p.season).filter(Boolean))].sort();
+    const seasons=[...new Set(activeProducts.filter(isRelevantMainProduct).map(p=>p.season).filter(Boolean))].sort();
     tySeasonPills.innerHTML=buildSeasonPills(seasons,G.season||'All',"G.season=this.dataset.sv;G.cat='All';render()");
   }
 
-  let filt=G.cat==='All'?r.products:G.cat==='Other'?r.products.filter(p=>otherN.has(effectiveCat(p)||'')):r.products.filter(p=>effectiveCat(p)===G.cat);
-  if(G.season&&G.season!=='All')filt=filt.filter(p=>seasonMatchFilter(p.season,G.season));
-
-  // Re-derive totals for active periods only (when date filter is active)
-  const getUnits = function(p){ return activePeriodLabels.reduce(function(a,lbl){return a+(p.periods[lbl]?.units||0);},0); };
-  const getRev   = function(p){ return activePeriodLabels.reduce(function(a,lbl){return a+(p.periods[lbl]?.rev||0);},0); };
-  const getGP    = function(p){ return activePeriodLabels.reduce(function(a,lbl){return a+(p.periods[lbl]?.gp||0);},0); };
-  const getGross = function(p){ return activePeriodLabels.reduce(function(a,lbl){return a+(p.periods[lbl]?.gross||0);},0); };
-
-  // Remove products with zero activity in active period range (unless not period-filtering)
-  if(periodFiltered) filt=filt.filter(function(p){return getUnits(p)!==0||getRev(p)!==0;});
+  let filt=G.cat==='All'?baseProducts:G.cat==='Other'?baseProducts.filter(p=>otherN.has(effectiveCat(p)||'')):baseProducts.filter(p=>effectiveCat(p)===G.cat);
 
   const hasImg=r.products.some(p=>p.img);
   const hasStock=(invRows||window._snapshotHasInventory)&&filt.some(p=>p.stock!=null);
@@ -1556,42 +1846,40 @@ function render(){
   const showPeriods=activePeriodLabels.length>1;
 
   // Summary cards
-  const fRev=filt.reduce(function(a,p){return a+(periodFiltered?getRev(p):p.rev);},0);
-  const fGross=filt.reduce(function(a,p){return a+(periodFiltered?getGross(p):Object.values(p.periods).reduce(function(s,pd){return s+(pd.gross||0);},0));},0);
-  const fU=filt.reduce(function(a,p){return a+(periodFiltered?getUnits(p):p.units);},0);
-  const fGP=filt.reduce(function(a,p){return a+(periodFiltered?getGP(p):p.gp);},0);
-  const fGPpct=fRev>0?fGP/fRev*100:0;
+  const fRev=filt.reduce((sum,p)=>sum+p.salesIncVat,0);
+  const trading=tradingMetricsForPeriods(r,activePeriodLabels,G.periodFilter);
+  const fU=filt.reduce((sum,p)=>sum+p.units,0);
+  const gpKnown=filt.filter(p=>Number(p.costedRevenueExVat||0)>0),fGP=filt.reduce((sum,p)=>sum+Number(p.knownGpValue||0),0);
+  const costedRev=filt.reduce((sum,p)=>sum+Number(p.costedRevenueExVat||0),0),fGPpct=costedRev>0?fGP/costedRev*100:null;
+  const soldForGp=filt.filter(p=>p.units!==0||p.salesIncVat!==0);
   const fStock=hasStock?filt.filter(p=>p.stock!=null).reduce((a,p)=>a+p.stock,0):null;
   const cds=[
-    {l:'Gross revenue',v:fMoney(fGross)},
-    {l:G.cat==='All'?'Net sales':G.cat,v:fMoney(fRev)},
-    {l:'Total GP',v:fMoney(fGP)},
-    {l:'GP %',v:fPct(fGPpct)},
+    {l:'Demand',v:trading.available?fMoney(trading.demandRevenue):'—',note:trading.available?'Inc VAT · after discounts, before returns':'Sync Shopify to load'},
+    {l:'Despatch',v:trading.available?fMoney(trading.despatchRevenue):'—',note:trading.available?'Shopify total sales · inc VAT':'Sync Shopify to load'},
+    {l:G.cat==='All'?'Sales inc VAT':`${G.cat} sales inc VAT`,v:fMoney(fRev)},
+    {l:soldForGp.every(p=>p.gp!=null)?'Achieved GP ex VAT':'Known GP ex VAT',v:gpKnown.length?fMoney(fGP):'Unknown'},
+    {l:'Achieved GP % (ex-VAT basis)',v:fPct(fGPpct)},
     {l:'Units sold',v:fN(fU)},
-    r.invTotalStock?{l:'Total inventory',v:fN(r.invTotalStock)}:null,
-    fStock!=null&&G.cat!=='All'?{l:'Category stock',v:fN(fStock)}:null,
+    fStock!=null?{l:'Visible stock',v:fN(fStock)}:null,
   ].filter(Boolean);
-  document.getElementById('cards').innerHTML=cds.map(c=>`<div class="card"><label>${c.l}</label><span>${c.v}</span></div>`).join('');
+  document.getElementById('cards').innerHTML=cds.map(c=>`<div class="card"><label>${c.l}</label><span>${c.v}</span>${c.note?`<small>${c.note}</small>`:''}</div>`).join('');
 
-  // Build a view-layer object with period-filtered values for sorting and display
-  const filtView = filt.map(function(p){
-    if(!periodFiltered) return p;
-    const u=getUnits(p),rv=getRev(p),gp=getGP(p);
-    const avgP=u>0?rv/u:0;
-    const gpPct=rv>0?gp/rv*100:0;
-    const gpUnit=u>0?gp/u:0;
-    return Object.assign({},p,{units:u,rev:rv,gp:gp,avgP:avgP,gAsp:avgP*1.2,gpPct:gpPct,gpUnit:gpUnit});
-  });
+  const filtView=filt;
+  document.getElementById('scope-sold')?.classList.toggle('on',G.scope==='sold');document.getElementById('scope-sold')?.setAttribute('aria-pressed',String(G.scope==='sold'));
+  document.getElementById('scope-all')?.classList.toggle('on',G.scope==='all');document.getElementById('scope-all')?.setAttribute('aria-pressed',String(G.scope==='all'));
 
-  if(G.view==='grid'){renderGrid(r,filtView,weeksLeft,activePeriodLabels);return;}
-  const srt=[...filtView].sort((a,b)=>{
+  if(G.view==='grid'){renderGrid(r,baseProducts,weeksLeft,activePeriodLabels);return;}
+  const srtAll=[...filtView].sort((a,b)=>{
     const av=a[G.col]??-Infinity,bv=b[G.col]??-Infinity;
     if(typeof bv==='string')return G.dir===1?av.localeCompare(bv):bv.localeCompare(av);
     return G.dir===1?av-bv:bv-av;
   });
-  const maxU=Math.max(...srt.map(p=>p.units),1);
+  const pageSize=G.pageSize==='all'?Math.max(srtAll.length,1):Math.max(1,Number(G.pageSize)||50);
+  const totalPages=Math.max(1,Math.ceil(srtAll.length/pageSize));G.page=Math.min(G.page,totalPages);
+  const pageStart=(G.page-1)*pageSize,srt=srtAll.slice(pageStart,pageStart+pageSize);
+  const maxU=Math.max(...srtAll.map(p=>p.units),1);
   const ar=c=>G.col===c?(G.dir===-1?' ↓':' ↑'):'';
-  const th=(c,l,x='')=>`<th class="${x}${G.col===c?' sa':''}" onclick="srt2('${c}')">${l}${ar(c)}</th>`;
+  const th=(c,l,x='')=>`<th class="${x}${G.col===c?' sa':''}" aria-sort="${G.col===c?(G.dir===-1?'descending':'ascending'):'none'}" onclick="srt2('${c}')">${escapeHtml(l)}${ar(c)}</th>`;
 
   hideGrid();
   document.getElementById('thead').innerHTML=`<tr>
@@ -1605,15 +1893,15 @@ function render(){
     ${showPeriods?activePeriodLabels.map(lbl=>{
       // Show just start date e.g. "29 Mar" from "29 Mar – 4 Apr"
       const short=lbl.replace(/^(\d+\s+[A-Za-z]{3}).*/,'$1');
-      return`<th class="spark-hdr" title="${lbl}">${short}</th>`;
+      return`<th class="spark-hdr" title="${escapeAttr(lbl)}">${escapeHtml(short)}</th>`;
     }).join(''):''}
     ${th('rrp','RRP (inc VAT)','r')}
-    ${th('avgP','Avg price (ex-VAT)','r sr-ap')}
-    ${th('rev','Net sales','r sr-ns')}
-    ${th('gp','Total GP','r sr-tg')}
-    ${th('gpUnit','GP / unit','r sr-gu')}
-    ${th('gpPct','GP %','r sr-gp')}
-    ${th('avgRevPerWeek','Sales/wk','r sr-sw')}
+    ${th('avgP','Avg selling price inc VAT','r sr-ap')}
+    ${th('rev','Sales inc VAT','r sr-ns')}
+    ${th('gp','Known GP ex VAT','r sr-tg')}
+    ${th('gpUnit','GP / unit ex VAT','r sr-gu')}
+    ${th('gpPct','Achieved GP % ex VAT','r sr-gp')}
+    ${th('avgRevPerWeek','Sales/wk inc VAT','r sr-sw')}
     ${hasStock?th('coverWks','Cover wks','r sr-cw'):''}
     ${hasStock?'<th class="r" title="Units needed to cover to season end">Forecast buy</th>':''}
   </tr>`;
@@ -1631,21 +1919,21 @@ function render(){
 
   let html='';
   srt.forEach((p,i)=>{
-    const alt=i%2===1?' alt':'';
+    const alt=(pageStart+i)%2===1?' alt':'';
     const isE=G.exp.has(p.name);
     const bw=Math.round(p.units/maxU*80);
     const cover=p.stock!=null&&p.wklyU>0?p.stock/p.wklyU:null;
     const oRank=overallRank[p.name]||0;
     const cRank=catRank[p.name]||0;
-    const goldStar=oRank>0?`<span title="Overall rank #${oRank} by net sales" style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#B8860B;background:#FFF8DC;border-radius:3px;padding:1px 5px;white-space:nowrap">★ #${oRank}</span>`:'';
-    const silverStar=cRank>0?`<span title="Category rank #${cRank} in ${p.cat||'category'}" style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#5A5A7A;background:#EDEDF5;border-radius:3px;padding:1px 5px;white-space:nowrap">✦ #${cRank}</span>`:'';
+    const goldStar=oRank>0?`<span title="Overall rank #${oRank} by sales inc VAT" style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#B8860B;background:#FFF8DC;border-radius:3px;padding:1px 5px;white-space:nowrap">★ #${oRank}</span>`:'';
+    const silverStar=cRank>0?`<span title="Category rank #${cRank} in ${escapeAttr(p.cat||'category')}" style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#5A5A7A;background:#EDEDF5;border-radius:3px;padding:1px 5px;white-space:nowrap">✦ #${cRank}</span>`:'';
     const rankBadges=`<div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:3px">${goldStar}${silverStar}</div>`;
     const forecastBuy=p.stock!=null&&p.wklyU>0?Math.max(0,Math.ceil(p.wklyU*weeksLeft)-p.stock):null;
     const cvCls=cover==null?'cv-na':cover<4?'cv-lo':cover<weeksLeft?'cv-md':'cv-ok';
 
-    const ic=hasImg?`<td style="padding:6px 10px">${p.img?`<img class="thumb" src="${p.img}" onclick="openLb(this)" onerror="this.style.display='none'" alt="">`:' <div class="thumb-e"></div>'}</td>`:'';
+    const safeImg=safeImageUrl(p.img);
     const sc=hasSeason?`<td class="c">${seasonBadge(p.season)}</td>`:'';
-    const cc=hasCat&&G.cat==='All'?`<td style="font-size:11px;color:var(--text3)">${effectiveCat(p)||'—'}</td>`:'';
+    const cc=hasCat&&G.cat==='All'?`<td style="font-size:11px;color:var(--text3)">${escapeHtml(effectiveCat(p)||'—')}</td>`:'';
     const stc=hasStock?`<td class="r" style="font-weight:500">${p.stock!=null?fN(p.stock):'—'}</td>`:'';
     const cvc=hasStock?`<td class="r ${cvCls}">${cover!=null?cover.toFixed(1):'—'}</td>`:'';
     const fbc=hasStock?`<td class="r" style="font-weight:500;color:${forecastBuy>0?'var(--info)':'var(--text3)'}">${forecastBuy!=null?(forecastBuy>0?fN(forecastBuy):'Covered'):'—'}</td>`:'';
@@ -1654,9 +1942,9 @@ function render(){
     // Per-period sparkline cells
     const periodCells=showPeriods?activePeriodLabels.map(lbl=>{
       const u=p.periods[lbl]?.units||0;
-      const maxForPeriod=Math.max(...srt.map(x=>x.periods[lbl]?.units||0),1);
+      const maxForPeriod=Math.max(...srtAll.map(x=>x.periods[lbl]?.units||0),1);
       const barH=u>0?Math.max(Math.round(u/maxForPeriod*16),3):2;
-      const isBest=u>0&&u===Math.max(...srt.map(x=>x.periods[lbl]?.units||0));
+      const isBest=u>0&&u===Math.max(...srtAll.map(x=>x.periods[lbl]?.units||0));
       const cls=u===0?'lo':isBest?'hi':'';
       const uColor=u<0?'var(--danger)':'';
       return`<td class="spark-cell">
@@ -1666,20 +1954,20 @@ function render(){
     }).join(''):'';
 
     html+=`<tr class="${alt}">
-      <td class="sl-no" style="font-size:11px;color:var(--text3)">${i+1}</td>
-      ${hasImg?`<td class="sl-img" style="padding:6px 10px">${p.img?`<img class="thumb" src="${p.img}" onclick="openLb(this)" onerror="this.style.display='none'" alt="">`:' <div class="thumb-e"></div>'}</td>`:''}
-      <td class="sl-pr"><div class="pname" style="display:flex;align-items:flex-start;gap:6px">${showPeriods?`<button class="xbtn${isE?' open':''}" title="Show period breakdown" data-pname="${p.name.replace(/"/g,'&quot;')}" onclick="togExpBtn(this)"><span style="font-size:10px">${isE?'▲':'▼'}</span></button>`:''}${rankBadges}${p.name}</div>${p.cat?`<div class="pcat">${p.cat}</div>`:''}<div class="bw"><div class="bf" style="width:${bw}px"></div></div></td>
+      <td class="sl-no" style="font-size:11px;color:var(--text3)">${pageStart+i+1}</td>
+      ${hasImg?`<td class="sl-img" style="padding:6px 10px">${safeImg?`<img class="thumb" src="${escapeAttr(safeImg)}" onclick="openLb(this)" onerror="this.style.display='none'" alt="${escapeAttr(p.name)}">`:' <div class="thumb-e"></div>'}</td>`:''}
+      <td class="sl-pr"><div class="pname" style="display:flex;align-items:flex-start;gap:6px">${showPeriods?`<button class="xbtn${isE?' open':''}" title="Show period breakdown" data-pname="${escapeAttr(p.name)}" onclick="togExpBtn(this)"><span style="font-size:10px">${isE?'▲':'▼'}</span></button>`:''}${rankBadges}${escapeHtml(p.name)}</div>${p.cat?`<div class="pcat">${escapeHtml(p.cat)}</div>`:''}<div class="bw"><div class="bf" style="width:${bw}px"></div></div></td>
       ${sc}${cc}
       <td class="r" style="font-weight:500">${fN(p.units)}</td>
       ${stc}
       ${periodCells}
-      <td class="r">${p.rrp?`<div style="font-weight:500">${fMoney(p.rrp)}</div><div style="font-size:10px;color:var(--text3);margin-top:1px">${fMoney(p.rrp*1.2)} inc VAT</div>`:'<span style="color:var(--text3)">—</span>'}</td>
-      <td class="r"><div style="font-weight:500">${fMoney(p.avgP)}</div><div style="font-size:10px;color:var(--text3);margin-top:1px">${fMoney(p.gAsp)} inc VAT</div></td>
-      <td class="r" style="font-weight:500">${fMoney(p.rev)}</td>
-      <td class="r" style="color:${p.gp<0?'var(--danger)':'var(--success)'};font-weight:500">${fMoney(p.gp)}</td>
-      <td class="r" style="color:${p.gpUnit<0?'var(--danger)':'var(--success)'}">${fMoney(p.gpUnit)}</td>
-      <td class="r" style="color:${p.gpPct<0?'var(--danger)':p.gpPct<20?'var(--warning)':'var(--success)'}">${fPct(p.gpPct)}</td>
-      <td class="r">${fMoney(p.avgRevPerWeek)}</td>
+      <td class="r">${p.rrp?`<div style="font-weight:500">${fMoney(p.rrp)}</div><div style="font-size:10px;color:var(--text3);margin-top:1px">inc VAT</div>`:'<span style="color:var(--text3)">—</span>'}</td>
+      <td class="r"><div style="font-weight:500">${fMoney(p.avgPIncVat)}</div></td>
+      <td class="r" style="font-weight:500">${fMoney(p.salesIncVat)}</td>
+      <td class="r" style="color:${p.gp==null?'var(--text3)':p.gp<0?'var(--danger)':'var(--success)'};font-weight:500">${p.gp==null?'Unknown':fMoney(p.gp)}</td>
+      <td class="r" style="color:${p.gpUnit==null?'var(--text3)':p.gpUnit<0?'var(--danger)':'var(--success)'}">${p.gpUnit==null?'—':fMoney(p.gpUnit)}</td>
+      <td class="r" style="color:${p.gpPct==null?'var(--text3)':p.gpPct<0?'var(--danger)':p.gpPct<20?'var(--warning)':'var(--success)'}">${fPct(p.gpPct)}</td>
+      <td class="r">${fMoney(p.avgRevPerWeekIncVat)}</td>
       ${hasStock?`<td class="r ${cvCls}">${cover!=null?cover.toFixed(1):'—'}</td>`:''}
       ${hasStock?`<td class="r" style="font-weight:500;color:${forecastBuy>0?'var(--info)':'var(--text3)'}">${forecastBuy!=null?(forecastBuy>0?fN(forecastBuy):'Covered'):'—'}</td>`:''}
     </tr>`;
@@ -1690,7 +1978,8 @@ function render(){
       const bars=activePeriodLabels.map(lbl=>{
         const pd=p.periods[lbl]||{units:0,rev:0,gp:0};
         const u=pd.units;
-        const asp=u>0?pd.rev/u:null;
+        const periodSales=salesIncVatOf(pd,r.financialSemantics);
+        const asp=u>0?periodSales/u:null;
         const uColor=u>0?'var(--text)':u<0?'var(--danger)':'var(--text3)';
         const uLabel=u!==0?u:'—';
         let barHtml;
@@ -1714,18 +2003,20 @@ function render(){
         return`<div class="pd-col">
           <div class="pd-u" style="color:${uColor}">${uLabel}</div>
           ${barHtml}
-          <div class="pd-r" style="color:${pd.rev<0?'var(--danger)':'var(--text2)'}">${pd.rev!==0?fMoney(pd.rev):''}</div>
+          <div class="pd-r" style="color:${periodSales<0?'var(--danger)':'var(--text2)'}">${periodSales!==0?fMoney(periodSales):''}</div>
           ${asp!=null?`<div style="font-size:9px;color:var(--text3);text-align:center;margin-top:1px">${fMoney(asp)} avg</div>`:'<div style="font-size:9px">&nbsp;</div>'}
-          <div class="pd-l">${lbl}</div>
+          <div class="pd-l">${escapeHtml(lbl)}</div>
         </div>`;
       }).join('');
-      html+=`<tr class="exp-r"><td colspan="20"><div class="pd-wrap"><div class="pd-title">Period breakdown — ${p.name}</div><div class="pd-bars">${bars}</div></div></td></tr>`;
+      html+=`<tr class="exp-r"><td colspan="20"><div class="pd-wrap"><div class="pd-title">Period breakdown — ${escapeHtml(p.name)}</div><div class="pd-bars">${bars}</div></div></td></tr>`;
     }
   });
-  document.getElementById('tbody').innerHTML=html;
+  document.getElementById('tbody').innerHTML=html||`<tr><td colspan="20"><div class="empty-table">No products match these filters. Clear search, choose another season, or show all active stock.</div></td></tr>`;
+  const pagination=document.getElementById('main-pagination');
+  if(pagination)pagination.innerHTML=srtAll.length>pageSize?`<button class="btn" type="button" ${G.page<=1?'disabled':''} onclick="setMainPage(${G.page-1})">← Previous</button><span>Page ${G.page} of ${totalPages} · ${srtAll.length.toLocaleString()} products</span><button class="btn" type="button" ${G.page>=totalPages?'disabled':''} onclick="setMainPage(${G.page+1})">Next →</button>`:`<span>${srtAll.length.toLocaleString()} product${srtAll.length===1?'':'s'}</span>`;
   document.getElementById('tfoot').innerHTML=
-    `<span>${srt.length} product${srt.length!==1?'s':''}${G.cat!=='All'?' in '+G.cat:''} · click headers to sort${hasStock?' · cover: <span style="color:var(--danger)">●</span>&lt;4wks <span style="color:var(--warning)">●</span>at risk <span style="color:var(--success)">●</span>ok':''}</span>
-     <span style="color:var(--text3)">⚠ Sales/wk, cover &amp; forecast buy based on <strong>${r.rosLabel}</strong> sales only</span>`;
+    `<span>${srtAll.length} product${srtAll.length!==1?'s':''}${G.cat!=='All'?' in '+escapeHtml(G.cat):''} · click headers to sort${hasStock?' · cover: <span style="color:var(--danger)">●</span>&lt;4wks <span style="color:var(--warning)">●</span>at risk <span style="color:var(--success)">●</span>ok':''}</span>
+     <span style="color:var(--text3)">Sales/wk, cover &amp; forecast use <strong>${escapeHtml(`${activeWeeks.toFixed(1)} active week${activeWeeks===1?'':'s'}`)}</strong>.</span>`;
 
   // Show scroll bar when multiple periods loaded
   const scrollBar=document.getElementById('tbl-scroll-bar');
@@ -1779,7 +2070,7 @@ function renderDeadStock(r){
   </div>`;
   if(seasons.length>2){
     html+=`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
-      ${seasons.map(s=>`<button class="btn${G.dsSeason===s?' btn-primary':''}" style="padding:4px 12px;font-size:11px" onclick="G.dsSeason='${s}';G.dsExpanded=false;renderDeadStock(window._rpt)">${s}</button>`).join('')}
+      ${seasons.map(s=>`<button class="btn${G.dsSeason===s?' btn-primary':''}" style="padding:4px 12px;font-size:11px" data-season="${escapeAttr(s)}" onclick="G.dsSeason=this.dataset.season;G.dsExpanded=false;renderDeadStock(window._rpt)">${escapeHtml(s)}</button>`).join('')}
     </div>`;
   }
   html+=`<div class="tw"><table><thead><tr>
@@ -1789,7 +2080,7 @@ function renderDeadStock(r){
   visible.forEach((d,i)=>{
     html+=`<tr class="${i%2===1?' alt':''}">
       <td style="font-size:11px;color:var(--text3)">${i+1}</td>
-      <td class="pname">${d.name}</td>
+      <td class="pname">${escapeHtml(d.name)}</td>
       <td class="c">${seasonBadge(d.season)}</td>
       <td class="r" style="font-weight:500;color:var(--warning)">${fN(d.stock)}</td>
       <td class="r">${d.price>0?fMoney(d.price):'—'}</td>
@@ -1848,45 +2139,49 @@ function renderGrid(r, allProducts, weeksLeft, activePeriodLabels){
 
   activePeriodLabels = activePeriodLabels || (window._rpt ? window._rpt.allPeriodLabels : []);
   // Category nav bar
-  let navHtml='<div class="cat-nav">'+cats.map(c=>`<button class="cat-nav-btn${activeCat===c?' on':''}" onclick="setCat('${c.replace(/'/g,"\'")}');G.view='grid';render()">${c}</button>`).join('')+'</div>';
+  let navHtml='<div class="cat-nav">'+cats.map(c=>`<button class="cat-nav-btn${activeCat===c?' on':''}" type="button" data-cat="${escapeAttr(c)}" onclick="setCat(this.dataset.cat);G.view='grid';render()">${escapeHtml(c)}</button>`).join('')+'</div>';
 
   // Filter products
   const filt=activeCat==='All'?allProducts:allProducts.filter(p=>effectiveCat(p)===activeCat);
-  const sorted=[...filt].sort((a,b)=>{
+  const sortedAll=[...filt].sort((a,b)=>{
     const av=a[G.col]??-Infinity,bv=b[G.col]??-Infinity;
     if(typeof bv==='string')return G.dir===1?av.localeCompare(bv):bv.localeCompare(av);
     return G.dir===1?av-bv:bv-av;
   });
 
   // Heading
-  const totRevCat=filt.reduce((a,p)=>a+p.rev,0);
-  const totGPCat=filt.reduce((a,p)=>a+p.gp,0);
-  const maxGPPct=Math.max(...filt.map(p=>p.gpPct),1);
+  const pageSize=G.pageSize==='all'?Math.max(sortedAll.length,1):Math.max(1,Number(G.pageSize)||50);
+  const totalPages=Math.max(1,Math.ceil(sortedAll.length/pageSize));G.page=Math.min(G.page,totalPages);
+  const pageStart=(G.page-1)*pageSize,sorted=sortedAll.slice(pageStart,pageStart+pageSize);
+  const totRevCat=filt.reduce((a,p)=>a+p.salesIncVat,0);
+  const gpKnown=filt.filter(p=>p.gp!=null),totGPCat=gpKnown.reduce((a,p)=>a+p.gp,0);
+  const maxGPPct=Math.max(...gpKnown.map(p=>p.gpPct||0),1);
 
   const pfLabel=G.periodFilter&&G.periodFilter!=='all'?' · '+G.periodFilter.replace('last','Last ')+' weeks':'';
-  let headingHtml=`<div class="cat-heading">${activeCat==='All'?'All products':activeCat}</div>`+
-    `<div class="cat-meta">${sorted.length} products shown · ${fMoney(totRevCat)} total net sales · ${fMoney(totGPCat)} gross profit${pfLabel}</div>`;
+  let headingHtml=`<div class="cat-heading">${escapeHtml(activeCat==='All'?'All products':activeCat)}</div>`+
+    `<div class="cat-meta">${sortedAll.length} products · ${fMoney(totRevCat)} sales inc VAT · ${gpKnown.length?fMoney(totGPCat)+' known GP ex VAT':'GP unknown'}${pfLabel}</div>`;
 
   // Product cards
   let cardsHtml='<div class="prod-grid">';
   sorted.forEach((p,i)=>{
-    const imgEl=p.img
-      ?`<img class="prod-card-img" src="${p.img}" alt="${p.name}" onclick="openLb(this)" onerror="this.outerHTML='<div class=prod-card-img-placeholder>·</div>'">`
+    const safeImg=safeImageUrl(p.img);
+    const imgEl=safeImg
+      ?`<img class="prod-card-img" src="${escapeAttr(safeImg)}" alt="${escapeAttr(p.name)}" onclick="openLb(this)" onerror="this.style.display='none'">`
       :`<div class="prod-card-img-placeholder">·</div>`;
     const gpBarW=p.gpPct>0?Math.min(p.gpPct/maxGPPct*100,100):0;
     const cover=p.stock!=null&&p.wklyU>0?p.stock/p.wklyU:null;
     const forecastBuy=p.stock!=null&&p.wklyU>0?Math.max(0,Math.ceil(p.wklyU*weeksLeft)-p.stock):null;
     cardsHtml+=`<div class="prod-card">
       ${imgEl}
-      <div class="prod-rank">${i+1}</div>
+      <div class="prod-rank">${pageStart+i+1}</div>
       ${p.season?`<div class="prod-season">${seasonBadge(p.season)}</div>`:''}
       <div class="prod-card-body">
-        <div class="prod-card-name">${p.name}</div>
+        <div class="prod-card-name">${escapeHtml(p.name)}</div>
         <div class="prod-card-stats">
-          <div><div class="pcs-label">Net sales</div><div class="pcs-val">${fMoney(p.rev)}</div></div>
-          <div><div class="pcs-label">Gross profit</div><div class="pcs-val" style="color:var(--success)">${fMoney(p.gp)}</div></div>
+          <div><div class="pcs-label">Sales inc VAT</div><div class="pcs-val">${fMoney(p.salesIncVat)}</div></div>
+          <div><div class="pcs-label">Known GP ex VAT</div><div class="pcs-val" style="color:${p.gp==null?'var(--text3)':'var(--success)'}">${p.gp==null?'Unknown':fMoney(p.gp)}</div></div>
         </div>
-        <div class="pcs-units">${fN(p.units)} units · ${fPct(p.gpPct)} GP</div>
+        <div class="pcs-units">${fN(p.units)} units · ${p.gpPct==null?'GP unknown':fPct(p.gpPct)+' GP'}</div>
         <div class="gp-bar"><div class="gp-bar-fill" style="width:${gpBarW.toFixed(1)}%"></div></div>
         ${p.stock!=null?`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-top:10px;padding-top:8px;border-top:.5px solid var(--border)">
           <div><div class="pcs-label">Stock</div><div style="font-size:12px;font-weight:600">${fN(p.stock)}</div></div>
@@ -1910,7 +2205,9 @@ function renderGrid(r, allProducts, weeksLeft, activePeriodLabels){
   let gridContainer=document.getElementById('grid-container');
   if(!gridContainer){gridContainer=document.createElement('div');gridContainer.id='grid-container';tw.parentNode.insertBefore(gridContainer,tw);}
   gridContainer.style.display='block';
-  gridContainer.innerHTML=navHtml+headingHtml+cardsHtml;
+  gridContainer.innerHTML=navHtml+headingHtml+(sorted.length?cardsHtml:'<div class="empty-table">No products match these filters.</div>');
+  const pagination=document.getElementById('main-pagination');
+  if(pagination)pagination.innerHTML=sortedAll.length>pageSize?`<button class="btn" type="button" ${G.page<=1?'disabled':''} onclick="setMainPage(${G.page-1})">← Previous</button><span>Page ${G.page} of ${totalPages} · ${sortedAll.length.toLocaleString()} products</span><button class="btn" type="button" ${G.page>=totalPages?'disabled':''} onclick="setMainPage(${G.page+1})">Next →</button>`:`<span>${sortedAll.length.toLocaleString()} product${sortedAll.length===1?'':'s'}</span>`;
 }
 
 function hideGrid(){
@@ -1925,14 +2222,14 @@ function togExp(n){G.exp.has(n)?G.exp.delete(n):G.exp.add(n);render();}
 function togExpBtn(btn){const n=btn.getAttribute('data-pname');if(n)togExp(n);}
 function openLb(img){document.getElementById('lb-img').src=img.src;document.getElementById('lb').classList.add('open');}
 function closeLb(){document.getElementById('lb').classList.remove('open');}
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeLb();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeLb();if(document.getElementById('cat-map-modal')?.style.display!=='none')closeCatMap();}});
 document.addEventListener('dragover',e=>e.preventDefault());
 document.addEventListener('drop',e=>e.preventDefault());
 
 function resetAll(){
   salesFiles=[];invRows=null;prodFiles=[];lyFiles=[];window._rpt=null;window._lyRpt=null;SYM='£';
   G.periodFilter='all';
-  G.col='rev';G.dir=-1;G.cat='All';G.exp=new Set();G.dsExpanded=false;G.dsVisible=false;G.dsSeason='All';G.view='table';
+  G.col='rev';G.dir=-1;G.cat='All';G.exp=new Set();G.dsExpanded=false;G.dsVisible=false;G.dsSeason='All';G.view='table';G.scope='sold';G.search='';G.page=1;
   ['dz-s','dz-p','dz-i'].forEach(id=>{const e=document.getElementById(id);if(e)e.classList.remove('done');});
   ['ico-s','ico-p','ico-i'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='↓';});
   ['fi-s','fi-p','fi-i'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=' ';});
@@ -1949,14 +2246,15 @@ const LY={col:'rev',dir:-1,cat:'All',view:'table',season:'All'};
 function switchUploadTab(t){
   document.getElementById('ty-upload-panel').style.display=t==='ty'?'block':'none';
   document.getElementById('ly-upload-panel').style.display=t==='ly'?'block':'none';
-  document.getElementById('tab-ty-upload').classList.toggle('on',t==='ty');
-  document.getElementById('tab-ly-upload').classList.toggle('on',t==='ly');
+  document.getElementById('tab-ty-upload').classList.toggle('on',t==='ty');document.getElementById('tab-ty-upload').setAttribute('aria-selected',String(t==='ty'));
+  document.getElementById('tab-ly-upload').classList.toggle('on',t==='ly');document.getElementById('tab-ly-upload').setAttribute('aria-selected',String(t==='ly'));
 }
 
 function switchReportTab(t){
   ['ty','ly','ra','stock','slow','meth','trade'].forEach(id=>{
-    const p=document.getElementById(id+'-panel');if(p)p.style.display=t===id?'block':'none';
-    const b=document.getElementById('tab-'+id);if(b)b.classList.toggle('on',t===id);
+    const selected=t===id;
+    const p=document.getElementById(id+'-panel');if(p){p.style.display=selected?'block':'none';p.setAttribute('role','tabpanel');p.setAttribute('aria-labelledby','tab-'+id);}
+    const b=document.getElementById('tab-'+id);if(b){b.classList.toggle('on',selected);b.setAttribute('aria-selected',String(selected));b.tabIndex=selected?0:-1;}
   });
   if(t==='ty'){
     updateTyPanelState();
@@ -2148,8 +2446,8 @@ function renderLY(){
       const asp=s.wQ>0?fMoney(s.wP/s.wQ):'—';
       const gpPct=s.rv>0?(s.gp/s.rv*100).toFixed(1):null;
       const gpLine=gpPct?` · GP ${fMoney(s.gp)} (${gpPct}%)`:'';
-      return`<button class="cat-card${LY.cat===cat?' on':''}" onclick="LY.cat='${cat.replace(/'/g,"\'")}';renderLY()">`+
-        `<span class="cat-name">${cat}</span>`+
+      return`<button class="cat-card${LY.cat===cat?' on':''}" data-cat="${escapeAttr(cat)}" onclick="LY.cat=this.dataset.cat;renderLY()">`+
+        `<span class="cat-name">${escapeHtml(cat)}</span>`+
         `<span class="cat-stat">${fMoney(s.rv)}${gpLine}</span>`+
         `<span class="cat-stat">${pct}% rev · ${fN(s.u)} units · ${asp} ASP</span></button>`;
     }).join('');
@@ -2174,7 +2472,7 @@ function renderLY(){
     {l:'Total GP LY',v:fMoney(fGP)},
     {l:'GP %',v:fPct(fGPpct)},
     {l:'Units sold LY',v:fN(fU)},
-  ].map(c=>`<div class="card"><label>${c.l}</label><span>${c.v}</span></div>`).join('');
+  ].map(c=>`<div class="card"><label>${escapeHtml(c.l)}</label><span>${c.v}</span></div>`).join('');
 
   const srt=[...filt].sort((a,b)=>{
     const av=a[LY.col]??-Infinity,bv=b[LY.col]??-Infinity;
@@ -2201,7 +2499,7 @@ function renderLY(){
     ${hasSeason?'<th class="c">Season</th>':''}
     ${hasCat&&LY.cat==='All'?lyTh('cat','Category'):''}
     ${lyTh('units','Total units','r')}
-    ${periods.map(lbl=>`<th class="spark-hdr" style="min-width:56px">${lbl}</th>`).join('')}
+    ${periods.map(lbl=>`<th class="spark-hdr" style="min-width:56px">${escapeHtml(lbl)}</th>`).join('')}
     ${lyTh('rev','Net sales','r')}
     ${lyTh('gp','Total GP','r')}
     ${lyTh('gpPct','GP %','r')}
@@ -2215,9 +2513,9 @@ function renderLY(){
     const oR=lyOverallRank[p.name]||0;
     const cR=lyCatRank[p.name]||0;
     const gsLY=oR>0?`<span title="Overall rank #${oR} by net sales LY" style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#B8860B;background:#FFF8DC;border-radius:3px;padding:1px 5px;white-space:nowrap">★ #${oR}</span>`:'';
-    const ssLY=cR>0?`<span title="Category rank #${cR} in ${p.cat||'category'} LY" style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#5A5A7A;background:#EDEDF5;border-radius:3px;padding:1px 5px;white-space:nowrap">✦ #${cR}</span>`:'';
+    const ssLY=cR>0?`<span title="Category rank #${cR} in ${escapeAttr(p.cat||'category')} LY" style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#5A5A7A;background:#EDEDF5;border-radius:3px;padding:1px 5px;white-space:nowrap">✦ #${cR}</span>`:'';
     const rbLY=`<div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:3px">${gsLY}${ssLY}</div>`;
-    const ic=hasImg?`<td style="padding:6px 10px">${p.img?`<img class="thumb" src="${p.img}" onclick="openLb(this)" onerror="this.style.display='none'" alt="">`:' <div class="thumb-e"></div>'}</td>`:'';
+    const safeLyImg=safeImageUrl(p.img),ic=hasImg?`<td style="padding:6px 10px">${safeLyImg?`<img class="thumb" src="${escapeAttr(safeLyImg)}" onclick="openLb(this)" onerror="this.style.display='none'" alt="${escapeAttr(p.name)}">`:' <div class="thumb-e"></div>'}</td>`:'';
     const sc=hasSeason?`<td class="c">${seasonBadge(p.season)}</td>`:'';
     const periodCells=periods.map(lbl=>{
       const u=p.periods[lbl]?.units||0;
@@ -2237,9 +2535,9 @@ function renderLY(){
     html+=`<tr class="${alt}">
       <td style="font-size:11px;color:var(--text3)">${i+1}</td>
       ${ic}
-      <td><div class="pname">${rbLY}${p.name}</div><div class="bw"><div class="bf" style="width:${bw}px"></div></div></td>
+      <td><div class="pname">${rbLY}${escapeHtml(p.name)}</div><div class="bw"><div class="bf" style="width:${bw}px"></div></div></td>
       ${sc}
-      ${hasCat&&LY.cat==='All'?`<td style="font-size:11px;color:var(--text3)">${p.cat||'—'}</td>`:''}
+      ${hasCat&&LY.cat==='All'?`<td style="font-size:11px;color:var(--text3)">${escapeHtml(p.cat||'—')}</td>`:''}
       <td class="r" style="font-weight:500">${fN(p.units)}</td>
       ${periodCells}
       <td class="r" style="font-weight:500">${fMoney(p.rev)}</td>
@@ -2257,8 +2555,10 @@ function renderRA(){
   const r=window._rpt;
   const el=document.getElementById('ra-content');
   if(!r){el.innerHTML='<p style="color:var(--text3);font-size:13px">Generate the TY Bestsellers report first.</p>';return;}
+  const decisionProducts=r.products.filter(isRelevantMainProduct);
 
   const weeksLeft=getWeeksLeft();
+  const grossAvailable=r.grossAvailable!==false;
   const endDateEl=document.getElementById('end-date');
   const endDateVal=endDateEl?endDateEl.value:'2026-09-01';
 
@@ -2272,38 +2572,45 @@ function renderRA(){
   const rosWeeks=raDays/7;
   const nextMonthWks=rosWeeks; // match forecast horizon to last period length
   const followMonthWks=rosWeeks; // same for month 2
+  const horizonDays=Math.round((nextMonthWks+followMonthWks)*7);
+  const salesDisplayMultiplier=reportVatDivisor(r.financialSemantics);
+  const fSales=value=>fMoney(Number(value||0)*salesDisplayMultiplier);
 
   // Category breakdown from last month — use actual period GP not derived
   const catBreak={};
-  r.products.forEach(p=>{
+  decisionProducts.forEach(p=>{
     const cat=p.cat||'Other';
     const pd=p.periods[lastLabel]||{units:0,rev:0,gross:0,gp:0};
-    if(!catBreak[cat])catBreak[cat]={units:0,gross:0,net:0,gp:0};
+    if(!catBreak[cat])catBreak[cat]={units:0,gross:0,net:0,netExVat:0,costedNetExVat:0,gp:0};
     catBreak[cat].units+=pd.units||0;
-    catBreak[cat].gross+=pd.gross||0;
-    catBreak[cat].net+=pd.rev||0;
-    catBreak[cat].gp+=pd.gp||0;  // use actual period GP
+    catBreak[cat].gross+=grossSalesIncVatOf(pd,r.financialSemantics);
+    catBreak[cat].net+=salesIncVatOf(pd,r.financialSemantics);
+    catBreak[cat].netExVat+=salesExVatOf(pd,r.financialSemantics);
+    catBreak[cat].costedNetExVat+=Number(pd.costedRevenueExVat??(pd.gp==null?0:(pd.revenueExVat!=null?Number(pd.revenueExVat):Number(pd.rev||0)/(r.financialSemantics?.salesValuesIncludeVat?1.2:1))));
+    catBreak[cat].gp+=Number(pd.knownGp??pd.gp??0);
   });
   // Cap at 15 categories + Other, matching Bestsellers TY bucketing
-  const allCatsSorted=Object.entries(catBreak).filter(([,v])=>v.gross>0).sort((a,b)=>b[1].gross-a[1].gross);
+  const allCatsSorted=Object.entries(catBreak).filter(([,v])=>v.net!==0||v.units!==0).sort((a,b)=>(grossAvailable?b[1].gross-a[1].gross:b[1].net-a[1].net));
   const top15cats=allCatsSorted.slice(0,15);
   const otherCats=allCatsSorted.slice(15);
   if(otherCats.length){
-    const o=otherCats.reduce((acc,[,v])=>{acc.units+=v.units;acc.gross+=v.gross;acc.net+=v.net;acc.gp+=v.gp;return acc;},{units:0,gross:0,net:0,gp:0});
+    const o=otherCats.reduce((acc,[,v])=>{acc.units+=v.units;acc.gross+=v.gross;acc.net+=v.net;acc.netExVat+=v.netExVat;acc.costedNetExVat+=v.costedNetExVat;acc.gp+=v.gp;return acc;},{units:0,gross:0,net:0,netExVat:0,costedNetExVat:0,gp:0});
     top15cats.push(['Other',o]);
   }
   const catList=top15cats;
   const totalLastGross=catList.reduce((a,[,v])=>a+v.gross,0);
   const totalLastNet=catList.reduce((a,[,v])=>a+v.net,0);
+  const totalLastNetExVat=catList.reduce((a,[,v])=>a+v.netExVat,0);
+  const totalLastCostedNetExVat=catList.reduce((a,[,v])=>a+v.costedNetExVat,0);
   const totalLastUnits=catList.reduce((a,[,v])=>a+v.units,0);
   const totalLastGP=catList.reduce((a,[,v])=>a+v.gp,0);
   // GP% uses net sales as denominator — matches Bestsellers TY calculation
-  const totalLastGPpct=totalLastNet>0?totalLastGP/totalLastNet*100:0;
-  const maxCatGross=catList.length?catList[0][1].gross:1;
+  const totalLastGPpct=totalLastCostedNetExVat>0?totalLastGP/totalLastCostedNetExVat*100:null;
+  const maxCatGross=catList.length?(grossAvailable?catList[0][1].gross:catList[0][1].net):1;
   const catColors=['#4C7EF3','#7B5EA7','#3DAA6E','#E07B39','#D44C4C','#3DAAAA','#9AAA3D','#AA6B3D','#7B3DAA','#3D6BAA','#AA3D7B','#6BAA3D','#AA9A3D','#3DAA9A','#AA3D4C'];
 
   // ── Stock position from inventory ─────────────────────────────────────────
-  const hasStock=(invRows||window._snapshotHasInventory)&&r.products.some(p=>p.stock!=null);
+  const hasStock=(invRows||window._snapshotHasInventory)&&decisionProducts.some(p=>p.stock!=null);
   const stockByCat=window._snapshotStockByCat?{...window._snapshotStockByCat}:{};
   let totalStockUnits=0,totalStockCost=0,totalStockRetail=0;
   if(window._snapshotStockByCat){
@@ -2314,7 +2621,7 @@ function renderRA(){
   } else if(invRows){
     // Build name→category lookup from sales products
     const nameCatLu={};
-    r.products.forEach(p=>{
+    decisionProducts.forEach(p=>{
       if(p.name)nameCatLu[p.name.toLowerCase().trim()]=p.cat||null;
     });
 
@@ -2363,6 +2670,8 @@ function renderRA(){
     });
     window._cachedStockBySeason=Object.keys(stockBySeason).length?stockBySeason:null;
   } // end else (not snapshot)
+  const stockVatDivisor=r.financialSemantics?.retailPricesIncludeVat?1.2:1;
+  const stockCostCoverage=Number(r.financialSemantics?.stockCostCoveragePercent??100);
   // Cache for Stock Position tab
   window._cachedStockByCat=Object.keys(stockByCat).length?stockByCat:null;
   // ── Forecast per product — next month and following month ─────────────────
@@ -2370,42 +2679,13 @@ function renderRA(){
   let m2Rev=0,m2RevNoSO=0,m2Lost=0,m2GrossPotential=0,m2GrossNoSO=0,m2GrossLost=0;
   const stockoutLines=[];
 
-  r.products.forEach(p=>{
-    // ROS: last period if it has sales or no stock; average across selling weeks if has stock but zero last period
-    let lastPd=p.periods[lastLabel]||{units:0,rev:0,gross:0};
-    let pRosWeeks=rosWeeks;
-    const pHasStock=p.stock!=null&&p.stock>0;
-    if(!lastPd.units&&salesFiles.length>1){
-      if(!pHasStock){
-        // Stock = 0: empty weeks were stockouts — use only weeks with sales
-        const sellingFiles=salesFiles.filter(f=>(p.periods[f.label]?.units||0)>0);
-        if(sellingFiles.length>0){
-          const totU=sellingFiles.reduce((a,f)=>a+(p.periods[f.label]?.units||0),0);
-          const totRev=sellingFiles.reduce((a,f)=>a+(p.periods[f.label]?.rev||0),0);
-          const totGross=sellingFiles.reduce((a,f)=>a+(p.periods[f.label]?.gross||0),0);
-          const totWks=sellingFiles.reduce((a,f)=>{
-            const d=f.start&&f.end?Math.max((f.end-f.start)/864e5+1,7):Math.max(f.days||28,7);
-            return a+d/7;
-          },0);
-          lastPd={units:totU/totWks*rosWeeks,rev:totRev/totWks*rosWeeks,gross:totGross/totWks*rosWeeks};
-        }
-      }else{
-        // Has stock: include zero weeks in average (slow demand, not stockout)
-        const totU=salesFiles.reduce((a,f)=>a+(p.periods[f.label]?.units||0),0);
-        const totRev=salesFiles.reduce((a,f)=>a+(p.periods[f.label]?.rev||0),0);
-        const totGross=salesFiles.reduce((a,f)=>a+(p.periods[f.label]?.gross||0),0);
-        const totWks=salesFiles.reduce((a,f)=>{
-          const d=f.start&&f.end?Math.max((f.end-f.start)/864e5+1,7):Math.max(f.days||28,7);
-          return a+d/7;
-        },0);
-        lastPd={units:totU/totWks*rosWeeks,rev:totRev/totWks*rosWeeks,gross:totGross/totWks*rosWeeks};
-      }
-      pRosWeeks=rosWeeks;
-    }
+  decisionProducts.forEach(p=>{
+    const lastPd=p.periods[lastLabel]||{units:0,rev:0,gross:0};
+    const pRosWeeks=rosWeeks;
     const wklyU=pRosWeeks>0?lastPd.units/pRosWeeks:0;  // units/week from last period
-    const wklyRevNet=pRosWeeks>0?lastPd.rev/pRosWeeks:0;
-    const wklyRevGross=pRosWeeks>0?(lastPd.gross||0)/pRosWeeks:0;
-    const wklyRev=wklyRevNet; // forecast uses net revenue (after discounts) to match actual receipts
+    const wklyRevNet=pRosWeeks>0?salesExVatOf(lastPd,r.financialSemantics)/pRosWeeks:0;
+    const wklyRevGross=pRosWeeks>0?grossSalesExVatOf(lastPd,r.financialSemantics)/pRosWeeks:0;
+    const wklyRev=wklyRevNet; // action calculations stay on ex-VAT net revenue
     const grossToNetRatio=(wklyRevNet>0&&isFinite(wklyRevGross/wklyRevNet))?wklyRevGross/wklyRevNet:1;
     const stock=p.stock;
     const totalHorizonWks=nextMonthWks+followMonthWks; // 8 weeks
@@ -2442,8 +2722,8 @@ function renderRA(){
         // Units to buy = demand over 8 weeks minus what you already have
         const demand8wks=Math.ceil(wklyU*totalHorizonWks);
         const forecastBuyUnits=Math.max(0,demand8wks-stock);
-        // Revenue for reorder = units to buy × current avg selling price (net ASP)
-        const netAsp=p.wklyU>0?p.avgRevPerWeek/p.wklyU:0;
+        // Revenue for reorder = units to buy × last-period ex-VAT net ASP.
+        const netAsp=lastPd.units? salesExVatOf(lastPd,r.financialSemantics)/lastPd.units:0;
         const reorderRevenue=forecastBuyUnits*netAsp;
         const reorderCost=forecastBuyUnits*(p.avgCost||0);
         stockoutLines.push({...p,lost:lostTotal,m1Lost:m1LostRev,m2Lost:m2LostRev,
@@ -2479,28 +2759,29 @@ function renderRA(){
 
   // Section 1: Last month summary
   html+=`<div class="ra-section">
-    <h2>Last period: ${lastLabel}</h2>
+    <h2>Last period: ${escapeHtml(lastLabel)}</h2>
     <p class="ra-sub">Revenue and performance summary</p>
     <div class="ra-cards">
-      <div class="ra-card"><label>Gross revenue</label><span>${fMoney(totalLastGross)}</span></div>
-      <div class="ra-card"><label>Net sales</label><span>${fMoney(totalLastNet)}</span></div>
-      <div class="ra-card"><label>Discount</label><span style="color:var(--danger)">${fMoney(totalLastGross-totalLastNet)}</span></div>
+      ${grossAvailable?`<div class="ra-card"><label>Gross before discount inc VAT</label><span>${fMoney(totalLastGross)}</span></div>`:''}
+      <div class="ra-card"><label>Sales inc VAT</label><span>${fMoney(totalLastNet)}</span></div>
+      ${grossAvailable?`<div class="ra-card"><label>Discount inc VAT</label><span style="color:var(--danger)">${fMoney(totalLastGross-totalLastNet)}</span></div>`:''}
       <div class="ra-card"><label>Units sold</label><span>${fN(totalLastUnits)}</span></div>
-      <div class="ra-card"><label>Gross ASP</label><span>${totalLastUnits>0?fMoney(totalLastGross/totalLastUnits):'—'}</span></div>
-      <div class="ra-card"><label>Gross profit</label><span style="color:var(--success)">${fMoney(totalLastGP)}</span></div>
-      <div class="ra-card"><label>GP % (of net)</label><span style="color:var(--success)">${fPct(totalLastGPpct)}</span></div>
+      ${grossAvailable?`<div class="ra-card"><label>Gross ASP inc VAT</label><span>${totalLastUnits>0?fMoney(totalLastGross/totalLastUnits):'—'}</span></div>`:''}
+      <div class="ra-card"><label>Known GP ex VAT</label><span style="color:var(--success)">${fMoney(totalLastGP)}</span></div>
+      <div class="ra-card"><label>Achieved GP % (costed ex-VAT basis)</label><span style="color:var(--success)">${fPct(totalLastGPpct)}</span></div>
     </div>
     <div class="ra-chart-wrap">
-      <div style="font-size:11px;color:var(--text3);margin-bottom:12px;text-transform:uppercase;letter-spacing:.06em">Gross revenue by category — top ${catList.length} categories</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:12px;text-transform:uppercase;letter-spacing:.06em">${grossAvailable?'Gross before discount inc VAT':'Sales inc VAT'} by category — top ${catList.length} categories</div>
       ${catList.map(([cat,v],i)=>{
-        const pct=maxCatGross>0?v.gross/maxCatGross*100:0;
-        const revPct=totalLastGross>0?(v.gross/totalLastGross*100).toFixed(1):0;
-        const gpPct=v.net>0?(v.gp/v.net*100).toFixed(1):null;
+        const barValue=grossAvailable?v.gross:v.net,totalBar=grossAvailable?totalLastGross:totalLastNet;
+        const pct=maxCatGross>0?barValue/maxCatGross*100:0;
+        const revPct=totalBar>0?(barValue/totalBar*100).toFixed(1):0;
+        const gpPct=v.costedNetExVat>0?(v.gp/v.costedNetExVat*100).toFixed(1):null;
         const col=COLORS[i%COLORS.length];
         return`<div class="ra-bar-row">
-          <div class="ra-bar-label" title="${cat}">${cat}</div>
+          <div class="ra-bar-label" title="${escapeAttr(cat)}">${escapeHtml(cat)}</div>
           <div class="ra-bar-track">
-            <div class="ra-bar-fill" style="width:${pct}%;background:${col}">${fMoney(v.gross)} gross · ${fMoney(v.net)} net · ${fN(v.units)} units${gpPct?' · GP '+gpPct+'%':''}</div>
+            <div class="ra-bar-fill" style="width:${pct}%;background:${col}">${grossAvailable?`${fMoney(v.gross)} gross inc VAT · `:''}${fMoney(v.net)} sales inc VAT · ${fN(v.units)} units${gpPct?' · GP ex VAT '+gpPct+'%':''}</div>
           </div>
           <div class="ra-bar-val">${revPct}%</div>
         </div>`;
@@ -2518,14 +2799,15 @@ function renderRA(){
       </div>
       <div class="ra-cards">
         <div class="ra-card"><label>Total units</label><span>${fN(totalStockUnits)}</span></div>
-        <div class="ra-card"><label>Stock at cost</label><span>${fMoney(totalStockCost)}</span></div>
-        <div class="ra-card"><label>Stock at retail</label><span>${fMoney(totalStockRetail)}</span></div>
-        <div class="ra-card"><label>Avg margin on stock</label><span style="color:var(--success)">${totalStockRetail>0?fPct((totalStockRetail-totalStockCost)/totalStockRetail*100):'—'}</span></div>
+        <div class="ra-card"><label>Known stock at cost</label><span>${fMoney(totalStockCost)}</span></div>
+        <div class="ra-card"><label>Stock at retail (inc VAT)</label><span>${fMoney(totalStockRetail)}</span></div>
+        <div class="ra-card"><label>Avg margin on stock (ex VAT)</label><span style="color:var(--success)">${totalStockRetail>0?fPct(((totalStockRetail/stockVatDivisor)-totalStockCost)/(totalStockRetail/stockVatDivisor)*100):'—'}</span></div>
+        ${stockCostCoverage<100?`<div class="ra-card"><label>Stock cost coverage</label><span style="color:var(--warning)">${fPct(stockCostCoverage)}</span></div>`:''}
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:12px">
         ${topCats.map(([cat,v])=>{
           const pct=totalStockRetail>0?v.retail/totalStockRetail*100:0;
-          const margin=v.retail>0?(v.retail-v.cost)/v.retail*100:0;
+          const margin=v.retail>0?((v.retail/stockVatDivisor)-v.cost)/(v.retail/stockVatDivisor)*100:0;
           return`<div style="background:var(--bg2);border-radius:var(--r);padding:12px">
             <div style="font-size:11px;font-weight:600;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${cat}</div>
             <div style="font-size:14px;font-weight:700">${fMoney(v.retail)}</div>
@@ -2544,16 +2826,16 @@ function renderRA(){
     const atRisk=stockoutLines.length;
     html+=`<div class="ra-section">
       <h2>Sales forecast</h2>
-      <p class="ra-sub">Projected net revenue for the next ${Math.round(rosWeeks*7)} days and the ${Math.round(rosWeeks*7)} days after, based on ${lastLabel} net run rate${atRisk>0?' · '+atRisk+' lines will have stock issues':''}</p>
+      <p class="ra-sub">Projected sales inc VAT for the next ${Math.round(rosWeeks*7)} days and the ${Math.round(rosWeeks*7)} days after. Demand, reorder and action calculations use the ${lastLabel} ex-VAT net run rate${atRisk>0?' · '+atRisk+' lines will have stock issues':''}</p>
       <div style="display:flex;gap:12px;margin-bottom:20px;padding:12px 16px;background:var(--bg2);border-radius:var(--r);font-size:12px;flex-wrap:wrap;align-items:center">
         <span style="color:var(--text2)">Sanity check:</span>
-        <span><strong>Last period gross</strong> ${fMoney(totalLastGross)} · <strong>net</strong> ${fMoney(totalLastNet)} over ${rosWeeks.toFixed(1)} wks</span>
+        <span>${grossAvailable?`<strong>Last period gross</strong> ${fMoney(totalLastGross)} · `:''}<strong>net</strong> ${fMoney(totalLastNet)} over ${rosWeeks.toFixed(1)} wks</span>
         <span style="color:var(--text3)">→</span>
-        <span><strong>Weekly rate</strong> ${fMoney(totalLastNet/rosWeeks)}/wk</span>
+        <span><strong>Weekly rate inc VAT</strong> ${fMoney(totalLastNet/rosWeeks)}/wk</span>
         <span style="color:var(--text3)">→</span>
         <span><strong>Next period baseline</strong> ${fMoney(totalLastNet/rosWeeks*rosWeeks)} <span style="color:var(--text3)">(= last period if fully stocked)</span></span>
         <span style="color:var(--text3)">→</span>
-        <span><strong>After stockouts</strong> ${fMoney(m1RevNoSO)} <span style="color:${m1RevNoSO<totalLastNet*0.99?'var(--danger)':'var(--text3)'}">${m1RevNoSO<totalLastNet*0.99?'↓ reduced by stockouts':'≈ no stockouts this period'}</span></span>
+        <span><strong>After stockouts inc VAT</strong> ${fSales(m1RevNoSO)} <span style="color:${m1RevNoSO*salesDisplayMultiplier<totalLastNet*0.99?'var(--danger)':'var(--text3)'}">${m1RevNoSO*salesDisplayMultiplier<totalLastNet*0.99?'↓ reduced by stockouts':'≈ no stockouts this period'}</span></span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
         <div>
@@ -2561,18 +2843,18 @@ function renderRA(){
           <div class="ra-forecast-grid" style="grid-template-columns:1fr 1fr 1fr">
             <div class="ra-fc-card base">
               <label>Potential</label>
-              <div class="big">${fMoney(m1Rev)}</div>
-              <div class="note">Gross ${fMoney(m1GrossPotential)}</div>
+              <div class="big">${fSales(m1Rev)}</div>
+              <div class="note">Gross inc VAT ${fSales(m1GrossPotential)}</div>
             </div>
             <div class="ra-fc-card base">
               <label>Forecast</label>
-              <div class="big">${fMoney(m1RevNoSO)}</div>
-              <div class="note">Gross ${fMoney(m1GrossNoSO)}</div>
+              <div class="big">${fSales(m1RevNoSO)}</div>
+              <div class="note">Gross inc VAT ${fSales(m1GrossNoSO)}</div>
             </div>
             <div class="ra-fc-card lost">
               <label>Lost revenue</label>
-              <div class="big" style="color:var(--danger)">${fMoney(m1Lost)}</div>
-              <div class="note">Gross ${fMoney(m1GrossLost)}</div>
+              <div class="big" style="color:var(--danger)">${fSales(m1Lost)}</div>
+              <div class="note">Gross inc VAT ${fSales(m1GrossLost)}</div>
             </div>
           </div>
         </div>
@@ -2581,18 +2863,18 @@ function renderRA(){
           <div class="ra-forecast-grid" style="grid-template-columns:1fr 1fr 1fr">
             <div class="ra-fc-card base">
               <label>Potential</label>
-              <div class="big">${fMoney(m2Rev)}</div>
-              <div class="note">Gross ${fMoney(m2GrossPotential)}</div>
+              <div class="big">${fSales(m2Rev)}</div>
+              <div class="note">Gross inc VAT ${fSales(m2GrossPotential)}</div>
             </div>
             <div class="ra-fc-card base">
               <label>Forecast</label>
-              <div class="big">${fMoney(m2RevNoSO)}</div>
-              <div class="note">Gross ${fMoney(m2GrossNoSO)}</div>
+              <div class="big">${fSales(m2RevNoSO)}</div>
+              <div class="note">Gross inc VAT ${fSales(m2GrossNoSO)}</div>
             </div>
             <div class="ra-fc-card lost">
               <label>Lost revenue</label>
-              <div class="big" style="color:var(--danger)">${fMoney(m2Lost)}</div>
-              <div class="note">Gross ${fMoney(m2GrossLost)}</div>
+              <div class="big" style="color:var(--danger)">${fSales(m2Lost)}</div>
+              <div class="note">Gross inc VAT ${fSales(m2GrossLost)}</div>
             </div>
           </div>
         </div>
@@ -2600,9 +2882,7 @@ function renderRA(){
       ${(()=>{
         // 14-day (2 period) outlook — use actual computed m1+m2 values directly
         const days14=Math.round(rosWeeks*7)*2;
-        const scale30=30/7;
         const wklyNet=rosWeeks>0?totalLastNet/rosWeeks:0;
-        const wklyGross=rosWeeks>0?totalLastGross/rosWeeks:0;
         // 14-day: use actual m1+m2 computations (already correct with stockouts applied)
         const pot14Net=m1Rev+m2Rev;
         const pot14Gross=m1GrossPotential+m2GrossPotential;
@@ -2610,37 +2890,28 @@ function renderRA(){
         const fore14Gross=m1GrossNoSO+m2GrossNoSO;
         const lost14Net=m1Lost+m2Lost;
         const lost14Gross=m1GrossLost+m2GrossLost;
-        // 30-day: extrapolate from m2 rate (worse period, more stockouts = better forward estimate)
-        const wklyForecast30=rosWeeks>0?m2RevNoSO/rosWeeks:0;
-        const wklyPot30=rosWeeks>0?m2Rev/rosWeeks:0;
-        const pot30Net=Math.round(wklyNet*scale30);  // fully-stocked baseline
-        const fore30Net=Math.min(wklyForecast30*scale30, pot30Net);
-        const lost30Net=Math.max(0,pot30Net-fore30Net);
-        const pot30Gross=Math.round(wklyGross*scale30);
-        const fore30Gross=Math.min((rosWeeks>0?m2GrossNoSO/rosWeeks:0)*scale30, pot30Gross);
-        const lost30Gross=Math.max(0,pot30Gross-fore30Gross);
         return`<div style="margin-bottom:20px;padding:16px 20px;background:var(--bg2);border-radius:var(--rl);border:.5px solid var(--border)">
           <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Next ${days14}-day outlook (2 periods)</div>
           <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Actual computed figures from your stock data</div>
           <div class="ra-forecast-grid" style="grid-template-columns:1fr 1fr 1fr 1fr">
             <div class="ra-fc-card base">
               <label>${days14}-day potential</label>
-              <div class="big">${fMoney(pot14Net)}</div>
-              <div class="note">Gross ${fMoney(pot14Gross)} · fully stocked</div>
+              <div class="big">${fSales(pot14Net)}</div>
+              <div class="note">Gross inc VAT ${fSales(pot14Gross)} · fully stocked</div>
             </div>
             <div class="ra-fc-card base">
               <label>${days14}-day forecast</label>
-              <div class="big">${fMoney(fore14Net)}</div>
-              <div class="note">Gross ${fMoney(fore14Gross)}</div>
+              <div class="big">${fSales(fore14Net)}</div>
+              <div class="note">Gross inc VAT ${fSales(fore14Gross)}</div>
             </div>
             <div class="ra-fc-card${lost14Net>0?' lost':' base'}">
               <label>${days14}-day lost revenue</label>
-              <div class="big" style="color:${lost14Net>0?'var(--danger)':'var(--text)'}">${lost14Net>0?fMoney(lost14Net):'£0'}</div>
-              <div class="note">Gross ${fMoney(lost14Gross)}${lost14Net>0?' · from stockouts':' · no stockouts'}</div>
+              <div class="big" style="color:${lost14Net>0?'var(--danger)':'var(--text)'}">${lost14Net>0?fSales(lost14Net):'£0'}</div>
+              <div class="note">Gross inc VAT ${fSales(lost14Gross)}${lost14Net>0?' · from stockouts':' · no stockouts'}</div>
             </div>
             <div class="ra-fc-card base">
               <label>Weekly run rate</label>
-              <div class="big">${fMoney(wklyNet)}</div>
+              <div class="big">${fSales(wklyNet)}</div>
               <div class="note">Based on ${rosWeeks.toFixed(1)}-wk period</div>
             </div>
           </div>
@@ -2668,9 +2939,9 @@ function renderRA(){
               <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">8wk demand</th>
               <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Buy needed</th>
               <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Cost of reorder</th>
-              <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Reorder revenue</th>
-              <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">M1 lost rev</th>
-              <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">M2 lost rev</th>
+              <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Reorder sales inc VAT</th>
+              <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">M1 lost sales inc VAT</th>
+              <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">M2 lost sales inc VAT</th>
             </tr></thead>
             <tbody id="ro-tbody">
               ${(()=>{
@@ -2681,18 +2952,18 @@ function renderRA(){
                   const cbBorder=sel?'var(--info)':'var(--border2)';
                   const cbBg=sel?'var(--info)':'transparent';
                   const cbTick=sel?'<svg width="10" height="8" viewBox="0 0 10 8"><polyline points="1,4 4,7 9,1" stroke="white" stroke-width="1.8" fill="none"/></svg>':'';
-                  return`<tr data-roname="${p.name.replace(/"/g,'&quot;')}" style="${bg};cursor:pointer" onclick="toggleReorderLine(this)">
+                  return`<tr data-roname="${escapeAttr(p.name)}" style="${bg};cursor:pointer" onclick="toggleReorderLine(this)">
                   <td style="padding:8px 10px;text-align:center;width:36px"><div style="width:16px;height:16px;border-radius:3px;border:1.5px solid ${cbBorder};background:${cbBg};display:inline-flex;align-items:center;justify-content:center">${cbTick}</div></td>
-                  <td style="padding:8px 10px;font-size:12px;font-weight:500">${p.name}</td>
+                  <td style="padding:8px 10px;font-size:12px;font-weight:500">${escapeHtml(p.name)}</td>
                   <td style="padding:8px 10px;font-size:12px;text-align:right;color:var(--text2)">${fN(p.lastPdUnits)} units</td>
                   <td style="padding:8px 10px;font-size:12px;text-align:right;color:var(--text2)">${p.wklyU.toFixed(2)}/wk</td>
                   <td style="padding:8px 10px;font-size:12px;text-align:right">${fN(p.stock)}</td>
                   <td style="padding:8px 10px;font-size:12px;text-align:right;color:var(--text2)">${fN(p.demand8wks)} (${p.wklyU.toFixed(2)}×8)</td>
                   <td style="padding:8px 10px;font-size:12px;text-align:right;color:var(--info);font-weight:600">${fN(p.forecastBuyUnits)}</td>
                   <td style="padding:8px 10px;font-size:12px;text-align:right;color:${p.reorderCost>0?'var(--text)':'var(--text3)'}">${p.reorderCost>0?fMoney(p.reorderCost):'—'}</td>
-                  <td style="padding:8px 10px;font-size:12px;text-align:right;font-weight:500">${fMoney(p.reorderRevenue)}</td>
-                  <td style="padding:8px 10px;font-size:12px;text-align:right;color:var(--danger)">${fMoney(p.m1Lost)}</td>
-                  <td style="padding:8px 10px;font-size:12px;text-align:right;color:var(--warning)">${fMoney(p.m2Lost)}</td>
+                  <td style="padding:8px 10px;font-size:12px;text-align:right;font-weight:500">${fSales(p.reorderRevenue)}</td>
+                  <td style="padding:8px 10px;font-size:12px;text-align:right;color:var(--danger)">${fSales(p.m1Lost)}</td>
+                  <td style="padding:8px 10px;font-size:12px;text-align:right;color:var(--warning)">${fSales(p.m2Lost)}</td>
                 </tr>`;
                 }).join('');
                 const selLines=window._roSelected?visible.filter(p=>window._roSelected.has(p.name)):[];
@@ -2707,9 +2978,9 @@ function renderRA(){
                   <td colspan="4" style="padding:9px 10px;font-size:12px;text-align:right;color:var(--text2)"></td>
                   <td style="padding:9px 10px;font-size:13px;text-align:right;color:var(--info)">${nSel>0?fN(totBuy)+' units':'—'}</td>
                   <td style="padding:9px 10px;font-size:13px;text-align:right;color:${totCost>0?'var(--text)':'var(--text3)'}">${nSel>0&&totCost>0?fMoney(totCost):'—'}</td>
-                  <td style="padding:9px 10px;font-size:13px;text-align:right">${nSel>0?fMoney(totRev):'—'}</td>
-                  <td style="padding:9px 10px;font-size:13px;text-align:right;color:var(--danger)">${nSel>0?fMoney(totM1):'—'}</td>
-                  <td style="padding:9px 10px;font-size:13px;text-align:right;color:var(--warning)">${nSel>0?fMoney(totM2):'—'}</td>
+                  <td style="padding:9px 10px;font-size:13px;text-align:right">${nSel>0?fSales(totRev):'—'}</td>
+                  <td style="padding:9px 10px;font-size:13px;text-align:right;color:var(--danger)">${nSel>0?fSales(totM1):'—'}</td>
+                  <td style="padding:9px 10px;font-size:13px;text-align:right;color:var(--warning)">${nSel>0?fSales(totM2):'—'}</td>
                 </tr>`;
                 return rows+totRow;
               })()}
@@ -2721,7 +2992,7 @@ function renderRA(){
           <span id="ro-export-hint" style="font-size:11px;color:var(--text3)">Click rows to select lines, then export</span>
         </div>
         <p style="font-size:11px;color:var(--text3);margin-top:8px">
-          All forecasts use <strong>net revenue</strong> (after discounts). Buy needed = (${rosWeeks.toFixed(1)}wk + ${rosWeeks.toFixed(1)}wk demand) − current stock, where weekly ROS = last period net units ÷ ${rosWeeks.toFixed(1)} weeks.
+          Forecast, reorder and action calculations use <strong>net sales ex VAT</strong> after discounts; visible sales and lost-sales figures include VAT. Buy needed = (${rosWeeks.toFixed(1)}wk + ${rosWeeks.toFixed(1)}wk demand) − current stock, where weekly ROS = last period net units ÷ ${rosWeeks.toFixed(1)} weeks.
         </p>
       </div>`;
     }
@@ -2730,47 +3001,47 @@ function renderRA(){
     // Section 3: Reorder simulator
     html+=`<div class="ra-section">
       <h2>Reorder simulator</h2>
-      <p class="ra-sub">Enter how many of the top lines (sorted by lost revenue) you want to reorder. The tool assumes you buy enough stock to cover through to ${endDateVal}.</p>
+      <p class="ra-sub">Enter how many of the top lines (sorted by lost revenue) you want to reorder. The buy quantity covers the next two ${Math.round(rosWeeks*7)}-day periods (${horizonDays} days total); supplier lead time is not included.</p>
       <div class="reorder-input-row">
         <label>Number of lines to reorder</label>
         <input type="number" class="num-input" id="ra-ro-input" min="0" max="${stockoutLines.length}" value="${roN}" oninput="renderRA()">
-        <span class="note">of ${stockoutLines.length} lines at risk · max gain ${fMoney(totalLostRev)}</span>
+        <span class="note">of ${stockoutLines.length} lines at risk · max gain ${fSales(totalLostRev)} inc VAT</span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
         <div>
           <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Next ~${Math.round(rosWeeks*7)} days</div>
           <div class="ra-forecast-grid" style="grid-template-columns:1fr 1fr">
-            <div class="ra-fc-card base"><label>Without reorder</label><div class="big">${fMoney(m1RevNoSO)}</div><div class="note">Gross ${fMoney(m1GrossNoSO)}</div></div>
+            <div class="ra-fc-card base"><label>Without reorder</label><div class="big">${fSales(m1RevNoSO)}</div><div class="note">Gross inc VAT ${fSales(m1GrossNoSO)}</div></div>
             <div class="ra-fc-card gain" style="${roN>0?'':' border-color:var(--border)'}">
               <label>With reorder (+${roN} lines)</label>
-              <div class="big" style="color:${roN>0?'var(--success)':'var(--text)'}">${fMoney(forecastWithRoM1)}</div>
-              <div class="note">Gross ${fMoney(m1GrossNoSO+reorderGainM1)}${roN>0?` · +${fMoney(reorderGainM1)} net`:''}</div>
+              <div class="big" style="color:${roN>0?'var(--success)':'var(--text)'}">${fSales(forecastWithRoM1)}</div>
+              <div class="note">Gross inc VAT ${fSales(m1GrossNoSO+reorderGainM1)}${roN>0?` · +${fSales(reorderGainM1)} sales inc VAT`:''}</div>
             </div>
           </div>
         </div>
         <div>
           <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Following ~${Math.round(rosWeeks*7)} days</div>
           <div class="ra-forecast-grid" style="grid-template-columns:1fr 1fr">
-            <div class="ra-fc-card base"><label>Without reorder</label><div class="big">${fMoney(m2RevNoSO)}</div><div class="note">Gross ${fMoney(m2GrossNoSO)}</div></div>
+            <div class="ra-fc-card base"><label>Without reorder</label><div class="big">${fSales(m2RevNoSO)}</div><div class="note">Gross inc VAT ${fSales(m2GrossNoSO)}</div></div>
             <div class="ra-fc-card gain" style="${roN>0?'':' border-color:var(--border)'}">
               <label>With reorder (+${roN} lines)</label>
-              <div class="big" style="color:${roN>0?'var(--success)':'var(--text)'}">${fMoney(forecastWithRoM2)}</div>
-              <div class="note">Gross ${fMoney(m2GrossNoSO+reorderGainM2)}${roN>0?` · +${fMoney(reorderGainM2)} net`:''}</div>
+              <div class="big" style="color:${roN>0?'var(--success)':'var(--text)'}">${fSales(forecastWithRoM2)}</div>
+              <div class="note">Gross inc VAT ${fSales(m2GrossNoSO+reorderGainM2)}${roN>0?` · +${fSales(reorderGainM2)} sales inc VAT`:''}</div>
             </div>
           </div>
         </div>
       </div>
       <div class="impact-grid" style="grid-template-columns:1fr 1fr 1fr">
         <div class="impact-card">
-          <label>Total forecast no reorder (30 days)</label>
-          <div class="big">${fMoney(totalForecastNoRo)}</div>
-          <div class="note" style="margin-top:3px;font-size:11px;color:var(--text2)">Gross ${fMoney(m1GrossNoSO+m2GrossNoSO)}</div>
-          <div class="delta" style="color:var(--danger)">−${fMoney(totalLostRev)} vs potential</div>
+          <label>Total forecast no reorder (${horizonDays} days)</label>
+          <div class="big">${fSales(totalForecastNoRo)}</div>
+          <div class="note" style="margin-top:3px;font-size:11px;color:var(--text2)">Gross inc VAT ${fSales(m1GrossNoSO+m2GrossNoSO)}</div>
+          <div class="delta" style="color:var(--danger)">−${fSales(totalLostRev)} vs potential</div>
         </div>
         <div class="impact-card" style="background:${roN>0?'#f0faf4':'var(--bg2)'};border:${roN>0?'.5px solid #b3dfc3':'none'}">
-          <label>Total with reorder (30 days)</label>
-          <div class="big" style="color:${roN>0?'var(--success)':'var(--text)'}">${fMoney(forecastWithRoM1+forecastWithRoM2)}</div>
-          <div class="note" style="margin-top:3px;font-size:11px;color:var(--text2)">Gross ${fMoney(m1GrossNoSO+m2GrossNoSO+reorderGain)}${roN>0?` · +${fMoney(reorderGain)} net uplift`:''}</div>
+          <label>Total with reorder (${horizonDays} days)</label>
+          <div class="big" style="color:${roN>0?'var(--success)':'var(--text)'}">${fSales(forecastWithRoM1+forecastWithRoM2)}</div>
+          <div class="note" style="margin-top:3px;font-size:11px;color:var(--text2)">Gross inc VAT ${fSales(m1GrossNoSO+m2GrossNoSO+reorderGain)}${roN>0?` · +${fSales(reorderGain)} sales inc VAT`:''}</div>
         </div>
         <div class="impact-card" style="background:${roN>0?'#f0faf4':'var(--bg2)'};border:${roN>0?'.5px solid #b3dfc3':'none'}">
           <label>% of lost revenue recovered</label>
@@ -2797,21 +3068,21 @@ function renderRA(){
               <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:left">Product</th>
               <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Units to buy</th>
               <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Cost of reorder</th>
-              <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Reorder revenue</th>
-              <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Revenue recovered</th>
+              <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Reorder sales inc VAT</th>
+              <th style="padding:8px 10px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Sales recovered inc VAT</th>
             </tr></thead>
             <tbody id="topn-tbody">
               ${(()=>{
                 const rows=topN.map((p,i)=>{
                   const sel=window._roSelected&&window._roSelected.has(p.name);
                   const bg=sel?'rgba(26,95,168,0.08)':i%2===1?'var(--bg2)':'';
-                  return`<tr data-roname="${p.name.replace(/"/g,'&quot;')}" style="background:${bg};cursor:pointer" onclick="toggleReorderLine(this)">
+                  return`<tr data-roname="${escapeAttr(p.name)}" style="background:${bg};cursor:pointer" onclick="toggleReorderLine(this)">
                     <td style="padding:8px 10px;text-align:center"><div style="width:16px;height:16px;border-radius:3px;border:1.5px solid ${sel?'var(--info)':'var(--border2)'};background:${sel?'var(--info)':'transparent'};display:inline-flex;align-items:center;justify-content:center">${sel?'<svg width="10" height="8" viewBox="0 0 10 8"><polyline points="1,4 4,7 9,1" stroke="white" stroke-width="1.8" fill="none"/></svg>':''}</div></td>
-                    <td style="padding:8px 10px;font-size:12px;font-weight:500">${p.name}</td>
+                    <td style="padding:8px 10px;font-size:12px;font-weight:500">${escapeHtml(p.name)}</td>
                     <td style="padding:8px 10px;font-size:12px;text-align:right;color:var(--info);font-weight:500">${fN(p.forecastBuyUnits)}</td>
                     <td style="padding:8px 10px;font-size:12px;text-align:right;color:${p.reorderCost>0?'var(--text)':'var(--text3)'}">${p.reorderCost>0?fMoney(p.reorderCost):'—'}</td>
-                    <td style="padding:8px 10px;font-size:12px;text-align:right;font-weight:500">${fMoney(p.reorderRevenue)}</td>
-                    <td style="padding:8px 10px;font-size:12px;text-align:right;color:var(--success);font-weight:500">+${fMoney(p.lost)}</td>
+                    <td style="padding:8px 10px;font-size:12px;text-align:right;font-weight:500">${fSales(p.reorderRevenue)}</td>
+                    <td style="padding:8px 10px;font-size:12px;text-align:right;color:var(--success);font-weight:500">+${fSales(p.lost)}</td>
                   </tr>`;
                 }).join('');
                 const selLines=window._roSelected?topN.filter(p=>window._roSelected.has(p.name)):[];
@@ -2825,8 +3096,8 @@ function renderRA(){
                   <td style="padding:9px 10px;font-size:12px">${nSel>0?`${nSel} selected`:'Total'}</td>
                   <td style="padding:9px 10px;font-size:13px;text-align:right;color:var(--info)">${fN(totUnits)} units</td>
                   <td style="padding:9px 10px;font-size:13px;text-align:right;color:${totCost>0?'var(--text)':'var(--text3)'}">${totCost>0?fMoney(totCost):'—'}</td>
-                  <td style="padding:9px 10px;font-size:13px;text-align:right">${fMoney(totRev)}</td>
-                  <td style="padding:9px 10px;font-size:13px;text-align:right;color:var(--success)">+${fMoney(totRecovered)}</td>
+                  <td style="padding:9px 10px;font-size:13px;text-align:right">${fSales(totRev)}</td>
+                  <td style="padding:9px 10px;font-size:13px;text-align:right;color:var(--success)">+${fSales(totRecovered)}</td>
                 </tr>`;
                 return rows+totRow;
               })()}
@@ -2838,11 +3109,11 @@ function renderRA(){
 
     // Section 4: New lines simulator
     try{
-      const nlBench=buildNewLineBenchmark(r,lastLabel,rosWeeks);
+      const nlBench=buildNewLineBenchmark({...r,products:decisionProducts},lastLabel,rosWeeks);
       html+=renderNewLinesSection(nlBench,roN,reorderGain,reorderGainM1,reorderGainM2,m1RevNoSO,m2RevNoSO,totalLastNet,totalLastGP,lastLabel,m1GrossNoSO,m2GrossNoSO);
     }catch(e){
       console.error('New lines section error:',e);
-      html+=`<div class="ra-section"><p style="color:var(--danger);font-size:12px">New lines simulator error: ${e.message}</p></div>`;
+      html+=`<div class="ra-section"><p style="color:var(--danger);font-size:12px">New lines simulator error: ${escapeHtml(e.message)}</p></div>`;
     }
 
   }else{
@@ -2851,6 +3122,11 @@ function renderRA(){
     </div>`;
   }
 
+  if(!grossAvailable){
+    const wrapper=document.createElement('div');wrapper.innerHTML=html;
+    wrapper.querySelectorAll('.note').forEach(note=>{if(/^Gross\b/i.test(note.textContent.trim()))note.remove();});
+    html=wrapper.innerHTML;
+  }
   document.getElementById('ra-content').innerHTML=html;
   document.getElementById('ra-sub').textContent=
     'Based on '+lastLabel+' ('+rosWeeks.toFixed(1)+' weeks) · '
@@ -2869,7 +3145,9 @@ function buildNewLineBenchmark(r, lastLabel, rosWeeks){
     const selling=lines.filter(p=>(p.periods[lastLabel]?.units||0)>=1);
     if(!selling.length)return;
     const totNet=selling.reduce((a,p)=>a+(p.periods[lastLabel]?.rev||0),0);
-    const totGP=selling.reduce((a,p)=>a+(p.periods[lastLabel]?.gp||0),0);
+    const costedSelling=selling.filter(p=>Number(p.periods[lastLabel]?.costedRevenueExVat??(p.periods[lastLabel]?.gp==null?0:p.periods[lastLabel]?.revenueExVat||0))>0);
+    const totGP=costedSelling.reduce((a,p)=>a+Number(p.periods[lastLabel]?.knownGp??p.periods[lastLabel]?.gp??0),0);
+    const totCostedNetExVat=costedSelling.reduce((a,p)=>a+Number(p.periods[lastLabel]?.costedRevenueExVat??p.periods[lastLabel]?.revenueExVat??0),0);
     const totUnits=selling.reduce((a,p)=>a+(p.periods[lastLabel]?.units||0),0);
     const totGross=selling.reduce((a,p)=>a+(p.periods[lastLabel]?.gross||0),0);
     // Cost and RRP from product data
@@ -2897,11 +3175,11 @@ function buildNewLineBenchmark(r, lastLabel, rosWeeks){
     bySeason[s]={
       totalLines:lines.length, sellingLines:selling.length,
       avgNetPerLine:totNet/selling.length,
-      avgGPPerLine:totGP/selling.length,
+      avgGPPerLine:costedSelling.length?totGP/costedSelling.length:0,
       avgUnitsPerLine,
-      gpPct:totNet>0?totGP/totNet*100:0,
+      gpPct:totCostedNetExVat>0?totGP/totCostedNetExVat*100:null,
       avgCostPerLine, avgRRP, estUnitsPerNewLine, estCostPerNewLine,
-      totNet, totGP, totGross,
+      totNet, totGP, totGross, costedSellingLines:costedSelling.length,
       catList
     };
   });
@@ -2940,20 +3218,20 @@ function renderNewLinesSection(bench,roN,roGain,roGainM1,roGainM2,m1NoSO,m2NoSO,
   const hybridGrossTotal=baseGross+roGain+(nlGrossM1+nlGrossM2);
 
   const seasonBtns=bench.seasons.map(s=>
-    `<button class="nl-season-btn${s===activeSeason?' on':''}" onclick="document.getElementById('ra-nl-season').value='${s}';renderRA()">${s}</button>`
+    `<button class="nl-season-btn${s===activeSeason?' on':''}" type="button" data-season="${escapeAttr(s)}" onclick="document.getElementById('ra-nl-season').value=this.dataset.season;renderRA()">${escapeHtml(s)}</button>`
   ).join('');
 
   // Benchmark info box
   let benchInfo='';
   if(bm){
     benchInfo=`<div class="nl-benchmark-box">
-      <h4>📊 How this estimate works — ${activeSeason} benchmark</h4>
+      <h4>📊 How this estimate works — ${escapeHtml(activeSeason)} benchmark</h4>
       <p style="font-size:12px;color:var(--text2);line-height:1.7;margin-bottom:14px">
-        We look at all <strong>${activeSeason} lines that sold at least 1 unit</strong> in ${lastLabel||'last period'} 
+        We look at all <strong>${escapeHtml(activeSeason)} lines that sold at least 1 unit</strong> in ${escapeHtml(lastLabel||'last period')}
         (<strong>${bm.sellingLines} of ${bm.totalLines} lines</strong> qualify — zero-sellers are excluded so dead stock doesn't drag the average down).
         Each new line you add is assumed to perform at this average from day one.
         This is a best-case estimate — new lines typically take 2–4 weeks to build traction.
-        The buy quantity assumes <strong>${bm.estUnitsPerNewLine} units per new line</strong> (2 periods of cover at the average ${activeSeason} ROS).
+        The buy quantity assumes <strong>${bm.estUnitsPerNewLine} units per new line</strong> (2 periods of cover at the average ${escapeHtml(activeSeason)} ROS).
       </p>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:12px">
         <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">Selling lines</div><div style="font-size:16px;font-weight:600">${bm.sellingLines} / ${bm.totalLines}</div></div>
@@ -2967,7 +3245,7 @@ function renderNewLinesSection(bench,roN,roGain,roGainM1,roGainM2,m1NoSO,m2NoSO,
       </div>
     </div>`;
   }else{
-    benchInfo=`<div class="nl-benchmark-box"><p style="color:var(--text3)">No ${activeSeason} lines with sales found in last period. Try a different season.</p></div>`;
+    benchInfo=`<div class="nl-benchmark-box"><p style="color:var(--text3)">No ${escapeHtml(activeSeason)} lines with sales found in last period. Try a different season.</p></div>`;
   }
 
   // Category allocation table
@@ -2976,14 +3254,14 @@ function renderNewLinesSection(bench,roN,roGain,roGainM1,roGainM2,m1NoSO,m2NoSO,
     const totSellingLines=bm.sellingLines;
     catAllocHtml=`<div style="margin-bottom:20px">
       <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Suggested category split for ${nlN} new lines</div>
-      <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Based on the revenue weighting of existing ${activeSeason} lines. Categories with higher sales get a proportionally larger allocation.</p>
+      <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Based on the revenue weighting of existing ${escapeHtml(activeSeason)} lines. Categories with higher sales get a proportionally larger allocation.</p>
       <div class="impact-table-wrap">
         <table style="width:100%;border-collapse:collapse">
           <thead><tr style="background:var(--bg2)">
             <th style="padding:8px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:left">Category</th>
-            <th style="padding:8px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Existing ${activeSeason} lines</th>
-            <th style="padding:8px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">${activeSeason} units sold</th>
-            <th style="padding:8px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">${activeSeason} units remaining</th>
+            <th style="padding:8px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Existing ${escapeHtml(activeSeason)} lines</th>
+            <th style="padding:8px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">${escapeHtml(activeSeason)} units sold</th>
+            <th style="padding:8px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">${escapeHtml(activeSeason)} units remaining</th>
             <th style="padding:8px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Revenue share</th>
             <th style="padding:8px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Suggested new lines</th>
             <th style="padding:8px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Est. M1 revenue</th>
@@ -2993,19 +3271,16 @@ function renderNewLinesSection(bench,roN,roGain,roGainM1,roGainM2,m1NoSO,m2NoSO,
           <tbody>
             ${(()=>{
               const totRevAll=bm.catList.reduce((a,[,v])=>a+v.rev,0);
-              let allocLeft=nlN;
+              const allocations=largestRemainderAllocation(bm.catList,nlN,([,value])=>value.rev);
               const rows=bm.catList.map(([cat,v],i)=>{
                 const revShare=totRevAll>0?v.rev/totRevAll:0;
-                // Allocate proportionally, ensuring at least 1 for any cat with >5% share, and total adds up
-                const rawAlloc=nlN*revShare;
-                const alloc=i===bm.catList.length-1?allocLeft:Math.round(rawAlloc);
-                allocLeft-=(i===bm.catList.length-1?0:alloc);
+                const alloc=allocations[i]||0;
                 const avgNetPerLineInCat=v.lines>0?v.rev/v.lines:bm.avgNetPerLine;
                 const estM1=alloc*avgNetPerLineInCat;
                 const estM2=alloc*avgNetPerLineInCat;
                 const estCost=bm.estCostPerNewLine?alloc*bm.estCostPerNewLine:null;
                 return`<tr style="${i%2===1?'background:var(--bg2)':''}">
-                  <td style="padding:8px 12px;font-size:13px;font-weight:500">${cat}</td>
+                  <td style="padding:8px 12px;font-size:13px;font-weight:500">${escapeHtml(cat)}</td>
                   <td style="padding:8px 12px;font-size:12px;text-align:right;color:var(--text2)">${v.lines}</td>
                   <td style="padding:8px 12px;font-size:12px;text-align:right;font-weight:500">${fN(v.units)}</td>
                   <td style="padding:8px 12px;font-size:12px;text-align:right;font-weight:500;color:${v.stock>0?'var(--text)':'var(--text3)'}">${v.stock>0?fN(v.stock):'—'}</td>
@@ -3016,11 +3291,6 @@ function renderNewLinesSection(bench,roN,roGain,roGainM1,roGainM2,m1NoSO,m2NoSO,
                   ${bm.estCostPerNewLine?`<td style="padding:8px 12px;font-size:12px;text-align:right">${fMoney(estCost)}</td>`:''}
                 </tr>`;
               }).join('');
-              const totAlloc=bm.catList.reduce((_,__,i)=>{
-                const v=bm.catList[i][1];
-                const revShare=bm.catList.reduce((a,[,v])=>a+v.rev,0)>0?v.rev/bm.catList.reduce((a,[,v])=>a+v.rev,0):0;
-                return _+Math.round(nlN*revShare);
-              },0);
               return rows;
             })()}
             <tr style="border-top:.5px solid var(--border2);font-weight:600;background:var(--bg2)">
@@ -3058,12 +3328,12 @@ function renderNewLinesSection(bench,roN,roGain,roGainM1,roGainM2,m1NoSO,m2NoSO,
 
   return`<div class="ra-section" style="padding-top:24px;border-top:.5px solid var(--border);margin-top:8px">
     <h2>New lines simulator</h2>
-    <p class="ra-sub">Estimate the spend, revenue and GP impact of adding new ${activeSeason} lines. Category split is based on the revenue weighting of existing ${activeSeason} lines.</p>
+    <p class="ra-sub">Estimate the spend, revenue and GP impact of adding new ${escapeHtml(activeSeason)} lines. Category split is based on the revenue weighting of existing ${escapeHtml(activeSeason)} lines.</p>
 
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
       <span style="font-size:12px;color:var(--text2);font-weight:500">Benchmark season:</span>
       ${seasonBtns}
-      <input type="hidden" id="ra-nl-season" value="${activeSeason}">
+      <input type="hidden" id="ra-nl-season" value="${escapeAttr(activeSeason)}">
     </div>
 
     ${benchInfo}
@@ -3149,7 +3419,7 @@ function renderNewLinesSection(bench,roN,roGain,roGainM1,roGainM2,m1NoSO,m2NoSO,
     </div>
 
     <div style="font-size:11px;color:var(--text3);padding:12px 14px;background:var(--bg2);border-radius:var(--r);line-height:1.7">
-      ⚠ <strong>Important caveat:</strong> Estimates use ${activeSeason} lines with ≥1 unit sold in ${lastLabel||'last period'} as the benchmark.
+      ⚠ <strong>Important caveat:</strong> Estimates use ${escapeHtml(activeSeason)} lines with ≥1 unit sold in ${escapeHtml(lastLabel||'last period')} as the benchmark.
       New lines are assumed to sell at the category average from day one — real performance typically ramps over 2–4 weeks.
       Buy quantities assume ${bm?bm.estUnitsPerNewLine+' units per line (2 periods of cover at the average ROS)':'2 periods of cover'}.
       Use this as directional guidance for your open-to-buy decisions, not a guarantee.
@@ -3185,17 +3455,17 @@ function renderLYGrid(r, filt){
   gc.style.display='block';
 
   const navHtml='<div class="cat-nav">'+cats.map(cat=>
-    `<button class="cat-nav-btn${LY.cat===cat?' on':''}" data-cat="${cat}" onclick="LY.cat=this.dataset.cat;renderLY()">${cat}</button>`
+    `<button class="cat-nav-btn${LY.cat===cat?' on':''}" data-cat="${escapeAttr(cat)}" onclick="LY.cat=this.dataset.cat;renderLY()">${escapeHtml(cat)}</button>`
   ).join('')+'</div>';
 
-  const headHtml=`<div class="cat-heading">${LY.cat==='All'?'All products':LY.cat}</div>`+
+  const headHtml=`<div class="cat-heading">${escapeHtml(LY.cat==='All'?'All products':LY.cat)}</div>`+
     `<div class="cat-meta">${filtered.length} products · ${fMoney(totRevCat)} net sales · ${fMoney(totGPCat)} gross profit</div>`;
 
   let cardsHtml='<div class="prod-grid">';
   filtered.forEach((p,i)=>{
     const gpBarW=p.gpPct>0?Math.min(p.gpPct/maxGPPct*100,100):0;
-    const imgEl=p.img
-      ?`<img class="prod-card-img" src="${p.img}" alt="" onclick="openLb(this)" onerror="this.outerHTML='<div class=prod-card-img-placeholder>·</div>'">`
+    const safeGridImg=safeImageUrl(p.img),imgEl=safeGridImg
+      ?`<img class="prod-card-img" src="${escapeAttr(safeGridImg)}" alt="${escapeAttr(p.name)}" onclick="openLb(this)" onerror="this.outerHTML='<div class=prod-card-img-placeholder>·</div>'">`
       :`<div class="prod-card-img-placeholder">·</div>`;
 
     const monthBars=r.allPeriodLabels.map(lbl=>{
@@ -3206,7 +3476,7 @@ function renderLYGrid(r, filt){
       const maxU=Math.max(...filtered.map(x=>x.periods[lbl]?.units||0),1);
       const bh=u>0?Math.max(Math.round(u/maxU*20),2):1;
       return`<div style="text-align:center;flex:1;min-width:0">
-        <div style="font-size:9px;color:var(--text3);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lbl}</div>
+        <div style="font-size:9px;color:var(--text3);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(lbl)}</div>
         <div style="height:20px;display:flex;align-items:flex-end;justify-content:center;margin-bottom:1px">
           <div style="width:14px;height:${bh}px;background:${u>0?'var(--text2)':'var(--border)'};border-radius:1px 1px 0 0;opacity:${u>0?0.6:0.3}"></div>
         </div>
@@ -3220,7 +3490,7 @@ function renderLYGrid(r, filt){
       <div class="prod-rank">${i+1}</div>
       ${p.season?`<div class="prod-season">${seasonBadge(p.season)}</div>`:''}
       <div class="prod-card-body">
-        <div class="prod-card-name">${p.name}</div>
+        <div class="prod-card-name">${escapeHtml(p.name)}</div>
         <div class="prod-card-stats">
           <div><div class="pcs-label">Net sales</div><div class="pcs-val">${fMoney(p.rev)}</div></div>
           <div><div class="pcs-label">Gross profit</div><div class="pcs-val" style="color:var(--success)">${fMoney(p.gp)}</div></div>
@@ -3253,10 +3523,10 @@ function openStockCatMap(){
   const rows=document.getElementById('cat-map-rows');
   rows.innerHTML=allCats.map(cat=>`
     <div class="cat-map-row">
-      <span style="font-size:13px">${cat}</span>
-      <select class="cat-map-sel" data-cat="${cat.replace(/"/g,'&quot;')}">
+      <span style="font-size:13px">${escapeHtml(cat)}</span>
+      <select class="cat-map-sel" data-cat="${escapeAttr(cat)}">
         <option value="">— keep as-is —</option>
-        ${CAT_GROUPS.map(g=>`<option value="${g}"${catMap[cat]===g?' selected':''}>${g}</option>`).join('')}
+        ${CAT_GROUPS.map(g=>`<option value="${escapeAttr(g)}"${catMap[cat]===g?' selected':''}>${escapeHtml(g)}</option>`).join('')}
       </select>
     </div>`).join('');
   document.getElementById('cat-map-active').checked=catMapActive;
@@ -3372,6 +3642,8 @@ function renderStockPanel(){
   const stockCatList=Object.entries(stockByCat).filter(([,v])=>v.units>0).sort((a,b)=>b[1].retail-a[1].retail);
   let totalStockUnits=0,totalStockCost=0,totalStockRetail=0;
   Object.values(stockByCat).forEach(v=>{totalStockUnits+=v.units||0;totalStockCost+=v.cost||0;totalStockRetail+=v.retail||0;});
+  const stockVatDivisor=r.financialSemantics?.retailPricesIncludeVat?1.2:1;
+  const stockCostCoverage=Number(r.financialSemantics?.stockCostCoveragePercent??100);
 
   // Compute weekly units sold per effective category from _rpt products
   const catWklyUnits={};
@@ -3394,14 +3666,15 @@ function renderStockPanel(){
       const active=stockSeasonFilter===season;
       const isGroup=season==='SS'||season==='AW';
       const label=season==='SS'?'All SS':season==='AW'?'All AW':season==='All'?'All seasons':season;
-      return`<button data-sf="${season}" onclick="stockSeasonFilter=this.dataset.sf;renderStockPanel()" style="padding:5px 12px;border-radius:20px;border:.5px solid ${active?'var(--info)':'var(--border2)'};background:${active?'var(--info)':isGroup?'var(--bg3)':'var(--bg2)'};color:${active?'#fff':isGroup?'var(--text)':'var(--text2)'};font-size:11px;font-weight:${isGroup?'600':'400'};cursor:pointer;white-space:nowrap">${label}</button>`;
+      return`<button data-sf="${escapeAttr(season)}" onclick="stockSeasonFilter=this.dataset.sf;renderStockPanel()" style="padding:5px 12px;border-radius:20px;border:.5px solid ${active?'var(--info)':'var(--border2)'};background:${active?'var(--info)':isGroup?'var(--bg3)':'var(--bg2)'};color:${active?'#fff':isGroup?'var(--text)':'var(--text2)'};font-size:11px;font-weight:${isGroup?'600':'400'};cursor:pointer;white-space:nowrap">${escapeHtml(label)}</button>`;
     }).join('')}
   </div>`:''}
   <div class="ra-cards" style="margin-bottom:24px">
     <div class="ra-card"><label>Total units</label><span>${fN(totalStockUnits)}</span></div>
-    <div class="ra-card"><label>Stock at cost</label><span>${fMoney(totalStockCost)}</span></div>
-    <div class="ra-card"><label>Stock at retail</label><span>${fMoney(totalStockRetail)}</span></div>
-    <div class="ra-card"><label>Avg margin on stock</label><span style="color:var(--success)">${totalStockRetail>0?fPct((totalStockRetail-totalStockCost)/totalStockRetail*100):'—'}</span></div>
+    <div class="ra-card"><label>Known stock at cost</label><span>${fMoney(totalStockCost)}</span></div>
+    <div class="ra-card"><label>Stock at retail (inc VAT)</label><span>${fMoney(totalStockRetail)}</span></div>
+    <div class="ra-card"><label>Avg margin on stock (ex VAT)</label><span style="color:var(--success)">${totalStockRetail>0?fPct(((totalStockRetail/stockVatDivisor)-totalStockCost)/(totalStockRetail/stockVatDivisor)*100):'—'}</span></div>
+    ${stockCostCoverage<100?`<div class="ra-card"><label>Stock cost coverage</label><span style="color:var(--warning)">${fPct(stockCostCoverage)}</span></div>`:''}
     ${totalWklyUnits>0?`<div class="ra-card"><label>Total wkly ROS</label><span>${totalWklyUnits.toFixed(1)} units/wk</span></div>`:''}
     ${totalWklyUnits>0?`<div class="ra-card"><label>Total cover</label><span style="color:${totalStockUnits/totalWklyUnits<4?'var(--danger)':'var(--success)'}">${(totalStockUnits/totalWklyUnits).toFixed(1)} wks</span></div>`:''}
   </div>
@@ -3421,14 +3694,14 @@ function renderStockPanel(){
       </tr></thead>
       <tbody>
         ${stockCatList.map(([cat,v],i)=>{
-          const margin=v.retail>0?(v.retail-v.cost)/v.retail*100:0;
+          const margin=v.retail>0?((v.retail/stockVatDivisor)-v.cost)/(v.retail/stockVatDivisor)*100:0;
           const pctRetail=totalStockRetail>0?v.retail/totalStockRetail*100:0;
           const barW=Math.round(v.retail/maxRetail*100);
           const wklyU=catWklyUnits[cat]||0;
           const cover=wklyU>0?v.units/wklyU:null;
           const coverCol=cover==null?'var(--text3)':cover<4?'var(--danger)':cover<12?'var(--warning)':'var(--success)';
           return`<tr style="${i%2===1?'background:var(--bg2)':''}">
-            <td style="padding:9px 12px;font-size:13px;font-weight:500">${cat}</td>
+            <td style="padding:9px 12px;font-size:13px;font-weight:500">${escapeHtml(cat)}</td>
             <td style="padding:9px 12px;min-width:100px">
               <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
                 <div style="height:100%;width:${barW}%;background:var(--info);border-radius:3px;opacity:.7"></div>
@@ -3451,7 +3724,7 @@ function renderStockPanel(){
           <td style="padding:9px 12px;font-size:13px;text-align:right;font-weight:500;color:var(--success)">${totalWklyUnits>0?(totalStockUnits/totalWklyUnits).toFixed(1)+' wks':'—'}</td>
           <td style="padding:9px 12px;font-size:13px;text-align:right">${fMoney(totalStockCost)}</td>
           <td style="padding:9px 12px;font-size:13px;text-align:right">${fMoney(totalStockRetail)}</td>
-          <td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--success)">${totalStockRetail>0?fPct((totalStockRetail-totalStockCost)/totalStockRetail*100):'—'}</td>
+          <td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--success)">${totalStockRetail>0?fPct(((totalStockRetail/stockVatDivisor)-totalStockCost)/(totalStockRetail/stockVatDivisor)*100):'—'}</td>
           <td style="padding:9px 12px;font-size:13px;text-align:right">100%</td>
         </tr>
       </tbody>
@@ -4945,9 +5218,9 @@ function renderMeth(){
 
   ${sec('Rate of sale (ROS)','The single most important input — everything else derives from it.',`
     ${row('Which period is used',
-      '<strong>Always the most recently loaded period only</strong> — not an average across all loaded history.',
-      'Deliberate design choice. Averaging across long ranges distorts seasonal products (AW lines look slow in spring data) and new arrivals (diluted by weeks before they existed).')}
-    ${formula('Weekly ROS = units sold in last period ÷ period length in weeks')}
+      '<strong>The active loaded range</strong>. Loading two weeks calculates a two-week weekly average; narrowing the date pills recalculates it for that selection.',
+      'Weekly Actions can still use the latest completed week for short-term decision prompts, but the main table always reconciles to the range shown.')}
+    ${formula('Weekly ROS = net units sold in active range ÷ active range length in weeks')}
     ${row('Period length',
       'Calculated from the start and end dates in the filename. Example: "2026-04-01_-_2026-04-30" = 30 days = 4.286 weeks.',
       'Minimum of 7 days is enforced to prevent division errors if filename dates are missing or identical.')}
@@ -4956,14 +5229,17 @@ function renderMeth(){
   `)}
 
   ${sec('Sales on Bestsellers TY table','Columns and calculations on the main product table.',`
+    ${row('Demand card', 'Shopify product sales including VAT, after discounts and before returns. It uses the same ShopifyQL formula as the P&L Planner.', 'This is a loaded-range trading total rather than a product/category-filtered subtotal.')}
+    ${row('Despatch card', 'ShopifyQL total sales for the loaded range, matching the P&L Planner Despatch definition.', 'This is a loaded-range trading total rather than a product/category-filtered subtotal.')}
     ${row('Units', 'Total units sold across all loaded periods.', '')}
     ${row('Monthly columns', 'Units sold in each period. Bars scale against the best-selling product in that period. The bar is green for the top product, grey for others, faded for zero sales.', '')}
-    ${row('Avg price (ASP)', 'Gross sales ÷ units sold across all periods. Uses gross (before discounts) to reflect the actual selling price, not the discounted receipt.', '')}
-    ${row('Net sales', 'Total net revenue across all periods (after discounts and returns).', '')}
-    ${row('Total GP', 'Gross profit taken directly from the "Gross profit" column in the Shopify report. Not derived from cost prices.', '')}
+    ${row('Avg price (ASP)', 'Visible sales inc VAT ÷ net items sold across the active range.', '')}
+    ${row('Gross sales', 'Shopify gross sales before discounts and returns, displayed including VAT.', '')}
+    ${row('Sales', 'Shopify sales after discounts and sales reversals for the selected dates, displayed including VAT.', '')}
+    ${row('Total GP', 'Shopify gross profit: net sales ex VAT minus Shopify cost of goods sold for the selected dates.', '')}
     ${row('GP / unit', 'Total GP ÷ total units sold.', '')}
-    ${row('GP %', 'Total GP ÷ Net sales. Uses net sales as the denominator — this matches how Shopify calculates gross margin in its own reports.', '')}
-    ${row('Sales / wk', 'Net revenue in last period ÷ period length in weeks. Based on last period only — see Rate of sale above.', '')}
+    ${row('GP %', 'Achieved GP ÷ costed net sales ex VAT. VAT-inclusive display sales are never used as the margin denominator.', '')}
+    ${row('Sales / wk', 'Visible sales inc VAT in the active loaded range ÷ active range length in weeks.', '')}
     ${row('Stock', 'Current units available from the inventory snapshot, summed across all locations.', '')}
     ${row('Cover wks', 'Current stock ÷ weekly ROS. Colour coded: red = under 4 weeks, amber = will run out before season end, green = covered.',
       'Season end date is set by the date picker in the controls bar. Changing it recalculates cover and forecast buy instantly.')}
@@ -4971,8 +5247,8 @@ function renderMeth(){
   `)}
 
   ${sec('GP% — why it may differ between views','A common source of confusion.',`
-    ${row('Formula used everywhere', '<strong>GP% = Gross profit ÷ Net sales</strong>', 'Net sales = gross sales minus discounts and returns. Matches Shopify\'s own gross margin calculation.')}
-    ${row('Stock margin (stock position table in Revenue Analysis)', '<strong>Margin% = (retail value − cost value) ÷ retail value</strong>', 'Different calculation — this is the potential margin on stock held, not the achieved GP on what has been sold.')}
+    ${row('Formula used everywhere', '<strong>GP% = Gross profit ÷ costed net sales ex VAT</strong>', 'Visible sales figures include VAT; achieved GP and GP% remain ex-VAT calculations, matching New In and P&L.')}
+    ${row('Stock margin (stock position table in Revenue Analysis)', '<strong>Margin% = (retail value ex VAT − cost value) ÷ retail value ex VAT</strong>', 'Different calculation — this is the potential margin on stock held, not the achieved GP on what has been sold.')}
     ${info('If GP% looks different between Bestsellers TY and Revenue Analysis, check whether you are comparing the same period. Revenue Analysis uses last period only; Bestsellers TY shows the total across all loaded periods.')}
   `)}
 
@@ -4984,7 +5260,7 @@ function renderMeth(){
     ${formula('M1 forecast  = weekly ROS × min(weeks of stock remaining, period weeks)')}
     ${formula('M1 lost rev  = M1 potential − M1 forecast')}
     ${formula('M2 uses stock remaining after M1 depletion')}
-    ${row('Revenue basis', 'All forecasts use <strong>net revenue</strong> after discounts, matching your actual receipts. Gross is shown separately for reference.', '')}
+    ${row('Revenue basis', 'Forecast, reorder and action calculations use <strong>net revenue ex VAT</strong> after discounts. All visible forecast and lost-sales values include VAT; gross-before-discount sales are shown separately.', '')}
     ${row('Stockout detection', 'A line is flagged if stock will run out before the end of the 2-period window.', '')}
     ${ok('Sanity check: if Potential = last period net sales, your ROS calculation is correct. If Potential is significantly higher or lower, check the period length being used (shown in the subtitle).')}
   `)}
@@ -4996,7 +5272,7 @@ function renderMeth(){
       'Not the same as highest ROS — a high-ROS line with plenty of stock won\'t appear. A moderate-ROS line with zero stock and 8 weeks left will rank high.')}
     ${formula('Units to buy = ceil(weekly ROS × 2 periods) − current stock')}
     ${formula('Cost of reorder = units to buy × cost price  (from Inventory Items / Cost in the snapshot)')}
-    ${formula('Reorder revenue = units to buy × net ASP  (last period net rev ÷ units for that line)')}
+    ${formula('Reorder revenue ex VAT (calculation) = units to buy × ex-VAT net ASP; the visible reorder-sales value includes VAT')}
     ${row('Cost matching',
       'Cost price is looked up by product name against "Products / Name" in the inventory snapshot.',
       'If cost shows "—" the product name in the sales report doesn\'t exactly match the inventory. Check for trailing spaces or capitalisation differences.')}
@@ -5102,12 +5378,13 @@ function _updateReorderTable(){
     const cells=totRow.querySelectorAll('td');
     const fN=v=>Math.round(v||0).toLocaleString();
     const fM=v=>SYM+Math.round(Math.abs(v||0)).toLocaleString();
+    const fMSales=v=>fM(Number(v||0)*reportVatDivisor(window._rpt?.financialSemantics||{}));
     if(cells[0])cells[0].textContent=nSel>0?`Selected ${nSel} line${nSel>1?'s':''}`:(window._lastStockoutLines||[]).slice(0,50).length+' lines total';
     if(cells[5])cells[5].textContent=nSel>0?fN(totBuy)+' units':'—';
     if(cells[6])cells[6].textContent=nSel>0&&totCost>0?fM(totCost):'—';
-    if(cells[7])cells[7].textContent=nSel>0?fM(totRev):'—';
-    if(cells[8])cells[8].textContent=nSel>0?fM(totM1):'—';
-    if(cells[9])cells[9].textContent=nSel>0?fM(totM2):'—';
+    if(cells[7])cells[7].textContent=nSel>0?fMSales(totRev):'—';
+    if(cells[8])cells[8].textContent=nSel>0?fMSales(totM1):'—';
+    if(cells[9])cells[9].textContent=nSel>0?fMSales(totM2):'—';
   }
   // Update topn-tbody (compact table) with same selection state
   const topnRows=document.querySelectorAll('#topn-tbody tr[data-roname]');
@@ -5127,6 +5404,7 @@ function _updateReorderTable(){
   if(topnTotRow){
     const cells=topnTotRow.querySelectorAll('td');
     const fM=v=>SYM+Math.round(Math.abs(v||0)).toLocaleString();
+    const fMSales=v=>fM(Number(v||0)*reportVatDivisor(window._rpt?.financialSemantics||{}));
     const fN2=v=>Math.round(v||0).toLocaleString();
     const useTopN=topnNSel===0;
     const roInput2=document.getElementById('ra-ro-input');
@@ -5139,8 +5417,8 @@ function _updateReorderTable(){
     if(cells[1])cells[1].textContent=topnNSel>0?`${topnNSel} selected`:'Total';
     if(cells[2])cells[2].textContent=fN2(dispBuy)+' units';
     if(cells[3])cells[3].textContent=dispCost>0?fM(dispCost):'—';
-    if(cells[4])cells[4].textContent=fM(dispRev);
-    if(cells[5])cells[5].textContent='+'+fM(dispRec);
+    if(cells[4])cells[4].textContent=fMSales(dispRev);
+    if(cells[5])cells[5].textContent='+'+fMSales(dispRec);
   }
   const hint=document.getElementById('ro-export-hint');
   if(hint)hint.textContent=nSel>0?`${nSel} line${nSel>1?'s':''} selected · click Export to download CSV`:'Click rows to select lines, then export';
@@ -5179,10 +5457,11 @@ function exportReorderCSV(){
 
   const esc=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
   const fv=(v,dp=2)=>v!=null&&!isNaN(v)?Number(v).toFixed(dp):'';
+  const vat=reportVatDivisor(r.financialSemantics||{});
 
   const headers=['Rank','SKU','Product','Category','Season','Current Stock','Wkly ROS',
-    'Units to Buy','Cost Price','Total Cost','Net ASP','Reorder Revenue',
-    'M1 Lost Revenue','M2 Lost Revenue','Total Lost Revenue'];
+    'Units to Buy','Cost Price','Total Cost','ASP ex VAT (calculation)','ASP inc VAT','Reorder Sales inc VAT','Reorder Revenue ex VAT (calculation)',
+    'M1 Lost Sales inc VAT','M2 Lost Sales inc VAT','Total Lost Sales inc VAT','Total Lost Revenue ex VAT (calculation)'];
 
   const rows=lines.map((p,i)=>[
     i+1, nameSku[p.name]||'',
@@ -5190,8 +5469,8 @@ function exportReorderCSV(){
     p.stock!=null?p.stock:'',
     fv(p.wklyU), p.forecastBuyUnits||0,
     fv(p.avgCost), fv(p.reorderCost),
-    fv(p.netAsp), fv(p.reorderRevenue),
-    fv(p.m1Lost), fv(p.m2Lost), fv(p.lost)
+    fv(p.netAsp),fv(p.netAsp*vat),fv(p.reorderRevenue*vat),fv(p.reorderRevenue),
+    fv(p.m1Lost*vat),fv(p.m2Lost*vat),fv(p.lost*vat),fv(p.lost)
   ].map(esc).join(','));
 
   const totUnits=lines.reduce((a,p)=>a+(p.forecastBuyUnits||0),0);
@@ -5199,7 +5478,7 @@ function exportReorderCSV(){
   const totRev=lines.reduce((a,p)=>a+(p.reorderRevenue||0),0);
   const totLost=lines.reduce((a,p)=>a+(p.lost||0),0);
   rows.push('');
-  rows.push([esc('TOTALS'),'','','','','',esc(totUnits),'',esc(fv(totCost)),'',esc(fv(totRev)),'','',esc(fv(totLost))].join(','));
+  rows.push(['TOTALS','','','','','','',totUnits,'',fv(totCost),'','',fv(totRev*vat),fv(totRev),fv(lines.reduce((a,p)=>a+(p.m1Lost||0),0)*vat),fv(lines.reduce((a,p)=>a+(p.m2Lost||0),0)*vat),fv(totLost*vat),fv(totLost)].map(esc).join(','));
 
   const nLines=lines.length;
   const meta=[
@@ -5257,10 +5536,10 @@ function openCatMap(){
   const rows=document.getElementById('cat-map-rows');
   rows.innerHTML=allCats.map(cat=>`
     <div class="cat-map-row">
-      <span style="font-size:13px">${cat}</span>
-      <select class="cat-map-sel" data-cat="${cat.replace(/"/g,'&quot;')}">
+      <span style="font-size:13px">${escapeHtml(cat)}</span>
+      <select class="cat-map-sel" data-cat="${escapeAttr(cat)}">
         <option value="">— keep as-is —</option>
-        ${CAT_GROUPS.map(g=>`<option value="${g}"${catMap[cat]===g?' selected':''}>${g}</option>`).join('')}
+        ${CAT_GROUPS.map(g=>`<option value="${escapeAttr(g)}"${catMap[cat]===g?' selected':''}>${escapeHtml(g)}</option>`).join('')}
       </select>
     </div>`).join('');
   document.getElementById('cat-map-active').checked=catMapActive;
@@ -5269,10 +5548,11 @@ function openCatMap(){
     autoMapCats();
     document.getElementById('cat-map-active').checked=true;
   }
-  document.getElementById('cat-map-modal').style.display='flex';
+  window._catMapOpener=document.activeElement;
+  const modal=document.getElementById('cat-map-modal');modal.style.display='flex';modal.querySelector('.cat-map-box')?.focus();
 }
 
-function closeCatMap(){document.getElementById('cat-map-modal').style.display='none';}
+function closeCatMap(){document.getElementById('cat-map-modal').style.display='none';window._catMapOpener?.focus?.();}
 
 function autoMapCats(){
   document.querySelectorAll('.cat-map-sel').forEach(sel=>{
@@ -6978,8 +7258,8 @@ function exportBestsellersXLSX(){
 
     // Build header row
     const headers=['Rank','Product','Category','Season','Units','Stock',
-      ...periodLabels.map(l=>l+' Units'),...periodLabels.map(l=>l+' Revenue'),
-      'ASP (ex-VAT)','ASP (inc VAT)','Net Sales','Total GP','GP/Unit','GP %','Sales/wk',
+      ...periodLabels.map(l=>l+' Units'),...periodLabels.map(l=>l+' Sales inc VAT'),
+      'ASP inc VAT','Sales inc VAT','Sales ex VAT (GP basis)','Known GP ex VAT','GP/Unit ex VAT','Achieved GP % ex VAT','Sales/wk inc VAT',
       ...(hasStock?['Cover wks','Forecast buy']:[])
     ];
 
@@ -6990,8 +7270,8 @@ function exportBestsellersXLSX(){
         oRank,p.name,effectiveCat(p)||p.cat||'',p.season||'',
         p.units,p.stock!=null?p.stock:'',
         ...periodLabels.map(lbl=>p.periods[lbl]?.units||0),
-        ...periodLabels.map(lbl=>p.periods[lbl]?.rev||0),
-        p.avgP,p.gAsp||p.avgP*1.2,p.rev,p.gp,p.gpUnit,p.gpPct,p.avgRevPerWeek,
+        ...periodLabels.map(lbl=>salesIncVatOf(p.periods[lbl]||{},r.financialSemantics)),
+        p.units?salesIncVatOf(p,r.financialSemantics)/p.units:0,salesIncVatOf(p,r.financialSemantics),salesExVatOf(p,r.financialSemantics),p.gp,p.gpUnit,p.gpPct,p.avgRevPerWeekIncVat??salesValueIncVat(p.avgRevPerWeek,null,r.financialSemantics),
         ...(hasStock?[
           p.stock!=null&&p.wklyU>0?+(p.stock/p.wklyU).toFixed(1):'',
           p.stock!=null&&p.wklyU>0?Math.max(0,Math.ceil(p.wklyU*(r.weeksLeft||8))-p.stock):''
@@ -7005,11 +7285,12 @@ function exportBestsellersXLSX(){
       sorted.reduce((a,p)=>a+p.units,0),
       '',
       ...periodLabels.map(lbl=>sorted.reduce((a,p)=>a+(p.periods[lbl]?.units||0),0)),
-      ...periodLabels.map(lbl=>sorted.reduce((a,p)=>a+(p.periods[lbl]?.rev||0),0)),
+      ...periodLabels.map(lbl=>sorted.reduce((a,p)=>a+salesIncVatOf(p.periods[lbl]||{},r.financialSemantics),0)),
       '',
-      sorted.reduce((a,p)=>a+p.rev,0),
-      sorted.reduce((a,p)=>a+p.gp,0),
-      '','','','',
+      sorted.reduce((a,p)=>a+salesIncVatOf(p,r.financialSemantics),0),
+      sorted.reduce((a,p)=>a+salesExVatOf(p,r.financialSemantics),0),
+      sorted.reduce((a,p)=>a+Number(p.gp||0),0),
+      '','','',
       ...(hasStock?['','']:[])
     ];
 
@@ -7038,7 +7319,7 @@ function exportBestsellersXLSX(){
           }
         }
       }
-      if(h==='GP %'){
+      if(h==='Achieved GP % ex VAT'){
         for(let ri=1;ri<wsData.length;ri++){
           const cellRef=XLSX.utils.encode_cell({r:ri,c:ci});
           if(ws[cellRef]&&typeof ws[cellRef].v==='number'){
@@ -7056,24 +7337,24 @@ function exportBestsellersXLSX(){
     const catMap2={};
     sorted.forEach(p=>{
       const cat=effectiveCat(p)||p.cat||'Other';
-      if(!catMap2[cat])catMap2[cat]={units:0,rev:0,gp:0,lines:0};
-      catMap2[cat].units+=p.units;catMap2[cat].rev+=p.rev;catMap2[cat].gp+=p.gp;catMap2[cat].lines++;
+      if(!catMap2[cat])catMap2[cat]={units:0,sales:0,revenueExVat:0,gp:0,lines:0};
+      catMap2[cat].units+=p.units;catMap2[cat].sales+=salesIncVatOf(p,r.financialSemantics);catMap2[cat].revenueExVat+=salesExVatOf(p,r.financialSemantics);catMap2[cat].gp+=Number(p.gp||0);catMap2[cat].lines++;
     });
-    const catRows=[['Category','Lines','Units','Net Sales','Total GP','GP %'],
-      ...Object.entries(catMap2).sort((a,b)=>b[1].rev-a[1].rev).map(([cat,v])=>[
-        cat,v.lines,v.units,v.rev,v.gp,v.rev>0?v.gp/v.rev:0
+    const catRows=[['Category','Lines','Units','Sales inc VAT','Sales ex VAT (GP basis)','Known GP ex VAT','Achieved GP % ex VAT'],
+      ...Object.entries(catMap2).sort((a,b)=>b[1].sales-a[1].sales).map(([cat,v])=>[
+        cat,v.lines,v.units,v.sales,v.revenueExVat,v.gp,v.revenueExVat>0?v.gp/v.revenueExVat:0
       ])
     ];
     const wsCat=XLSX.utils.aoa_to_sheet(catRows);
     wsCat['!cols']=[{wch:20},{wch:8},{wch:8},{wch:12},{wch:12},{wch:8}];
     catRows[0].forEach((h,ci)=>{
-      if(['Net Sales','Total GP'].includes(h)){
+      if(['Sales inc VAT','Sales ex VAT (GP basis)','Known GP ex VAT'].includes(h)){
         for(let ri=1;ri<catRows.length;ri++){
           const cellRef=XLSX.utils.encode_cell({r:ri,c:ci});
           if(wsCat[cellRef])wsCat[cellRef].z=fmt;
         }
       }
-      if(h==='GP %'){
+      if(h==='Achieved GP % ex VAT'){
         for(let ri=1;ri<catRows.length;ri++){
           const cellRef=XLSX.utils.encode_cell({r:ri,c:ci});
           if(wsCat[cellRef]){wsCat[cellRef].v=wsCat[cellRef].v;wsCat[cellRef].z=fmtPct;}
@@ -7094,7 +7375,7 @@ function renderSlowSellers(){
   const r=window._rpt;
   if(!r){el.innerHTML='<p style="color:var(--text2);font-size:13px;padding:20px 0">Generate the Bestsellers TY report first.</p>';return;}
 
-  const hasInv=!!(r.deadStock&&r.deadStock.length>=0);
+  const hasInv=Boolean(window._snapshotHasInventory||invRows||r.deadStock?.length||r.products.some(product=>product.stock!=null));
   let sdPeriods=window._sdPeriods||3;
   let sdSeason=window._sdSeason||'All';
   let zsSeason=window._zsSeason||'All';
@@ -7139,10 +7420,10 @@ function renderSlowSellers(){
   }
   const hasImg=Object.keys(imgLu).length>0;
   const thumbCell=(name)=>{
-    const src=imgLu[name]||'';
+    const src=safeImageUrl(imgLu[name]||'');
     if(!hasImg&&!src)return'';
     return`<td style="padding:4px 8px;width:44px;vertical-align:middle">${src
-      ?`<img src="${src}" style="width:36px;height:48px;object-fit:cover;border-radius:4px;display:block;cursor:zoom-in" onclick="openLb(this)" onerror="this.style.display='none'">`
+      ?`<img src="${escapeAttr(src)}" alt="${escapeAttr(name)}" style="width:36px;height:48px;object-fit:cover;border-radius:4px;display:block;cursor:zoom-in" onclick="openLb(this)" onerror="this.style.display='none'">`
       :'<div style="width:36px;height:48px;background:var(--bg2);border-radius:4px"></div>'
     }</td>`;
   };
@@ -7236,7 +7517,7 @@ function renderSlowSellers(){
     const lastSalePeriod=[...r.allPeriodLabels].reverse()
       .find(lbl=>checkPeriods.includes(lbl)===false&&(p.periods[lbl]?.units||0)>0)
       ||r.allPeriodLabels.find(lbl=>(p.periods[lbl]?.units||0)>0)||'';
-    const retail=p.avgP*1.2||0;
+    const retail=Number(p.rrp??p.avgP??0);
     const cost=invCostLu[p.name]||p.avgCost||0;
     const created=(window._nameCreated[p.name])||'';
     const sdSku=(window._nameInvSku&&window._nameInvSku[p.name])||p.sku||'';
@@ -7252,28 +7533,29 @@ function renderSlowSellers(){
   const sdCostVal=salesDrop.reduce((a,d)=>a+d.costValue,0);
 
   // ── Zero-sale / Dead Stock ────────────────────────────────────────────────
-  const salesNames=new Set(r.products.map(p=>p.name));
-  const allZeroSale=[];
+  const salesNames=new Set(r.products.filter(p=>Number(p.units||0)!==0||Number(p.rev||0)!==0).map(p=>p.name));
+  const deadByName=new Map((r.deadStock||[]).map(item=>{
+    const product=r.products.find(p=>p.name===(item.name||item.title))||{};
+    const stock=Number(item.stock??product.stock??0),retail=Number(item.retail??item.price??item.rrp??product.rrp??product.avgP??0),costRaw=item.cost??product.cost??product.avgCost;
+    const row={...product,...item,name:String(item.name||item.title||product.name||''),sku:item.sku||product.sku||'',stock,retail,cost:costRaw==null?0:Number(costRaw),season:item.season||product.season||'',days:item.days??daysInStockFromName(item.name||item.title||product.name||''),retailValue:Number(item.retailValue??stock*retail),costValue:Number(item.costValue??(costRaw==null?0:stock*Number(costRaw)))};
+    return[row.name,row];
+  }).filter(([name,row])=>name&&row.stock>0));
   if(typeof invRows!=='undefined'&&invRows){
-    const seen=new Set();
     invRows.forEach(row=>{
       const pname=String(row['Products / Name']||'').trim();
       const avail=Number(row['Inventory Snapshot / Total Available'])||0;
-      if(avail<=0||!pname||seen.has(pname))return;
+      if(avail<=0||!pname||deadByName.has(pname))return;
       if(!salesNames.has(pname)){
-        seen.add(pname);
         const price=parseFloat(row['Product Variants / Price']||'0')||0;
         const cost=parseFloat(row['Inventory Items / Cost']||'0')||0;
         const season=String(row['Products / Season']||'').trim()||'';
         const created='';
         const zsSku=String(row['Product Variants / SKU']||'').trim();
-        allZeroSale.push({name:pname,sku:zsSku,stock:avail,retail:price,cost,season,created,
-          days:daysInStockFromName(pname),
-          retailValue:avail*price,costValue:avail*cost});
+        deadByName.set(pname,{name:pname,sku:zsSku,stock:avail,retail:price,cost,season,created,days:daysInStockFromName(pname),retailValue:avail*price,costValue:avail*cost});
       }
     });
-    allZeroSale.sort((a,b)=>b.retailValue-a.retailValue);
   }
+  const allZeroSale=[...deadByName.values()].sort((a,b)=>b.retailValue-a.retailValue);
   const zsSeasons=[...new Set(allZeroSale.map(l=>l.season).filter(Boolean))].sort();
   const zeroSaleLines=zsSeason==='All'?allZeroSale:allZeroSale.filter(z=>seasonMatchFilter(z.season,zsSeason));
   const zsUnits=zeroSaleLines.reduce((a,z)=>a+z.stock,0);
@@ -7287,6 +7569,7 @@ function renderSlowSellers(){
 
   const mkSDTable=lines=>{
     if(!lines.length)return`<p style="color:var(--text2);font-size:13px;padding:12px 0">No sales drop lines for this filter — try adjusting the period count or season.</p>`;
+    const pageSize=100,totalPages=Math.max(1,Math.ceil(lines.length/pageSize)),page=Math.min(Math.max(1,Number(window._sdPage)||1),totalPages),pageStart=(page-1)*pageSize,pageLines=lines.slice(pageStart,pageStart+pageSize);window._sdPage=page;
     return`<div class="impact-table-wrap"><table style="width:100%;border-collapse:collapse">
       <thead><tr style="background:var(--bg2)">
         <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border)">#</th>
@@ -7303,18 +7586,18 @@ function renderSlowSellers(){
         <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Days in stock</th>
       </tr></thead>
       <tbody>
-        ${lines.map((d,i)=>`<tr style="${i%2===1?'background:var(--bg2)':''}">
-          <td style="padding:9px 12px;font-size:11px;color:var(--text3)">${i+1}</td>
+        ${pageLines.map((d,i)=>`<tr style="${i%2===1?'background:var(--bg2)':''}">
+          <td style="padding:9px 12px;font-size:11px;color:var(--text3)">${pageStart+i+1}</td>
           ${thumbCell(d.name)}
-          <td style="padding:9px 12px;font-size:13px;font-weight:500">${d.name}</td>
-          <td style="padding:9px 12px;font-size:11px;color:var(--text3)">${d.sku||'—'}</td>
+          <td style="padding:9px 12px;font-size:13px;font-weight:500">${escapeHtml(d.name)}</td>
+          <td style="padding:9px 12px;font-size:11px;color:var(--text3)">${escapeHtml(d.sku||'—')}</td>
           <td style="padding:9px 12px;text-align:center">${seasonBadge(d.season)}</td>
           <td style="padding:9px 12px;font-size:13px;text-align:right;font-weight:500;color:var(--warning)">${fN(d.stock)}</td>
           <td style="padding:9px 12px;font-size:12px;text-align:right;color:var(--text2)">${d.cost>0?fMoney(d.cost):'—'}</td>
           <td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--danger)">${d.costValue>0?fMoney(d.costValue):'—'}</td>
           <td style="padding:9px 12px;font-size:12px;text-align:right;color:var(--text2)">${d.retail>0?fMoney(d.retail):'—'}</td>
           <td style="padding:9px 12px;font-size:13px;text-align:right;font-weight:500">${d.retailValue>0?fMoney(d.retailValue):'—'}</td>
-          <td style="padding:9px 12px;font-size:12px;color:var(--text3)">${d.lastSalePeriod||'—'}</td>
+          <td style="padding:9px 12px;font-size:12px;color:var(--text3)">${escapeHtml(d.lastSalePeriod||'—')}</td>
           <td style="padding:9px 12px;font-size:12px;text-align:right;color:${(d.days||0)>180?'var(--danger)':(d.days||0)>90?'var(--warning)':'var(--text2)'}">${daysLabel(d.days)}</td>
         </tr>`).join('')}
         <tr style="border-top:.5px solid var(--border2);background:var(--bg2);font-weight:600">
@@ -7326,11 +7609,12 @@ function renderSlowSellers(){
           <td style="padding:9px 12px;font-size:13px;text-align:right">${fMoney(lines.reduce((a,l)=>a+l.retailValue,0))}</td>
           <td></td>
         </tr>
-      </tbody></table></div>`;
+      </tbody></table></div>${totalPages>1?`<div class="pagination"><button class="btn" type="button" ${page<=1?'disabled':''} onclick="window._sdPage=${page-1};renderSlowSellers()">← Previous</button><span>Page ${page} of ${totalPages} · ${lines.length.toLocaleString()} lines</span><button class="btn" type="button" ${page>=totalPages?'disabled':''} onclick="window._sdPage=${page+1};renderSlowSellers()">Next →</button></div>`:''}`;
   };
 
   const mkDSTable=lines=>{
     if(!lines.length)return`<p style="color:var(--success);font-size:13px;padding:8px 0">✓ All stocked products appear in your sales data — no dead stock detected.</p>`;
+    const pageSize=100,totalPages=Math.max(1,Math.ceil(lines.length/pageSize)),page=Math.min(Math.max(1,Number(window._zsPage)||1),totalPages),pageStart=(page-1)*pageSize,pageLines=lines.slice(pageStart,pageStart+pageSize);window._zsPage=page;
     return`<div class="impact-table-wrap"><table style="width:100%;border-collapse:collapse">
       <thead><tr style="background:var(--bg2)">
         <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border)">#</th>
@@ -7346,11 +7630,11 @@ function renderSlowSellers(){
         <th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Days in stock</th>
       </tr></thead>
       <tbody>
-        ${lines.map((d,i)=>`<tr style="${i%2===1?'background:var(--bg2)':''}">
-          <td style="padding:9px 12px;font-size:11px;color:var(--text3)">${i+1}</td>
+        ${pageLines.map((d,i)=>`<tr style="${i%2===1?'background:var(--bg2)':''}">
+          <td style="padding:9px 12px;font-size:11px;color:var(--text3)">${pageStart+i+1}</td>
           ${thumbCell(d.name)}
-          <td style="padding:9px 12px;font-size:13px;font-weight:500">${d.name}</td>
-          <td style="padding:9px 12px;font-size:11px;color:var(--text3)">${d.sku||'—'}</td>
+          <td style="padding:9px 12px;font-size:13px;font-weight:500">${escapeHtml(d.name)}</td>
+          <td style="padding:9px 12px;font-size:11px;color:var(--text3)">${escapeHtml(d.sku||'—')}</td>
           <td style="padding:9px 12px;text-align:center">${seasonBadge(d.season)}</td>
           <td style="padding:9px 12px;font-size:13px;text-align:right;font-weight:500;color:var(--danger)">${fN(d.stock)}</td>
           <td style="padding:9px 12px;font-size:12px;text-align:right;color:var(--text2)">${d.cost>0?fMoney(d.cost):'—'}</td>
@@ -7367,7 +7651,7 @@ function renderSlowSellers(){
           <td></td>
           <td style="padding:9px 12px;font-size:13px;text-align:right">${fMoney(lines.reduce((a,l)=>a+l.retailValue,0))}</td>
         </tr>
-      </tbody></table></div>`;
+      </tbody></table></div>${totalPages>1?`<div class="pagination"><button class="btn" type="button" ${page<=1?'disabled':''} onclick="window._zsPage=${page-1};renderSlowSellers()">← Previous</button><span>Page ${page} of ${totalPages} · ${lines.length.toLocaleString()} lines</span><button class="btn" type="button" ${page>=totalPages?'disabled':''} onclick="window._zsPage=${page+1};renderSlowSellers()">Next →</button></div>`:''}`;
   };
 
   el.innerHTML=`
@@ -7400,7 +7684,7 @@ function renderSlowSellers(){
         <p style="font-size:13px;line-height:1.7;margin:0;color:var(--text2)">These products exist in your <strong>inventory snapshot but have never appeared in any sales report</strong> you loaded. No sales velocity at all — they may have been inactive/draft and just made live, never properly launched, or outside your loaded date range. This stock is tying up working capital with no return. Review for launch activity, repricing, or write-off.</p>
       </div>
       ${buildSeasonPills(zsSeasons,zsSeason,"window._zsSeason=this.dataset.sv;renderSlowSellers()")}
-      ${typeof invRows!=='undefined'&&invRows?mkDSTable(zeroSaleLines):'<p style="color:var(--text2);font-size:13px">Load an Inventory Snapshot XLSX to identify dead stock lines.</p>'}
+      ${hasInv?mkDSTable(zeroSaleLines):'<p style="color:var(--text2);font-size:13px">Load stock data to identify dead stock lines.</p>'}
     </div>`;
 }
 </script>

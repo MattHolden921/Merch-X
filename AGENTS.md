@@ -14,6 +14,12 @@
 - Add totals only where the values are additive or clearly meaningful. Avoid totals that would imply false precision, such as summing unit prices, statuses, or mixed percentages.
 - Totals should respect the active filters/search whenever the table is filtered.
 
+## Financial Formulas
+
+- Treat `lib/commerce-finance.js` as the code source of truth for sales VAT treatment, gross/net sales, COGS, gross profit, and gross margin.
+- Reuse that module when changing Bestsellers, New In, P&L, or another commerce report. Do not reproduce competing financial formulas in page scripts or route handlers.
+- Update the financial-semantics section of `PROJECT_SPEC.md` whenever a canonical formula or source changes.
+
 ## Local Development Server
 
 - On Windows/Codex desktop, start the app outside the sandbox so the in-app browser can keep using it after the tool call finishes.

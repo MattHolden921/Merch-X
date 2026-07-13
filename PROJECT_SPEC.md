@@ -414,9 +414,32 @@ Report concepts:
 - `report_snapshots` caches assembled payloads.
 - `report_sync_jobs` tracks longer Shopify syncs.
 - Shopify API sync stores only completed Monday-Sunday weeks. Current-week, future-week, and otherwise incomplete ranges are shown live and not written to the saved-period cache until the week has ended.
-- Shopify weeks saved before their end date are treated as needing refresh, hidden from saved-period selectors, and blocked from weekly-action generation until Shopify is synced again.
+- Shopify weeks saved before their end date, against another configured Shopify store, or with an older financial-formula version are treated as needing refresh and blocked from weekly-action generation until Shopify is synced again.
+- Saved Shopify selectors expose canonical Monday-Sunday weeks only. Last 2/4/8 completed-week presets work even when one or more weeks are missing or stale: loading the range automatically starts a Shopify sync to fill and replace those weeks before displaying the combined report. Older weeks across a gap remain individually selectable.
+- Bestsellers dates are validated as real calendar dates. Partial, reversed, impossible, and overlong ranges are rejected instead of silently falling back to a default period.
+- ShopifyQL `FROM sales` grouped by product title and variant SKU is the primary product-sales source for Bestsellers and New In, matching P&L's dated ledger treatment of discounts and sales reversals. New In image-impact daily windows use the same ledger grouped by day. The order API remains a guarded fallback; if neither source can be read, a Bestsellers sync fails closed so an incomplete fetch cannot replace a valid saved week.
+- Duplicate sync requests for the same range reuse the active job. Jobs left queued/running by a restart are marked interrupted on startup; completed result payloads are cleared after 14 days and completed/error jobs are removed after 90 days.
+- Shopify product connections currently read up to 100 variants. Products beyond that limit remain visible but are flagged through report data-quality metadata because their stock/current-cost values may be incomplete.
 
-Key calculated fields include weekly units, average price, GP percent, GP per unit, cover weeks, forecast buy, dead stock, stock value, and category/season summaries.
+Shopify financial semantics:
+
+- `lib/commerce-finance.js` is the shared code source of truth for Bestsellers, New In, and P&L financial formulas. `AGENTS.md` requires commerce-report work to reuse it rather than reimplementing formulas in routes or pages.
+- ShopifyQL supplies gross and net product sales excluding VAT. Bestsellers and New In convert those canonical ledger values to VAT-inclusive customer sales for every visible merchandising sales figure, including totals, ASP, sales per week/day, comparisons, and exports. Their payloads retain explicit ex-VAT fields so cached weeks from either storage convention can be combined safely and reconciled to P&L. P&L continues to expose its accounting sales bridge and profit calculations on the ex-VAT ledger basis described below.
+- Each saved Shopify Bestsellers week also caches the P&L-aligned sales-bridge components and Demand/Despatch totals from ShopifyQL. Demand is sales including VAT after discounts and before returns; Despatch maps to ShopifyQL `total_sales`. For a multi-week selection, Despatch is additive and Demand is recomputed from the combined raw bridge components through the same shared formula as P&L, avoiding VAT-rate or rounding drift from summing independently calculated weekly Demand. Period pills use the corresponding selected components. The cards remain loaded-range trading totals rather than category/search-filtered product subtotals. Weeks without the current trading-metrics version are refreshed before use instead of relabelling gross or net product sales as approximations.
+- GP is Shopify net sales ex VAT less Shopify cost of goods sold; GP% is GP divided by net sales ex VAT even when the adjacent merchandising sales value is displayed including VAT. ShopifyQL-backed weeks use Shopify's reported GP/COGS. The order-API fallback derives ex-VAT achieved revenue and current variant costs and identifies itself in data-quality metadata.
+- Stock cost and retail values are extended from the current variants rather than multiplying all stock by a product average/minimum. Stock views expose cost coverage and calculate margin against retail excluding VAT.
+- Cached Shopify periods carry the configured store key and financial-formula version. Legacy, cross-store, and old-formula periods are refreshed before use instead of being silently combined with current live data.
+- Gift cards are excluded from synced products, stock totals, decision metrics, and Weekly Action candidates.
+
+Decision and UI semantics:
+
+- The main Bestsellers table calculates Sales/week, weekly units, cover, and forecast buy from the active loaded range, so loading two weeks produces a two-week weekly average and narrowing period pills recalculates it. Server decision metadata and Weekly Actions may still use the newest completed week for short-term prompts.
+- Revenue Analysis projects two forward periods, each matching the decision period's duration; labels show that actual horizon. Forecast buy still uses the configured eight-week coverage horizon unless a page workflow explicitly supplies another season-end horizon.
+- The main Bestsellers table defaults to sold, active products. Users can search, include all active stocked/sold products, paginate at 25/50/100/200 rows, or explicitly load all matching products; visible totals respect those filters. Draft, archived, and gift-card products are excluded from the main decision view.
+- Slow Sellers consumes the server report's active-product dead-stock rows, so synced reports do not require a separate inventory upload to show stocked products with no sales. Large sales-drop/dead-stock result sets render 100 rows per page while totals continue to cover the full active filter.
+- CSV imports use a supplied product ID/handle as the aggregation key and fall back to title only when the export does not contain a stable product identifier.
+
+Key calculated fields include weekly units, average price, gross and net sales, known GP and cost coverage, GP percent, GP per unit, cover weeks, forecast buy, dead stock, stock value, and category/season summaries.
 
 ### Stock Snapshots
 
@@ -424,7 +447,7 @@ Stock snapshot rows represent Shopify variant-level inventory and pricing at a p
 
 ### Weekly Actions
 
-Weekly actions are generated from saved Shopify bestsellers periods. Candidate action types:
+Weekly actions are generated from saved canonical Monday-Sunday Shopify bestsellers periods. Only active, non-gift-card Shopify products are eligible. Candidate action types:
 
 - `reorder`: selling with low cover or forecast buy requirement.
 - `markdown`: stock-heavy or no/weak sales lines.
@@ -468,7 +491,7 @@ Key principles:
 - ShopifyQL sales reports are the source for P&L actuals. Date ranges are inclusive and capped at 92 days.
 - Primary P&L sales views are Despatch and Demand. Despatch maps to ShopifyQL `total_sales`. Demand is derived as product sales inc VAT, after discounts, before returns: `(gross_sales - absolute_discounts) * (1 + effective VAT rate)`. ShopifyQL `gross_sales` remains visible only as gross sales ex VAT before discounts and returns. Discounts, returns, shipping, net sales, and taxes are shown as separate sales-bridge boxes because they materially explain the movement from Demand to Despatch. Net sales remains the ex-VAT product revenue used for gross-profit and net-profit calculations. Gross profit % is shown using the merchandising/reporting convention: for an inc-VAT retail value, `((retail value / 1.2) - cost) / (retail value / 1.2)`. In the P&L planner this is equivalent to `(net sales ex VAT - COGS) / net sales ex VAT`. Net profit is the pound operating-profit value after COGS, marketing, variable costs, and fixed overheads; Net profit % is `net profit / net sales ex VAT`.
 - AOV is Despatch divided by ShopifyQL order count.
-- COGS uses current Shopify variant unit cost at fetch time. If a line item has no cost, the planner flags the affected units and revenue so profit quality is visible.
+- P&L actual COGS and gross profit use ShopifyQL's dated `cost_of_goods_sold` and `gross_profit` values for the selected sales range. The planner preserves those reported figures through statement construction rather than rebuilding GP from current variant costs.
 - Reusable cost rules support `fixed_monthly`, `per_order`, `per_item`, `pick_pack`, `percent_revenue`, and `percent_revenue_plus_per_order` for card/payment fees that combine a Despatch percentage with a fixed per-order fee. Fixed monthly costs are prorated by overlapping days in each calendar month. Variable rules are prorated by active-date overlap before applying the selected range's Despatch, orders, or units.
 - Variable costs are shown separately from product COGS and fixed monthly overheads. Total variable costs include all non-fixed cost rules, including fulfilment, postage, pick/pack, per-item costs, and card/payment fees. Variable cost per order is total variable costs divided by orders. Fixed monthly costs are separately exposed as fixed cost total, fixed cost per order, and fixed cost drag (`fixed monthly costs / net sales ex VAT`). Contribution before fixed costs is `gross profit - marketing spend - variable costs`, with contribution % using net sales ex VAT as the denominator. The scenario detail table can also show order-driven and revenue-driven portions for diagnosis.
 - Pick and pack costs are calculated as first-item rate per order plus additional-item rate for units above one per order.
@@ -576,6 +599,5 @@ When the implementation and this spec disagree, treat the code as current truth,
 
 - Should uploaded report files be stored centrally so every team member sees the same report history without re-uploading?
 - Should `server.js` be split into route/service modules as the app grows?
-- Should bestsellers calculations move toward reusable server-side modules instead of page-level inline scripts?
 - Should order workflow actors eventually map to real users rather than free-text names?
 - Should Shopify reorder apply support dry-run exports and approvals before writing to Shopify?

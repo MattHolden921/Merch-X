@@ -17,8 +17,10 @@ const { buildLabelJobSnapshot, normalizeDoubleBarcodeSnapshot } = require("./lib
 const orderActuals = require("./lib/order-actuals");
 const { DEFAULT_PAH_SETTINGS, buildPahReport, safeSettings: safePahSettings } = require("./lib/pah-report");
 const pnl = require("./lib/pnl");
+const finance = require("./lib/commerce-finance");
 const salePlanner = require("./lib/sale-planner");
 const windsorMarketing = require("./lib/windsor-marketing");
+const bestsellers = require("./lib/bestsellers");
 
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
@@ -573,20 +575,28 @@ function normalizeProduct(product, orderMetrics) {
   const stock = variants.reduce((sum, variant) => sum + Number(variant.inventoryQuantity || 0), 0);
   const prices = variants.map((variant) => Number(variant.price || 0)).filter(Number.isFinite);
   const compareAtPrices = variants.map((variant) => Number(variant.compareAtPrice || 0)).filter((value) => Number.isFinite(value) && value > 0);
-  const costs = variants.map((variant) => Number(variant.inventoryItem?.unitCost?.amount || 0)).filter((value) => Number.isFinite(value) && value > 0);
   const skus = variants.map((variant) => variant.sku).filter(Boolean);
   const variantIds = variants.flatMap((variant) => [variant.id, variant.legacyResourceId]).filter(Boolean);
   const price = prices.length ? Math.min(...prices) : 0;
   const compareAtPrice = compareAtPrices.length ? Math.max(...compareAtPrices) : null;
-  const cost = costs.length ? costs.reduce((sum, value) => sum + value, 0) / costs.length : null;
   const variantMargins = variants.map((variant) => {
     const variantPrice = Number(variant.price || 0);
     const variantCost = Number(variant.inventoryItem?.unitCost?.amount || 0);
-    const netRetail = variantPrice / 1.2;
-    return netRetail > 0 && variantCost > 0 ? ((netRetail - variantCost) / netRetail) * 100 : null;
+    if (!(variantPrice > 0 && variantCost > 0)) return null;
+    const retail = finance.salesFinancials({
+      netSales: variantPrice,
+      grossSales: variantPrice,
+      costOfGoods: variantCost,
+      salesIncludeVat: true
+    });
+    return retail.grossMargin == null ? null : retail.grossMargin * 100;
   }).filter(value => value != null && Number.isFinite(value));
   const margin = variantMargins.length ? Math.round(Math.min(...variantMargins)) : null;
-  const metrics = orderMetrics.get(product.id) || { revenue: 0, units: 0 };
+  const metrics = orderMetrics.get(product.id) || { revenue: 0, grossSales: 0, units: 0, variants: new Map() };
+  const financials = bestsellers.calculateProductFinancials(metrics, variants);
+  const achievedMargin = financials.grossProfit != null && financials.revenueExVat !== 0
+    ? financials.grossProfit / financials.revenueExVat * 100
+    : null;
   const featuredMediaImage = product.featuredMedia?.image ? {
     url: product.featuredMedia.image.url,
     altText: product.featuredMedia.image.altText,
@@ -621,6 +631,7 @@ function normalizeProduct(product, orderMetrics) {
   return {
     id: product.id,
     status,
+    shopifyStatus: status,
     productStatusCode,
     title: product.title,
     handle: product.handle,
@@ -645,12 +656,42 @@ function normalizeProduct(product, orderMetrics) {
     price,
     compareAtPrice,
     isMarkedDown: Boolean(compareAtPrice && compareAtPrice > price),
-    cost,
-    margin,
+    cost: financials.cost,
+    currentInventoryCost: financials.currentInventoryCost,
+    averageSoldUnitCost: financials.averageSoldUnitCost,
+    margin: achievedMargin ?? margin,
+    marginBasis: achievedMargin == null ? "current_retail_ex_vat" : "achieved_net_sales_ex_vat",
     stock,
     variants: normalizedVariants,
-    revenue: Math.round(metrics.revenue * 100) / 100,
-    units: metrics.units,
+    isGiftCard: Boolean(product.isGiftCard),
+    variantDataComplete: !product.variants.pageInfo?.hasNextPage,
+    variantDataWarning: product.variants.pageInfo?.hasNextPage
+      ? "Only the first 100 variants were loaded; stock and current-cost values are incomplete for this product."
+      : "",
+    revenue: Math.round(financials.revenueIncVat * 100) / 100,
+    revenueIncVat: Math.round(financials.revenueIncVat * 100) / 100,
+    revenueExVat: Math.round(financials.revenueExVat * 100) / 100,
+    grossSales: Math.round(financials.grossSalesIncVat * 100) / 100,
+    grossSalesIncVat: Math.round(financials.grossSalesIncVat * 100) / 100,
+    grossSalesExVat: Math.round(financials.grossSalesExVat * 100) / 100,
+    salesDisplayBasis: "inc_vat",
+    units: financials.units,
+    grossProfit: financials.grossProfit == null ? null : Math.round(financials.grossProfit * 100) / 100,
+    knownGrossProfit: Math.round(financials.knownGrossProfit * 100) / 100,
+    costOfGoods: financials.costOfGoods,
+    knownCostOfGoods: financials.knownCostOfGoods,
+    costedUnits: financials.costedUnits,
+    uncostedUnits: financials.uncostedUnits,
+    costedRevenue: financials.costedRevenue,
+    costedRevenueExVat: financials.costedRevenueExVat,
+    costCoveragePercent: financials.costCoveragePercent,
+    costQuality: financials.costQuality,
+    stockCostValue: financials.stockCostValue,
+    stockRetailValue: financials.stockRetailValue,
+    stockCostedUnits: financials.stockCostedUnits,
+    stockUncostedUnits: financials.stockUncostedUnits,
+    stockUnpricedUnits: financials.stockUnpricedUnits,
+    stockCostCoveragePercent: financials.stockCostCoveragePercent,
     gaViews: 0,
     gaAdds: 0,
     gaPurchases: 0,
@@ -904,9 +945,15 @@ async function fetchOrderMetrics(range) {
             nodes {
               quantity
               currentQuantity
-              discountedTotalSet { shopMoney { amount } }
+              isGiftCard
+              originalTotalSet { shopMoney { amount } }
+              discountedTotalSet(withCodeDiscounts: true) { shopMoney { amount } }
+              discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } }
+              priceAfterAllDiscountsBeforeTaxesSet { shopMoney { amount } }
               product { id }
+              variant { id }
             }
+            pageInfo { hasNextPage }
           }
         }
         pageInfo { hasNextPage endCursor }
@@ -918,21 +965,178 @@ async function fetchOrderMetrics(range) {
     const orders = data.orders;
     for (const order of orders.nodes) {
       if (order.cancelledAt || order.test || order.displayFinancialStatus === "VOIDED") continue;
-      for (const item of order.lineItems.nodes) {
-        if (!item.product?.id) continue;
-        const orderedQuantity = Math.max(0, Number(item.quantity || 0));
-        const netQuantity = Math.max(0, Number(item.currentQuantity ?? orderedQuantity));
-        if (!netQuantity) continue;
-        const originalRevenue = Number(item.discountedTotalSet?.shopMoney?.amount || 0);
-        const netRevenue = orderedQuantity > 0 ? originalRevenue * Math.min(1, netQuantity / orderedQuantity) : 0;
-        const current = metrics.get(item.product.id) || { revenue: 0, units: 0 };
-        current.revenue += netRevenue;
-        current.units += netQuantity;
-        metrics.set(item.product.id, current);
+      for (const item of bestsellers.assertCompleteOrderLineConnection(order.lineItems)) {
+        bestsellers.addOrderLineMetric(metrics, item);
       }
     }
     hasNextPage = orders.pageInfo.hasNextPage;
     cursor = orders.pageInfo.endCursor;
+  }
+  return metrics;
+}
+
+async function fetchShopifyQlProductMetrics(range, products = []) {
+  const query = `
+    query MerchProductSales($query: String!) {
+      shopifyqlQuery(query: $query) {
+        parseErrors
+        tableData { rows }
+      }
+    }
+  `;
+  const rows = [];
+  const pageSize = 1000;
+  for (let offset = 0; offset < 50_000; offset += pageSize) {
+    const reportQuery = `
+      FROM sales
+      SHOW product_title, product_variant_sku, gross_sales, net_sales,
+        gross_profit, cost_of_goods_sold, net_items_sold
+      GROUP BY product_title, product_variant_sku
+      SINCE ${range.startDate}
+      UNTIL ${range.endDate}
+      ORDER BY net_sales DESC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `.replace(/\s+/g, " ").trim();
+    const data = await shopifyGraphql(query, { query: reportQuery });
+    const response = data.shopifyqlQuery || {};
+    const parseErrors = response.parseErrors || [];
+    if (parseErrors.length) throw new Error(`ShopifyQL product sales query failed: ${parseErrors.join("; ")}`);
+    const page = Array.isArray(response.tableData?.rows) ? response.tableData.rows : [];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+
+  const skuTargets = new Map();
+  const titleTargets = new Map();
+  for (const product of products) {
+    const titleKey = normalizedKey(product.title);
+    if (titleKey) {
+      const matches = titleTargets.get(titleKey) || [];
+      matches.push({ productId: product.id, variantId: "unresolved" });
+      titleTargets.set(titleKey, matches);
+    }
+    for (const variant of product.variants?.nodes || []) {
+      const skuKey = normalizedKey(variant.sku);
+      if (!skuKey) continue;
+      const matches = skuTargets.get(skuKey) || [];
+      matches.push({ productId: product.id, variantId: variant.id || "unresolved" });
+      skuTargets.set(skuKey, matches);
+    }
+  }
+
+  const metrics = new Map();
+  let unmatchedRows = 0;
+  let ambiguousRows = 0;
+  for (const row of rows) {
+    const skuMatches = skuTargets.get(normalizedKey(row.product_variant_sku)) || [];
+    const titleMatches = titleTargets.get(normalizedKey(row.product_title)) || [];
+    const matches = skuMatches.length === 1 ? skuMatches : titleMatches.length === 1 ? titleMatches : [];
+    if (!matches.length) {
+      if (skuMatches.length > 1 || titleMatches.length > 1) ambiguousRows += 1;
+      else unmatchedRows += 1;
+      continue;
+    }
+    const target = matches[0];
+    const current = metrics.get(target.productId) || {
+      revenue: 0,
+      grossSales: 0,
+      grossProfit: 0,
+      costOfGoods: 0,
+      units: 0,
+      salesIncludeVat: false,
+      source: "shopifyql_sales",
+      variants: new Map()
+    };
+    const sold = {
+      revenue: Number(row.net_sales || 0),
+      grossSales: Number(row.gross_sales || 0),
+      grossProfit: Number(row.gross_profit || 0),
+      costOfGoods: Number(row.cost_of_goods_sold || 0),
+      units: Number(row.net_items_sold || 0)
+    };
+    current.revenue += sold.revenue;
+    current.grossSales += sold.grossSales;
+    current.grossProfit += sold.grossProfit;
+    current.costOfGoods += sold.costOfGoods;
+    current.units += sold.units;
+    const variant = current.variants.get(target.variantId) || { revenue: 0, grossSales: 0, units: 0 };
+    variant.revenue += sold.revenue;
+    variant.grossSales += sold.grossSales;
+    variant.units += sold.units;
+    current.variants.set(target.variantId, variant);
+    metrics.set(target.productId, current);
+  }
+  return {
+    metrics,
+    dataQuality: {
+      salesSource: "shopifyql_sales",
+      shopifyQlProductRows: rows.length,
+      unmatchedShopifyQlRows: unmatchedRows,
+      ambiguousShopifyQlRows: ambiguousRows
+    }
+  };
+}
+
+async function fetchShopifyQlProductDailyMetrics(range, products = []) {
+  const query = `
+    query MerchProductDailySales($query: String!) {
+      shopifyqlQuery(query: $query) {
+        parseErrors
+        tableData { rows }
+      }
+    }
+  `;
+  const rows = [];
+  const pageSize = 1000;
+  for (let offset = 0; offset < 50_000; offset += pageSize) {
+    const reportQuery = `
+      FROM sales
+      SHOW day, product_title, product_variant_sku, net_sales, net_items_sold
+      GROUP BY day, product_title, product_variant_sku
+      SINCE ${range.startDate}
+      UNTIL ${range.endDate}
+      ORDER BY day ASC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `.replace(/\s+/g, " ").trim();
+    const data = await shopifyGraphql(query, { query: reportQuery });
+    const response = data.shopifyqlQuery || {};
+    const parseErrors = response.parseErrors || [];
+    if (parseErrors.length) throw new Error(`ShopifyQL daily product sales query failed: ${parseErrors.join("; ")}`);
+    const page = Array.isArray(response.tableData?.rows) ? response.tableData.rows : [];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  const skuTargets = new Map();
+  const titleTargets = new Map();
+  for (const product of products) {
+    const titleKey = normalizedKey(product.title);
+    if (titleKey) {
+      const ids = titleTargets.get(titleKey) || [];
+      ids.push(product.id);
+      titleTargets.set(titleKey, ids);
+    }
+    for (const sku of product.skus || []) {
+      const skuKey = normalizedKey(sku);
+      if (!skuKey) continue;
+      const ids = skuTargets.get(skuKey) || [];
+      ids.push(product.id);
+      skuTargets.set(skuKey, ids);
+    }
+  }
+  const metrics = new Map();
+  for (const row of rows) {
+    const skuMatches = skuTargets.get(normalizedKey(row.product_variant_sku)) || [];
+    const titleMatches = titleTargets.get(normalizedKey(row.product_title)) || [];
+    const productId = skuMatches.length === 1 ? skuMatches[0] : titleMatches.length === 1 ? titleMatches[0] : "";
+    const day = dateOnlyFromIso(row.day);
+    if (!productId || !day) continue;
+    const byDate = metrics.get(productId) || new Map();
+    const current = byDate.get(day) || { revenue: 0, revenueExVat: 0, units: 0 };
+    current.revenueExVat += Number(row.net_sales || 0);
+    current.revenue = finance.includingVat(current.revenueExVat, { includesVat: false });
+    current.units += Number(row.net_items_sold || 0);
+    byDate.set(day, current);
+    metrics.set(productId, byDate);
   }
   return metrics;
 }
@@ -947,12 +1151,22 @@ async function fetchOrderDailyMetrics(range) {
       orders(first: 100, after: $cursor, query: $query, sortKey: CREATED_AT, reverse: true) {
         nodes {
           createdAt
-          lineItems(first: 100) {
+          cancelledAt
+          test
+          displayFinancialStatus
+          lineItems(first: 250) {
             nodes {
               quantity
-              discountedTotalSet { shopMoney { amount } }
+              currentQuantity
+              isGiftCard
+              originalTotalSet { shopMoney { amount } }
+              discountedTotalSet(withCodeDiscounts: true) { shopMoney { amount } }
+              discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } }
+              priceAfterAllDiscountsBeforeTaxesSet { shopMoney { amount } }
               product { id }
+              variant { id }
             }
+            pageInfo { hasNextPage }
           }
         }
         pageInfo { hasNextPage endCursor }
@@ -963,14 +1177,18 @@ async function fetchOrderDailyMetrics(range) {
     const data = await shopifyGraphql(query, { cursor, query: orderQuery });
     const orders = data.orders;
     for (const order of orders.nodes) {
+      if (order.cancelledAt || order.test || order.displayFinancialStatus === "VOIDED") continue;
       const day = dateOnlyFromIso(order.createdAt);
       if (!day) continue;
-      for (const item of order.lineItems.nodes) {
-        if (!item.product?.id) continue;
+      for (const item of bestsellers.assertCompleteOrderLineConnection(order.lineItems)) {
+        const lineMetrics = new Map();
+        if (!bestsellers.addOrderLineMetric(lineMetrics, item)) continue;
+        const line = lineMetrics.get(item.product.id);
         const byDate = metrics.get(item.product.id) || new Map();
-        const current = byDate.get(day) || { revenue: 0, units: 0 };
-        current.revenue += Number(item.discountedTotalSet?.shopMoney?.amount || 0);
-        current.units += Number(item.quantity || 0);
+        const current = byDate.get(day) || { revenue: 0, revenueExVat: 0, units: 0 };
+        current.revenueExVat += Number(line.revenue || 0);
+        current.revenue = finance.includingVat(current.revenueExVat, { includesVat: false });
+        current.units += Number(line.units || 0);
         byDate.set(day, current);
         metrics.set(item.product.id, byDate);
       }
@@ -1122,11 +1340,7 @@ async function fetchShopifyMerchandising(req, res) {
   const updatedSinceTime = updatedSinceDate ? new Date(`${updatedSinceDate}T00:00:00.000Z`).getTime() : 0;
   let orderMetrics = new Map();
   let ordersAvailable = true;
-  try {
-    orderMetrics = await fetchOrderMetrics(dateRange);
-  } catch {
-    ordersAvailable = false;
-  }
+  let salesDataQuality = {};
   const query = `
     query MerchProducts($limit: Int!, $cursor: String, $productQuery: String!) {
       products(first: $limit, after: $cursor, query: $productQuery, sortKey: UPDATED_AT, reverse: true) {
@@ -1134,6 +1348,7 @@ async function fetchShopifyMerchandising(req, res) {
           id
           legacyResourceId
           status
+          isGiftCard
           title
           handle
           onlineStoreUrl
@@ -1206,6 +1421,19 @@ async function fetchShopifyMerchandising(req, res) {
       hasNextPage = Boolean(data.products.pageInfo.hasNextPage);
       cursor = data.products.pageInfo.endCursor;
     }
+    try {
+      const sales = await fetchShopifyQlProductMetrics(dateRange, rawProducts);
+      orderMetrics = sales.metrics;
+      salesDataQuality = sales.dataQuality;
+    } catch (shopifyQlError) {
+      try {
+        orderMetrics = await fetchOrderMetrics(dateRange);
+        salesDataQuality = { salesSource: "order_api_fallback", warning: shopifyQlError.message };
+      } catch (orderError) {
+        ordersAvailable = false;
+        salesDataQuality = { salesSource: "unavailable", warning: `${shopifyQlError.message} ${orderError.message}` };
+      }
+    }
     let gaAvailable = false;
     let gaMessage = "";
     let products = rawProducts
@@ -1219,7 +1447,26 @@ async function fetchShopifyMerchandising(req, res) {
     } catch (error) {
       gaMessage = error.message;
     }
-    sendJson(res, 200, { configured: true, syncedAt: new Date().toISOString(), days, dateRange, ordersAvailable, gaAvailable, gaMessage, totalProducts, products });
+    sendJson(res, 200, {
+      configured: true,
+      syncedAt: new Date().toISOString(),
+      days,
+      dateRange,
+      ordersAvailable,
+      gaAvailable,
+      gaMessage,
+      totalProducts,
+      products,
+      financialSemantics: {
+        salesValuesIncludeVat: true,
+        displaySalesValuesIncludeVat: true,
+        canonicalSalesValuesIncludeVat: false,
+        grossProfitRevenueBasis: "ex_vat",
+        formulaVersion: finance.FINANCIAL_FORMULA_VERSION,
+        salesSource: salesDataQuality.salesSource || "unavailable"
+      },
+      dataQuality: salesDataQuality
+    });
   } catch (error) {
     sendJson(res, 502, { configured: true, message: error.message });
   }
@@ -1288,14 +1535,23 @@ function hasIncompleteBestsellersStorageWeek(range, now = new Date()) {
   return canonicalReportWeeks(range).some(week => week.endDate >= today);
 }
 
-function bestsellersPeriodNeedsRefresh(row) {
+function bestsellersPeriodRefreshReason(row) {
   if (!row || row.report_type !== "bestsellers" || row.source_type !== "shopify_api") return false;
   if (!validReportDate(row.start_date) || !validReportDate(row.end_date)) return false;
+  const summary = parseJson(row.summary_json, {});
+  const currentStore = String(shopifyConfig().domain || "").toLowerCase();
+  if (currentStore && String(summary.shopifyStore || "").toLowerCase() !== currentStore) return "shopify_store_changed";
+  if (summary.financialFormulaVersion !== finance.FINANCIAL_FORMULA_VERSION) return "financial_formula_changed";
+  if (summary.tradingMetricsVersion !== bestsellers.TRADE_METRICS_VERSION) return "trading_metrics_changed";
   const syncedAt = new Date(row.synced_at || row.updated_at || row.created_at || "");
   if (!Number.isFinite(syncedAt.getTime())) return false;
   const completeAfter = reportUtcDate(row.end_date);
   completeAfter.setUTCDate(completeAfter.getUTCDate() + 1);
-  return syncedAt < completeAfter;
+  return syncedAt < completeAfter ? "week_was_incomplete" : false;
+}
+
+function bestsellersPeriodNeedsRefresh(row) {
+  return Boolean(bestsellersPeriodRefreshReason(row));
 }
 
 function refreshNeededBestsellersResponse(res, rows) {
@@ -1303,19 +1559,20 @@ function refreshNeededBestsellersResponse(res, rows) {
     startDate: row.start_date,
     endDate: row.end_date,
     label: reportDateLabel(row.start_date, row.end_date),
-    syncedAt: row.synced_at || ""
+    syncedAt: row.synced_at || "",
+    reason: bestsellersPeriodRefreshReason(row)
   }));
   const labelText = staleWeeks.map(week => week.label).join(", ");
   const plural = staleWeeks.length !== 1;
   sendJson(res, 409, {
-    error: `Cached bestsellers week${plural ? "s" : ""} ${labelText} ${plural ? "were" : "was"} saved before the week finished. Sync Shopify to refresh.`,
+    error: `Cached bestsellers week${plural ? "s" : ""} ${labelText} ${plural ? "need" : "needs"} refreshing for the current Shopify store and financial formulas.`,
     code: "BESTSELLERS_CACHE_NEEDS_REFRESH",
     staleWeeks
   });
 }
 
 function validReportDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+  return bestsellers.validIsoDate(value);
 }
 
 function extractReportDatesFromName(fileName) {
@@ -1324,14 +1581,14 @@ function extractReportDatesFromName(fileName) {
   if (range) {
     const start = new Date(`${range[1]}T00:00:00.000Z`);
     const end = new Date(`${range[2]}T00:00:00.000Z`);
-    if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) && start <= end) {
+    if (validReportDate(range[1]) && validReportDate(range[2]) && start <= end) {
       return { startDate: range[1], endDate: range[2] };
     }
   }
   const single = text.match(/(\d{4}-\d{2}-\d{2})/);
   if (single) {
     const start = new Date(`${single[1]}T00:00:00.000Z`);
-    if (Number.isFinite(start.getTime())) {
+    if (validReportDate(single[1])) {
       const end = new Date(start);
       end.setUTCMonth(end.getUTCMonth() + 1, 0);
       return { startDate: single[1], endDate: isoDateOnly(end) };
@@ -1396,17 +1653,21 @@ function csvNumber(value) {
 }
 
 function productsFromSalesCsvRows(rows) {
-  const byTitle = new Map();
+  const byProduct = new Map();
   for (const row of rows) {
     const title = String(row["Product title"] || row.Title || "").trim();
-    if (!title || title === "Gift Card") continue;
-    const current = byTitle.get(title) || {
-      id: `csv:${reportHash(title)}`,
+    if (!title || /^gift\s*card$/i.test(title)) continue;
+    const sourceProductId = String(row["Product ID"] || row["Product id"] || row["Product handle"] || row.Handle || "").trim();
+    const productKey = sourceProductId || title;
+    const current = byProduct.get(productKey) || {
+      id: sourceProductId ? `csv:${sourceProductId}` : `csv:${reportHash(title)}`,
       title,
       productType: String(row["Product type"] || "").trim(),
       units: 0,
       revenue: 0,
+      revenueExVat: 0,
       grossSales: 0,
+      grossSalesExVat: 0,
       grossProfit: 0,
       stock: null,
       price: 0,
@@ -1417,28 +1678,28 @@ function productsFromSalesCsvRows(rows) {
     const netSales = csvNumber(row["Net sales"]);
     const grossSales = csvNumber(row["Gross sales"]);
     current.units += units;
-    current.revenue += netSales;
-    current.grossSales += grossSales || netSales;
+    current.revenueExVat += netSales;
+    current.grossSalesExVat += grossSales || netSales;
     current.grossProfit += csvNumber(row["Gross profit"]);
-    if (units > 0) current.price = current.revenue / current.units;
-    byTitle.set(title, current);
+    byProduct.set(productKey, current);
   }
-  return Array.from(byTitle.values());
+  return Array.from(byProduct.values()).map(product => {
+    const revenue = finance.includingVat(product.revenueExVat, { includesVat: false });
+    const grossSales = finance.includingVat(product.grossSalesExVat, { includesVat: false });
+    return {
+      ...product,
+      revenue,
+      grossSales,
+      price: product.units > 0 ? revenue / product.units : 0,
+      salesDisplayBasis: "inc_vat"
+    };
+  });
 }
 
 function reportRangeFromRequest(url, fallbackDays = 28) {
   const requestedStart = url.searchParams.get("startDate") || "";
   const requestedEnd = url.searchParams.get("endDate") || "";
-  if (validReportDate(requestedStart) && validReportDate(requestedEnd)) {
-    const start = new Date(`${requestedStart}T00:00:00.000Z`);
-    const end = new Date(`${requestedEnd}T00:00:00.000Z`);
-    if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) && start <= end) {
-      const maxEnd = new Date(start);
-      maxEnd.setUTCDate(maxEnd.getUTCDate() + 366);
-      if (end > maxEnd) throw new Error("Choose a report range of 366 days or less.");
-      return { startDate: requestedStart, endDate: requestedEnd };
-    }
-  }
+  if (requestedStart || requestedEnd) return bestsellers.validateRange({ startDate: requestedStart, endDate: requestedEnd }, 367);
   return dateRangeFromDays(fallbackDays);
 }
 
@@ -1446,6 +1707,7 @@ function publicReportPeriod(row) {
   if (!row) return null;
   const summary = parseJson(row.summary_json, {});
   const needsRefresh = bestsellersPeriodNeedsRefresh(row);
+  const canonicalWeek = bestsellers.isCanonicalMondaySundayWeek({ startDate: row.start_date, endDate: row.end_date });
   if (needsRefresh) summary.needsRefresh = true;
   return {
     id: row.id,
@@ -1463,6 +1725,7 @@ function publicReportPeriod(row) {
     updatedAt: row.updated_at,
     needsRefresh,
     cacheStatus: needsRefresh ? "needs_refresh" : "ready",
+    canonicalWeek,
     summary
   };
 }
@@ -1481,9 +1744,14 @@ function readBestsellersPeriods(options = {}) {
 
 function readBestsellersPeriodListing() {
   const allPeriods = readBestsellersPeriods({ includeRefreshNeeded: true });
+  const noncanonicalPeriods = allPeriods.filter(period => period.sourceType === "shopify_api" && !period.canonicalWeek);
+  const selectablePeriods = allPeriods.filter(period => period.sourceType !== "shopify_api" || period.canonicalWeek);
+  const savedShopifyWeeks = selectablePeriods.filter(period => period.sourceType === "shopify_api" && !period.needsRefresh);
   return {
-    periods: allPeriods.filter(period => !period.needsRefresh),
-    refreshNeededPeriods: allPeriods.filter(period => period.needsRefresh)
+    periods: selectablePeriods.filter(period => !period.needsRefresh),
+    refreshNeededPeriods: selectablePeriods.filter(period => period.needsRefresh),
+    noncanonicalPeriods,
+    contiguousWeekRanges: bestsellers.contiguousWeekRanges(savedShopifyWeeks)
   };
 }
 
@@ -1580,12 +1848,32 @@ function publicReportSyncJob(row) {
 
 function readReportSyncJob(jobId) {
   const db = openOrderSqliteDb();
-  const row = db.prepare("SELECT * FROM report_sync_jobs WHERE id = ?").get(String(jobId || ""));
+  let row = db.prepare("SELECT * FROM report_sync_jobs WHERE id = ?").get(String(jobId || ""));
+  if (bestsellers.isStaleSyncJob(row)) {
+    db.prepare(`
+      UPDATE report_sync_jobs
+      SET status = 'error', error = 'Sync interrupted or timed out before completion.',
+          message = 'Sync interrupted or timed out before completion.', completed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND status IN ('queued', 'running')
+    `).run(row.id);
+    row = db.prepare("SELECT * FROM report_sync_jobs WHERE id = ?").get(row.id);
+  }
   return publicReportSyncJob(row);
 }
 
 function createReportSyncJob(range) {
   const db = openOrderSqliteDb();
+  const existing = db.prepare(`
+    SELECT id FROM report_sync_jobs
+    WHERE report_type = 'bestsellers' AND status IN ('queued', 'running')
+      AND requested_start_date = ? AND requested_end_date = ?
+    ORDER BY created_at DESC LIMIT 1
+  `).get(range.startDate, range.endDate);
+  if (existing) {
+    const activeJob = readReportSyncJob(existing.id);
+    if (activeJob && ["queued", "running"].includes(activeJob.status)) return { ...activeJob, reused: true };
+  }
   const days = reportDaysInclusive(range);
   const weeks = days >= 7 ? completedBestsellersStorageWeeks(range) : [];
   const liveOnly = days < 7 || hasIncompleteBestsellersStorageWeek(range);
@@ -1718,6 +2006,8 @@ function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
         sku: row.sku || "",
         skus: data.skus || (row.sku ? [row.sku] : []),
         status: row.product_status || data.status || "",
+        shopifyStatus: data.shopifyStatus || data.status || row.product_status || "",
+        isGiftCard: Boolean(data.isGiftCard),
         cat: row.product_type || "",
         productType: row.product_type || "",
         vendor: row.vendor || "",
@@ -1726,8 +2016,19 @@ function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
         imageUrl: row.image_url || "",
         units: 0,
         rev: 0,
-        gp: 0,
+        revenueExVat: 0,
+        gpKnown: 0,
+        gpComplete: true,
         gross: 0,
+        grossExVat: 0,
+        costedUnits: 0,
+        uncostedUnits: 0,
+        costedRevenueExVat: 0,
+        stockCostValue: null,
+        stockRetailValue: null,
+        stockCostedUnits: 0,
+        stockUncostedUnits: 0,
+        stockUnpricedUnits: 0,
         gaViews: 0,
         gaAdds: 0,
         gaPurchases: 0,
@@ -1735,54 +2036,122 @@ function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
         periods: {}
       };
       const units = Number(row.units || 0);
-      const rev = Number(row.net_sales || 0);
-      const gross = Number(row.gross_sales || rev);
-      const gp = row.gross_profit == null ? 0 : Number(row.gross_profit || 0);
+      const storedSales = bestsellers.storedSalesFinancials(row, data, period.summary);
+      const rev = storedSales.netSalesIncVat;
+      const gross = storedSales.grossSalesIncVat;
+      const revenueExVat = storedSales.netSalesExVat;
+      const grossExVat = storedSales.grossSalesExVat;
+      const gp = bestsellers.storedGrossProfit(row, data, units, {
+        salesIncludeVat: false,
+        revenue: revenueExVat,
+        revenueExVat,
+        revenueBasis: "ex_vat"
+      });
+      const knownGp = data.knownGrossProfit == null ? Number(gp || 0) : Number(data.knownGrossProfit || 0);
       existing.units += units;
       existing.rev += rev;
-      existing.gp += gp;
+      existing.revenueExVat += revenueExVat;
+      existing.gpKnown += knownGp;
+      if (gp == null && units > 0) existing.gpComplete = false;
       existing.gross += gross;
+      existing.grossExVat += grossExVat;
+      existing.costedUnits += Number(data.costedUnits ?? (gp == null ? 0 : units));
+      existing.uncostedUnits += Number(data.uncostedUnits ?? (gp == null ? units : 0));
+      const costedRevenueExVat = Number(data.costedRevenueExVat ?? (gp == null ? 0 : revenueExVat));
+      existing.costedRevenueExVat += costedRevenueExVat;
       existing.gaViews += Number(row.ga_views || 0);
       existing.gaAdds += Number(row.ga_adds || 0);
       existing.gaPurchases += Number(row.ga_purchases || 0);
       existing.gaRevenue += Number(row.ga_revenue || 0);
-      existing.periods[period.label] = { units, rev, gross, gp };
+      existing.periods[period.label] = {
+        units,
+        rev,
+        revIncVat: rev,
+        revenueExVat,
+        gross,
+        grossIncVat: gross,
+        grossExVat,
+        gp,
+        knownGp,
+        costedUnits: Number(data.costedUnits ?? (gp == null ? 0 : units)),
+        uncostedUnits: Number(data.uncostedUnits ?? (gp == null ? units : 0)),
+        costedRevenueExVat
+      };
       existing.stock = row.stock == null ? existing.stock ?? null : Number(row.stock || 0);
       existing.cost = row.cost == null ? existing.cost ?? null : Number(row.cost || 0);
       existing.avgCost = existing.cost;
       existing.rrp = row.retail_price == null ? existing.rrp ?? null : Number(row.retail_price || 0);
+      existing.stockCostValue = data.stockCostValue == null
+        ? (row.stock == null || row.cost == null ? null : Math.max(0, Number(row.stock || 0)) * Number(row.cost || 0))
+        : Number(data.stockCostValue || 0);
+      existing.stockRetailValue = data.stockRetailValue == null
+        ? (row.stock == null || row.retail_price == null ? null : Math.max(0, Number(row.stock || 0)) * Number(row.retail_price || 0))
+        : Number(data.stockRetailValue || 0);
+      existing.stockCostedUnits = Number(data.stockCostedUnits ?? (row.cost == null ? 0 : Math.max(0, Number(row.stock || 0))));
+      existing.stockUncostedUnits = Number(data.stockUncostedUnits ?? (row.cost == null ? Math.max(0, Number(row.stock || 0)) : 0));
+      existing.stockUnpricedUnits = Number(data.stockUnpricedUnits || 0);
+      existing.stockCostCoveragePercent = Number(data.stockCostCoveragePercent ?? (
+        existing.stockCostedUnits + existing.stockUncostedUnits > 0
+          ? existing.stockCostedUnits / (existing.stockCostedUnits + existing.stockUncostedUnits) * 100
+          : 100
+      ));
       existing.compareAtPrice = row.compare_at_price == null ? existing.compareAtPrice ?? null : Number(row.compare_at_price || 0);
       existing.isMarkedDown = Boolean(existing.compareAtPrice && existing.rrp && existing.compareAtPrice > existing.rrp);
       productsByKey.set(key, existing);
     }
   }
-  const products = Array.from(productsByKey.values()).map((product) => {
+  const chronologicalPeriods = [...publicPeriods].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const newestPeriodsFirst = [...publicPeriods].sort((a, b) => b.startDate.localeCompare(a.startDate));
+  const tradingMetrics = bestsellers.combineTradingMetrics(chronologicalPeriods);
+  const latestPeriod = newestPeriodsFirst[0] || publicPeriods[0];
+  const latestPeriodDays = latestPeriod ? reportDaysInclusive(latestPeriod) : 7;
+  const products = Array.from(productsByKey.values()).filter(product => !bestsellers.isGiftCardProduct(product)).map((product) => {
     const weeks = Math.max(publicPeriods.reduce((total, period) => total + reportDaysInclusive(period) / 7, 0), 1);
     const avgP = product.units > 0 ? product.rev / product.units : Number(product.rrp || 0);
-    const gpPct = product.rev > 0 ? product.gp / product.rev * 100 : 0;
-    const gpUnit = product.units > 0 ? product.gp / product.units : 0;
-    const wklyU = product.units / weeks;
-    const avgRevPerWeek = product.rev / weeks;
-    const coverWks = product.stock != null && wklyU > 0 ? product.stock / wklyU : null;
-    const forecastBuy = product.stock != null && wklyU > 0 ? Math.max(0, Math.ceil(wklyU * 8) - product.stock) : null;
+    const gp = product.gpComplete ? product.gpKnown : null;
+    const gpPct = gp != null && product.revenueExVat > 0 ? gp / product.revenueExVat * 100 : null;
+    const gpUnit = gp != null && product.units > 0 ? gp / product.units : null;
+    const decisionPeriod = product.periods[latestPeriod?.label] || { units: 0, rev: 0 };
+    const decision = bestsellers.decisionRateMetrics(decisionPeriod, product.stock, latestPeriodDays, 8);
     return {
       ...product,
+      gp,
+      revenueIncVat: product.rev,
+      grossSalesIncVat: product.gross,
       avgP,
       gAsp: product.units > 0 ? product.gross / product.units : avgP,
       gpPct,
       gpUnit,
-      wklyU,
-      avgRevPerWeek,
-      coverWks,
-      forecastBuy
+      selectedRangeWeeklyUnits: product.units / weeks,
+      selectedRangeWeeklyRevenue: product.rev / weeks,
+      costCoveragePercent: product.units > 0 ? Math.min(100, product.costedUnits / product.units * 100) : 100,
+      costQuality: product.units <= 0 ? "not_applicable" : product.gpComplete ? "complete" : product.costedUnits > 0 ? "partial" : "missing",
+      retailPriceIncludesVat: true,
+      ...decision
     };
   });
-  const chronologicalPeriods = [...publicPeriods].sort((a, b) => a.startDate.localeCompare(b.startDate));
-  const newestPeriodsFirst = [...publicPeriods].sort((a, b) => b.startDate.localeCompare(a.startDate));
-  const latestPeriod = newestPeriodsFirst[0] || publicPeriods[0];
   const minDate = requestedRange?.startDate || chronologicalPeriods[0]?.startDate || "";
   const maxDate = requestedRange?.endDate || chronologicalPeriods[chronologicalPeriods.length - 1]?.endDate || "";
   const reportWeeks = Math.max(publicPeriods.reduce((total, period) => total + reportDaysInclusive(period) / 7, 0), 1);
+  const totalUnits = products.reduce((sum, product) => sum + Number(product.units || 0), 0);
+  const totalCostedUnits = products.reduce((sum, product) => sum + Number(product.costedUnits || 0), 0);
+  const totalCostedRevenueExVat = products.reduce((sum, product) => sum + Number(product.costedRevenueExVat || 0), 0);
+  const totalStockCostedUnits = products.reduce((sum, product) => sum + Number(product.stockCostedUnits || 0), 0);
+  const totalStockUncostedUnits = products.reduce((sum, product) => sum + Number(product.stockUncostedUnits || 0), 0);
+  const totalKnownGp = products.reduce((sum, product) => sum + Number(product.gpKnown || 0), 0);
+  const grossProfitComplete = products.every(product => Number(product.units || 0) <= 0 || product.gp != null);
+  const dataQuality = {
+    completeOrderMetrics: true,
+    salesSource: publicPeriods.every(period => period.summary?.dataQuality?.salesSource === "shopifyql_sales") ? "shopifyql_sales" : "mixed_or_fallback",
+    shopifyQlProductRows: publicPeriods.reduce((sum, period) => sum + Number(period.summary?.dataQuality?.shopifyQlProductRows || 0), 0),
+    unmatchedShopifyQlRows: publicPeriods.reduce((sum, period) => sum + Number(period.summary?.dataQuality?.unmatchedShopifyQlRows || 0), 0),
+    ambiguousShopifyQlRows: publicPeriods.reduce((sum, period) => sum + Number(period.summary?.dataQuality?.ambiguousShopifyQlRows || 0), 0),
+    legacyFinancialEstimatePeriodCount: publicPeriods.filter(period =>
+      period.sourceType === "shopify_api" && period.summary?.grossProfitRevenueBasis !== "ex_vat"
+    ).length,
+    truncatedVariantProductCount: publicPeriods.reduce((sum, period) => sum + Number(period.summary?.dataQuality?.truncatedVariantProductCount || 0), 0),
+    variantWarnings: publicPeriods.flatMap(period => period.summary?.dataQuality?.variantWarnings || []).slice(0, 50)
+  };
   const deadStock = products
     .filter(product => Number(product.stock || 0) > 0 && Number(product.units || 0) <= 0)
     .map(product => ({
@@ -1791,7 +2160,12 @@ function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
       season: product.season,
       img: product.img,
       price: product.rrp || 0,
-      sku: product.sku || ""
+      sku: product.sku || "",
+      productKey: product.productKey || product.id || "",
+      cost: product.cost,
+      costValue: product.stockCostValue,
+      retailValue: product.stockRetailValue,
+      stockCostCoveragePercent: product.stockCostCoveragePercent
     }))
     .sort((a, b) => Number(b.stock || 0) - Number(a.stock || 0));
   return {
@@ -1809,11 +2183,40 @@ function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
       allPeriodLabels: chronologicalPeriods.map(period => period.label),
       orderedPeriodLabels: newestPeriodsFirst.map(period => period.label),
       rosLabel: latestPeriod?.label || "latest period",
+      rosBasis: "latest_completed_period",
+      rosPeriod: latestPeriod,
+      forecastHorizonWeeks: 8,
       totRev: products.reduce((sum, product) => sum + Number(product.rev || 0), 0),
-      totUnits: products.reduce((sum, product) => sum + Number(product.units || 0), 0),
-      totGP: products.reduce((sum, product) => sum + Number(product.gp || 0), 0),
+      totRevIncVat: products.reduce((sum, product) => sum + Number(product.rev || 0), 0),
+      totRevExVat: products.reduce((sum, product) => sum + Number(product.revenueExVat || 0), 0),
+      tradingMetrics,
+      totUnits: totalUnits,
+      totGP: grossProfitComplete ? totalKnownGp : null,
+      totGPKnown: totalKnownGp,
       invTotalStock: products.reduce((sum, product) => sum + Number(product.stock || 0), 0),
-      deadStock
+      deadStock,
+      dataQuality,
+      financialSemantics: {
+        salesValuesIncludeVat: true,
+        displaySalesValuesIncludeVat: true,
+        canonicalSalesValuesIncludeVat: false,
+        storedSalesValuesIncludeVat: false,
+        retailPricesIncludeVat: true,
+        grossProfitRevenueBasis: "ex_vat",
+        vatRate: finance.STANDARD_VAT_RATE,
+        formulaVersion: latestPeriod?.summary?.financialFormulaVersion || "legacy",
+        salesSource: latestPeriod?.summary?.dataQuality?.salesSource || "source_report",
+        grossProfitComplete,
+        costedUnits: totalCostedUnits,
+        uncostedUnits: Math.max(0, totalUnits - totalCostedUnits),
+        costedRevenueExVat: totalCostedRevenueExVat,
+        costCoveragePercent: totalUnits > 0 ? Math.min(100, totalCostedUnits / totalUnits * 100) : 100,
+        stockCostedUnits: totalStockCostedUnits,
+        stockUncostedUnits: totalStockUncostedUnits,
+        stockCostCoveragePercent: totalStockCostedUnits + totalStockUncostedUnits > 0
+          ? totalStockCostedUnits / (totalStockCostedUnits + totalStockUncostedUnits) * 100
+          : 100
+      }
     }
   };
 }
@@ -1843,12 +2246,15 @@ function buildTransientBestsellersPayload(range, products, meta = {}) {
   const reportProducts = products.map((product) => {
     const units = Number(product.units || 0);
     const rev = Number(product.revenue || 0);
-    const gross = Number(product.grossSales || product.revenue || 0);
+    const revenueExVat = product.revenueExVat == null ? rev / 1.2 : Number(product.revenueExVat || 0);
+    const gross = Number(product.grossSales ?? product.revenue ?? 0);
+    const grossExVat = product.grossSalesExVat == null ? gross / 1.2 : Number(product.grossSalesExVat || 0);
     const cost = product.cost == null ? null : Number(product.cost || 0);
-    const gp = product.grossProfit != null ? Number(product.grossProfit || 0) : cost != null ? rev - (cost * units) : 0;
+    const gp = product.grossProfit == null ? null : Number(product.grossProfit || 0);
+    const knownGp = Number(product.knownGrossProfit ?? gp ?? 0);
     const avgP = units > 0 ? rev / units : Number(product.price || 0);
-    const wklyU = units / weeks;
     const stock = product.stock == null ? null : Number(product.stock || 0);
+    const decision = bestsellers.decisionRateMetrics({ units, rev }, stock, reportDaysInclusive(range), 8);
     return {
       name: product.title,
       title: product.title,
@@ -1858,6 +2264,8 @@ function buildTransientBestsellersPayload(range, products, meta = {}) {
       sku: (product.skus || [])[0] || "",
       skus: product.skus || [],
       status: product.status || "",
+      shopifyStatus: product.shopifyStatus || product.status || "",
+      isGiftCard: Boolean(product.isGiftCard),
       cat: product.productType || "",
       productType: product.productType || "",
       vendor: product.vendor || "",
@@ -1866,32 +2274,81 @@ function buildTransientBestsellersPayload(range, products, meta = {}) {
       imageUrl: product.imageUrl || "",
       units,
       rev,
+      revIncVat: rev,
+      revenueIncVat: rev,
+      revenueExVat,
       gp,
+      gpKnown: knownGp,
+      gpComplete: gp != null || units <= 0,
       gross,
+      grossIncVat: gross,
+      grossSalesIncVat: gross,
+      grossExVat,
       avgP,
       gAsp: units > 0 ? gross / units : avgP,
-      gpPct: rev > 0 ? gp / rev * 100 : 0,
-      gpUnit: units > 0 ? gp / units : 0,
+      gpPct: gp != null && revenueExVat > 0 ? gp / revenueExVat * 100 : null,
+      gpUnit: gp != null && units > 0 ? gp / units : null,
       stock,
       cost,
       avgCost: cost,
+      costedUnits: Number(product.costedUnits ?? (gp == null ? 0 : units)),
+      uncostedUnits: Number(product.uncostedUnits ?? (gp == null ? units : 0)),
+      costedRevenueExVat: Number(product.costedRevenueExVat ?? (gp == null ? 0 : revenueExVat)),
+      costCoveragePercent: Number(product.costCoveragePercent ?? (gp == null && units > 0 ? 0 : 100)),
+      costQuality: product.costQuality || (units <= 0 ? "not_applicable" : gp == null ? "missing" : "complete"),
+      stockCostValue: product.stockCostValue == null ? null : Number(product.stockCostValue || 0),
+      stockRetailValue: product.stockRetailValue == null ? null : Number(product.stockRetailValue || 0),
+      stockCostedUnits: Number(product.stockCostedUnits || 0),
+      stockUncostedUnits: Number(product.stockUncostedUnits || 0),
+      stockUnpricedUnits: Number(product.stockUnpricedUnits || 0),
+      stockCostCoveragePercent: Number(product.stockCostCoveragePercent ?? 100),
       rrp: product.price == null ? null : Number(product.price || 0),
       compareAtPrice: product.compareAtPrice == null ? null : Number(product.compareAtPrice || 0),
       isMarkedDown: Boolean(product.compareAtPrice && product.compareAtPrice > product.price),
-      wklyU,
-      avgRevPerWeek: rev / weeks,
-      coverWks: stock != null && wklyU > 0 ? stock / wklyU : null,
-      forecastBuy: stock != null && wklyU > 0 ? Math.max(0, Math.ceil(wklyU * 8) - stock) : null,
+      selectedRangeWeeklyUnits: units / weeks,
+      selectedRangeWeeklyRevenue: rev / weeks,
+      retailPriceIncludesVat: true,
+      ...decision,
       gaViews: Number(product.gaViews || 0),
       gaAdds: Number(product.gaAdds || 0),
       gaPurchases: Number(product.gaPurchases || 0),
       gaRevenue: Number(product.gaRevenue || 0),
-      periods: { [label]: { units, rev, gross, gp } }
+      periods: { [label]: {
+        units,
+        rev,
+        revIncVat: rev,
+        revenueExVat,
+        gross,
+        grossIncVat: gross,
+        grossExVat,
+        gp,
+        knownGp,
+        costedRevenueExVat: Number(product.costedRevenueExVat ?? (gp == null ? 0 : revenueExVat))
+      } }
     };
   });
+  const totalUnits = reportProducts.reduce((sum, product) => sum + Number(product.units || 0), 0);
+  const costedUnits = reportProducts.reduce((sum, product) => sum + Number(product.costedUnits || 0), 0);
+  const costedRevenueExVat = reportProducts.reduce((sum, product) => sum + Number(product.costedRevenueExVat || 0), 0);
+  const stockCostedUnits = reportProducts.reduce((sum, product) => sum + Number(product.stockCostedUnits || 0), 0);
+  const stockUncostedUnits = reportProducts.reduce((sum, product) => sum + Number(product.stockUncostedUnits || 0), 0);
+  const totalKnownGp = reportProducts.reduce((sum, product) => sum + Number(product.gpKnown || 0), 0);
+  const grossProfitComplete = reportProducts.every(product => Number(product.units || 0) <= 0 || product.gp != null);
   const deadStock = reportProducts
     .filter(product => Number(product.stock || 0) > 0 && Number(product.units || 0) <= 0)
-    .map(product => ({ name: product.name, stock: product.stock, season: product.season, img: product.img, price: product.rrp || 0, sku: product.sku || "" }))
+    .map(product => ({
+      name: product.name,
+      stock: product.stock,
+      season: product.season,
+      img: product.img,
+      price: product.rrp || 0,
+      sku: product.sku || "",
+      productKey: product.productKey || product.id || "",
+      cost: product.cost,
+      costValue: product.stockCostValue,
+      retailValue: product.stockRetailValue,
+      stockCostCoveragePercent: product.stockCostCoveragePercent
+    }))
     .sort((a, b) => Number(b.stock || 0) - Number(a.stock || 0));
   return {
     configured: true,
@@ -1912,8 +2369,13 @@ function buildTransientBestsellersPayload(range, products, meta = {}) {
         productCount: reportProducts.length,
         totalUnits: reportProducts.reduce((sum, product) => sum + Number(product.units || 0), 0),
         totalRevenue: reportProducts.reduce((sum, product) => sum + Number(product.rev || 0), 0),
+        totalRevenueExVat: reportProducts.reduce((sum, product) => sum + Number(product.revenueExVat || 0), 0),
         totalStock: reportProducts.reduce((sum, product) => sum + Number(product.stock || 0), 0),
-        grossProfitSource: meta.grossProfitSource || "estimated_current_cost"
+        grossProfitSource: meta.grossProfitSource || "current_variant_cost_ex_vat",
+        tradingMetrics: meta.tradingMetrics || null,
+        tradingMetricsVersion: meta.tradingMetrics ? bestsellers.TRADE_METRICS_VERSION : "",
+        costCoveragePercent: totalUnits > 0 ? Math.min(100, costedUnits / totalUnits * 100) : 100,
+        dataQuality: meta.dataQuality || {}
       }
     },
     storedPeriodGrain: "ad_hoc",
@@ -1926,11 +2388,53 @@ function buildTransientBestsellersPayload(range, products, meta = {}) {
       allPeriodLabels: [label],
       orderedPeriodLabels: [label],
       rosLabel: label,
+      rosBasis: "selected_live_range",
+      rosPeriod: { startDate: range.startDate, endDate: range.endDate, label },
+      forecastHorizonWeeks: 8,
       totRev: reportProducts.reduce((sum, product) => sum + Number(product.rev || 0), 0),
-      totUnits: reportProducts.reduce((sum, product) => sum + Number(product.units || 0), 0),
-      totGP: reportProducts.reduce((sum, product) => sum + Number(product.gp || 0), 0),
+      totRevIncVat: reportProducts.reduce((sum, product) => sum + Number(product.rev || 0), 0),
+      totRevExVat: reportProducts.reduce((sum, product) => sum + Number(product.revenueExVat || 0), 0),
+      tradingMetrics: {
+        available: Boolean(meta.tradingMetrics),
+        demandRevenue: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.demandRevenue || 0),
+        despatchRevenue: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.despatchRevenue || 0),
+        periods: {
+          [label]: {
+            available: Boolean(meta.tradingMetrics),
+            demandRevenue: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.demandRevenue || 0),
+            despatchRevenue: meta.tradingMetrics == null ? null : Number(meta.tradingMetrics.despatchRevenue || 0)
+          }
+        },
+        source: "shopifyql_sales",
+        version: bestsellers.TRADE_METRICS_VERSION
+      },
+      totUnits: totalUnits,
+      totGP: grossProfitComplete ? totalKnownGp : null,
+      totGPKnown: totalKnownGp,
       invTotalStock: reportProducts.reduce((sum, product) => sum + Number(product.stock || 0), 0),
-      deadStock
+      deadStock,
+      dataQuality: meta.dataQuality || {},
+      financialSemantics: {
+        salesValuesIncludeVat: true,
+        displaySalesValuesIncludeVat: true,
+        canonicalSalesValuesIncludeVat: false,
+        storedSalesValuesIncludeVat: false,
+        retailPricesIncludeVat: true,
+        grossProfitRevenueBasis: "ex_vat",
+        vatRate: finance.STANDARD_VAT_RATE,
+        formulaVersion: finance.FINANCIAL_FORMULA_VERSION,
+        salesSource: meta.dataQuality?.salesSource || "order_api_fallback",
+        grossProfitComplete,
+        costedUnits,
+        uncostedUnits: Math.max(0, totalUnits - costedUnits),
+        costedRevenueExVat,
+        costCoveragePercent: totalUnits > 0 ? Math.min(100, costedUnits / totalUnits * 100) : 100,
+        stockCostedUnits,
+        stockUncostedUnits,
+        stockCostCoveragePercent: stockCostedUnits + stockUncostedUnits > 0
+          ? stockCostedUnits / (stockCostedUnits + stockUncostedUnits) * 100
+          : 100
+      }
     }
   };
 }
@@ -1947,9 +2451,28 @@ function persistBestsellersProducts(range, source, products, meta = {}) {
     productCount: products.length,
     totalUnits: products.reduce((sum, product) => sum + Number(product.units || 0), 0),
     totalRevenue: products.reduce((sum, product) => sum + Number(product.revenue || 0), 0),
+    totalRevenueExVat: products.reduce((sum, product) => sum + Number(product.revenueExVat ?? product.revenue ?? 0), 0),
+    totalGrossSales: products.reduce((sum, product) => sum + Number(product.grossSales ?? product.revenue ?? 0), 0),
+    totalGrossSalesExVat: products.reduce((sum, product) => sum + Number(product.grossSalesExVat ?? product.grossSales ?? product.revenueExVat ?? product.revenue ?? 0), 0),
     totalStock: products.reduce((sum, product) => sum + Number(product.stock || 0), 0),
-    grossProfitSource: meta.grossProfitSource || "estimated_current_cost"
+    grossProfitSource: meta.grossProfitSource || "current_variant_cost_ex_vat",
+    grossProfitRevenueBasis: sourceType === "shopify_api" ? "ex_vat" : "source_report",
+    salesValuesIncludeVat: true,
+    displaySalesValuesIncludeVat: true,
+    canonicalSalesValuesIncludeVat: false,
+    storedSalesValuesIncludeVat: false,
+    retailPricesIncludeVat: sourceType === "shopify_api",
+    shopifyStore: sourceType === "shopify_api" ? String(meta.shopifyStore || shopifyConfig().domain || "").toLowerCase() : "",
+    financialFormulaVersion: sourceType === "shopify_api" ? finance.FINANCIAL_FORMULA_VERSION : "source_report",
+    tradingMetrics: meta.tradingMetrics || null,
+    tradingMetricsVersion: meta.tradingMetrics ? bestsellers.TRADE_METRICS_VERSION : "",
+    costedUnits: products.reduce((sum, product) => sum + Number(product.costedUnits || 0), 0),
+    uncostedUnits: products.reduce((sum, product) => sum + Number(product.uncostedUnits || 0), 0),
+    dataQuality: meta.dataQuality || {}
   };
+  periodSummary.costCoveragePercent = periodSummary.totalUnits > 0
+    ? Math.min(100, periodSummary.costedUnits / periodSummary.totalUnits * 100)
+    : 100;
   const write = db.transaction(() => {
     db.prepare(`
       INSERT INTO report_sources (
@@ -2047,9 +2570,9 @@ function persistBestsellersProducts(range, source, products, meta = {}) {
     for (const product of products) {
       const productKey = String(product.id || product.legacyResourceId || product.handle || product.title || crypto.randomUUID());
       const units = Number(product.units || 0);
-      const netSales = Number(product.revenue || 0);
+      const netSales = Number(product.revenueExVat ?? product.revenue ?? 0);
       const cost = product.cost == null ? null : Number(product.cost || 0);
-      const grossProfit = product.grossProfit != null ? Number(product.grossProfit || 0) : cost != null ? netSales - (cost * units) : null;
+      const grossProfit = product.grossProfit == null ? null : Number(product.grossProfit || 0);
       insertProduct.run({
         id: `metric:bestsellers:${reportHash(`${periodId}:${productKey}`)}`,
         periodId,
@@ -2058,14 +2581,14 @@ function persistBestsellersProducts(range, source, products, meta = {}) {
         legacyResourceId: product.legacyResourceId || "",
         sku: (product.skus || [])[0] || "",
         title: product.title || "",
-        productStatus: product.productStatusCode || product.status || "",
+        productStatus: product.status || product.shopifyStatus || product.productStatusCode || "",
         productType: product.productType || "",
         vendor: product.vendor || "",
         season: product.season || "",
         imageUrl: product.imageUrl || "",
         units,
         netSales,
-        grossSales: Number(product.grossSales || product.revenue || 0),
+        grossSales: Number(product.grossSalesExVat ?? product.grossSales ?? product.revenueExVat ?? product.revenue ?? 0),
         grossProfit,
         stock: product.stock == null ? null : Number(product.stock || 0),
         cost,
@@ -2088,7 +2611,7 @@ function persistBestsellersProducts(range, source, products, meta = {}) {
           snapshotAt: now,
           shopifyProductId: product.id || "",
           legacyResourceId: product.legacyResourceId || "",
-          productStatus: product.productStatusCode || product.status || "",
+          productStatus: product.status || product.shopifyStatus || product.productStatusCode || "",
           productTitle: product.title || "",
           productHandle: product.handle || "",
           productType: product.productType || "",
@@ -2131,13 +2654,6 @@ async function fetchShopifyBestsellersProducts(range) {
       products: []
     };
   }
-  let orderMetrics = new Map();
-  let ordersAvailable = true;
-  try {
-    orderMetrics = await fetchOrderMetrics(range);
-  } catch {
-    ordersAvailable = false;
-  }
   const productQuery = "status:active,draft";
   const query = `
     query BestsellersProducts($limit: Int!, $cursor: String, $productQuery: String!) {
@@ -2146,6 +2662,7 @@ async function fetchShopifyBestsellersProducts(range) {
           id
           legacyResourceId
           status
+          isGiftCard
           title
           handle
           vendor
@@ -2170,6 +2687,7 @@ async function fetchShopifyBestsellersProducts(range) {
               selectedOptions { name value }
               inventoryItem { unitCost { amount currencyCode } }
             }
+            pageInfo { hasNextPage endCursor }
           }
         }
         pageInfo { hasNextPage endCursor }
@@ -2185,9 +2703,42 @@ async function fetchShopifyBestsellersProducts(range) {
     hasNextPage = Boolean(data.products.pageInfo.hasNextPage);
     cursor = data.products.pageInfo.endCursor;
   }
+  let orderMetrics = new Map();
+  let salesDataQuality = {};
+  try {
+    const sales = await fetchShopifyQlProductMetrics(range, rawProducts);
+    orderMetrics = sales.metrics;
+    salesDataQuality = sales.dataQuality;
+  } catch (shopifyQlError) {
+    try {
+      orderMetrics = await fetchOrderMetrics(range);
+      salesDataQuality = { salesSource: "order_api_fallback", warning: shopifyQlError.message };
+    } catch (orderError) {
+      throw new Error(`Shopify sales metrics could not be read, so the bestsellers sync was stopped and no saved period was changed. ${shopifyQlError.message} ${orderError.message}`);
+    }
+  }
+  let tradingMetrics = null;
+  try {
+    const trading = await fetchShopifyPnlActuals(range);
+    if (!trading.configured) throw new Error(trading.message || "Shopify P&L sales metrics are not configured.");
+    tradingMetrics = {
+      demandRevenue: Number(trading.actuals?.demandRevenue || 0),
+      despatchRevenue: Number(trading.actuals?.despatchRevenue || 0),
+      grossRevenue: Number(trading.actuals?.grossRevenue || 0),
+      discounts: Number(trading.actuals?.discounts || 0),
+      netRevenue: Number(trading.actuals?.netRevenue || 0),
+      shippingRevenue: Number(trading.actuals?.shippingRevenue || 0),
+      tax: Number(trading.actuals?.tax || 0),
+      returnFees: Number(trading.actuals?.returnFees || 0),
+      source: trading.sourceType || "shopifyql_sales"
+    };
+  } catch (error) {
+    throw new Error(`Shopify Demand and Despatch could not be read, so the Bestsellers sync was stopped and no saved period was changed. ${error.message}`);
+  }
   let gaAvailable = false;
   let gaMessage = "";
   let products = rawProducts
+    .filter(product => !bestsellers.isGiftCardProduct(product))
     .map(product => normalizeProduct(product, orderMetrics));
   try {
     const ga = await fetchGaMetrics(range);
@@ -2197,13 +2748,30 @@ async function fetchShopifyBestsellersProducts(range) {
   } catch (error) {
     gaMessage = error.message;
   }
-  return { configured: true, products, ordersAvailable, gaAvailable, gaMessage };
+  const variantWarnings = products
+    .filter(product => !product.variantDataComplete)
+    .map(product => ({ productId: product.id, title: product.title, warning: product.variantDataWarning }));
+  return {
+    configured: true,
+    products,
+    tradingMetrics,
+    ordersAvailable: true,
+    gaAvailable,
+    gaMessage,
+    dataQuality: {
+      completeOrderMetrics: true,
+      ...salesDataQuality,
+      tradingMetricsSource: tradingMetrics.source,
+      truncatedVariantProductCount: variantWarnings.length,
+      variantWarnings: variantWarnings.slice(0, 50)
+    }
+  };
 }
 
 async function syncBestsellersReport(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const body = req.method === "POST" ? await readJsonBody(req) : {};
-  const range = body.startDate && body.endDate
+  const range = body.startDate || body.endDate
     ? reportRangeFromRequest(new URL(`http://local/?startDate=${encodeURIComponent(body.startDate)}&endDate=${encodeURIComponent(body.endDate)}`))
     : reportRangeFromRequest(url, 28);
   const payload = await runBestsellersSync(range);
@@ -2220,7 +2788,11 @@ async function runBestsellersSync(range, onProgress = null) {
       return fetched;
     }
     const payload = buildTransientBestsellersPayload(range, fetched.products, {
-      grossProfitSource: "estimated_current_cost"
+      grossProfitSource: fetched.dataQuality?.salesSource === "shopifyql_sales" ? "shopifyql_sales" : "current_variant_cost_ex_vat",
+      salesValuesIncludeVat: true,
+      canonicalSalesValuesIncludeVat: false,
+      tradingMetrics: fetched.tradingMetrics,
+      dataQuality: fetched.dataQuality
     });
     return {
       ...payload,
@@ -2232,12 +2804,13 @@ async function runBestsellersSync(range, onProgress = null) {
       ordersAvailable: fetched.ordersAvailable,
       gaAvailable: fetched.gaAvailable,
       gaMessage: fetched.gaMessage,
+      dataQuality: fetched.dataQuality,
       ...readBestsellersPeriodListing()
     };
   }
   const weeks = completedBestsellersStorageWeeks(range);
   const syncedRows = [];
-  let lastFetched = { ordersAvailable: true, gaAvailable: false, gaMessage: "" };
+  let lastFetched = { ordersAvailable: true, gaAvailable: false, gaMessage: "", dataQuality: {} };
   for (let index = 0; index < weeks.length; index += 1) {
     const week = weeks[index];
     if (onProgress) onProgress({
@@ -2263,14 +2836,19 @@ async function runBestsellersSync(range, onProgress = null) {
     });
     persistBestsellersProducts(week, {
       sourceType: "shopify_api",
-      sourceKey: `shopify_api:${week.startDate}:${week.endDate}`,
+      sourceKey: `shopify_api:${shopifyConfig().domain}:${week.startDate}:${week.endDate}`,
       yearBucket: "TY"
     }, fetched.products, {
       periodGrain: "week",
       ordersAvailable: fetched.ordersAvailable,
       gaAvailable: fetched.gaAvailable,
       gaMessage: fetched.gaMessage,
-      grossProfitSource: "estimated_current_cost"
+      grossProfitSource: fetched.dataQuality?.salesSource === "shopifyql_sales" ? "shopifyql_sales" : "current_variant_cost_ex_vat",
+      salesValuesIncludeVat: true,
+      canonicalSalesValuesIncludeVat: false,
+      tradingMetrics: fetched.tradingMetrics,
+      shopifyStore: shopifyConfig().domain,
+      dataQuality: fetched.dataQuality
     });
     const row = bestsellersPeriodRow(week.startDate, week.endDate, "shopify_api");
     if (row) syncedRows.push(row);
@@ -2299,12 +2877,14 @@ async function runBestsellersSync(range, onProgress = null) {
     ordersAvailable: lastFetched.ordersAvailable,
     gaAvailable: lastFetched.gaAvailable,
     gaMessage: lastFetched.gaMessage,
+    dataQuality: lastFetched.dataQuality,
     ...readBestsellersPeriodListing()
   };
 }
 
 function startBestsellersSyncJob(range) {
   const job = createReportSyncJob(range);
+  if (job.reused) return job;
   setTimeout(async () => {
     const startedAt = new Date().toISOString();
     updateReportSyncJob(job.id, { status: "running", startedAt, message: "Starting Shopify sync..." });
@@ -2358,8 +2938,13 @@ async function importBestsellersCsv(req, res) {
     const range = file.startDate && file.endDate
       ? { startDate: String(file.startDate), endDate: String(file.endDate) }
       : extractReportDatesFromName(file.fileName || file.name || "");
-    if (!range || !validReportDate(range.startDate) || !validReportDate(range.endDate)) {
+    if (!range) {
       throw new Error(`Could not infer dates for ${file.fileName || file.name || "CSV"}. Add YYYY-MM-DD dates to the filename.`);
+    }
+    try {
+      bestsellers.validateRange(range, 367);
+    } catch (error) {
+      throw new Error(`Invalid dates for ${file.fileName || file.name || "CSV"}: ${error.message}`);
     }
     const checksum = crypto.createHash("sha256").update(text).digest("hex");
     const folder = path.join("report-sources", "bestsellers", yearBucket.toLowerCase());
@@ -4493,6 +5078,7 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_email_campaign_products_key ON email_campaign_products(product_key, campaign_id);
     CREATE INDEX IF NOT EXISTS idx_email_campaign_metrics_campaign ON email_campaign_metric_snapshots(campaign_id, fetched_at);
   `);
+  bestsellers.recoverReportSyncJobs(orderSqliteDb);
   const orderColumns = orderSqliteDb.prepare("PRAGMA table_info(orders)").all().map(column => column.name);
   if (!orderColumns.includes("archived_at")) {
     orderSqliteDb.prepare("ALTER TABLE orders ADD COLUMN archived_at TEXT").run();
@@ -8605,7 +9191,7 @@ function latestBestsellersPeriodRow() {
     ORDER BY start_date DESC, end_date DESC
     LIMIT 20
   `).all();
-  return rows.find(row => !bestsellersPeriodNeedsRefresh(row));
+  return rows.find(row => !bestsellersPeriodNeedsRefresh(row) && bestsellers.isCanonicalMondaySundayWeek({ startDate: row.start_date, endDate: row.end_date }));
 }
 
 function weeklyActionsPeriodFromRequest(body = {}) {
@@ -8618,12 +9204,19 @@ function weeklyActionsPeriodFromRequest(body = {}) {
         AND report_type = 'bestsellers'
     `).get(String(body.periodId));
     if (!row) throw new Error("Saved bestsellers period not found.");
+    if (row.source_type !== "shopify_api" || !bestsellers.isCanonicalMondaySundayWeek({ startDate: row.start_date, endDate: row.end_date })) {
+      throw new Error("Weekly Actions can only be generated from a saved canonical Monday-Sunday Shopify week.");
+    }
     if (bestsellersPeriodNeedsRefresh(row)) throw new Error("That saved bestsellers period needs a Shopify refresh because it was cached before the week finished.");
     return row;
   }
+  if (body.startDate || body.endDate) bestsellers.validateRange({ startDate: body.startDate, endDate: body.endDate }, 367);
   if (validReportDate(body.startDate) && validReportDate(body.endDate)) {
     const row = bestsellersPeriodRow(body.startDate, body.endDate, sourceType);
     if (!row) throw new Error("No saved bestsellers report exists for that period.");
+    if (row.source_type !== "shopify_api" || !bestsellers.isCanonicalMondaySundayWeek({ startDate: row.start_date, endDate: row.end_date })) {
+      throw new Error("Weekly Actions can only be generated from a saved canonical Monday-Sunday Shopify week.");
+    }
     if (bestsellersPeriodNeedsRefresh(row)) throw new Error("That saved bestsellers period needs a Shopify refresh because it was cached before the week finished.");
     return row;
   }
@@ -8643,8 +9236,10 @@ function productMetricSnapshot(product) {
     stock: product.stock == null ? null : Number(product.stock || 0),
     coverWks: product.coverWks == null ? null : Number(product.coverWks || 0),
     forecastBuy: product.forecastBuy == null ? null : Number(product.forecastBuy || 0),
-    gpPct: Number(product.gpPct || 0),
-    grossProfit: Number(product.gp || 0),
+    gpPct: product.gpPct == null ? null : Number(product.gpPct || 0),
+    grossProfit: product.gp == null ? null : Number(product.gp || 0),
+    costCoveragePercent: product.costCoveragePercent == null ? null : Number(product.costCoveragePercent || 0),
+    costQuality: product.costQuality || "unknown",
     avgPrice: Number(product.avgP || product.rrp || 0),
     price: product.rrp == null ? null : Number(product.rrp || 0),
     compareAtPrice: product.compareAtPrice == null ? null : Number(product.compareAtPrice || 0),
@@ -8693,7 +9288,7 @@ function weeklyCandidate(type, product, period, priority, rationale, title) {
 function generateWeeklyActionCandidates(payload) {
   const period = payload.period || payload.report?.period;
   const report = payload.report || {};
-  const products = (report.products || []).filter(product => product && (product.name || product.title));
+  const products = (report.products || []).filter(product => product && (product.name || product.title) && bestsellers.weeklyActionEligible(product));
   const byRevenue = [...products].sort((a, b) => Number(b.rev || 0) - Number(a.rev || 0));
   const topRevenueSet = new Set(byRevenue.slice(0, Math.max(8, Math.ceil(byRevenue.length * 0.08))).map(product => product.productKey || product.id || product.name));
   const reorderCandidates = [];
@@ -8749,7 +9344,7 @@ function generateWeeklyActionCandidates(payload) {
     const units = Number(product.units || 0);
     const stock = Number(product.stock || 0);
     const gpPct = Number(product.gpPct || 0);
-    const hasGp = Number(product.gp || 0) !== 0 || product.cost != null;
+    const hasGp = product.gp != null && product.gpPct != null;
     const key = product.productKey || product.id || product.name;
     if (!topRevenueSet.has(key) || units < 3 || stock < 5 || (hasGp && gpPct < 45)) continue;
     featureCandidates.push(weeklyCandidate(
@@ -8766,14 +9361,14 @@ function generateWeeklyActionCandidates(payload) {
     const units = Number(product.units || 0);
     const stock = Number(product.stock || 0);
     const coverWks = product.coverWks == null ? null : Number(product.coverWks || 0);
-    const missingCost = product.cost == null && units >= 2;
+    const missingCost = (product.cost == null || ["missing", "partial"].includes(product.costQuality)) && units >= 2;
     const mediumCover = units >= 2 && coverWks != null && coverWks > 4 && coverWks <= 8;
     const inconsistent = units > 0 && stock <= 0 && Number(product.forecastBuy || 0) <= 0;
     return stock >= 0 && (missingCost || mediumCover || inconsistent);
   }).sort((a, b) => Number(b.rev || 0) - Number(a.rev || 0));
   for (const product of watchProducts.slice(0, 30)) {
     const reasons = [];
-    if (product.cost == null && Number(product.units || 0) >= 2) reasons.push("missing cost");
+    if ((product.cost == null || ["missing", "partial"].includes(product.costQuality)) && Number(product.units || 0) >= 2) reasons.push("missing or incomplete cost");
     if (product.coverWks != null && Number(product.coverWks) > 4 && Number(product.coverWks) <= 8) reasons.push(`${Number(product.coverWks).toFixed(1)} weeks cover`);
     if (Number(product.units || 0) > 0 && Number(product.stock || 0) <= 0) reasons.push("sales recorded but no stock showing");
     watchCandidates.push(weeklyCandidate(
@@ -8962,7 +9557,7 @@ function readWeeklyActions(url) {
       seasons: [...new Set(rows.map(row => row.season).filter(Boolean))].sort().reverse()
     },
     users: publicAssignableUsers(),
-    periods: readBestsellersPeriods().filter(period => period.sourceType === "shopify_api")
+    periods: readBestsellersPeriods().filter(period => period.sourceType === "shopify_api" && period.canonicalWeek)
   };
 }
 
@@ -13282,8 +13877,10 @@ function summarizeDailyProductMetrics(orderDailyMetrics, gaDailyMetrics, product
     range,
     days,
     revenue: 0,
+    revenueExVat: 0,
     units: 0,
     revenuePerDay: 0,
+    revenuePerDayExVat: 0,
     unitsPerDay: 0,
     views: 0,
     adds: 0,
@@ -13301,6 +13898,7 @@ function summarizeDailyProductMetrics(orderDailyMetrics, gaDailyMetrics, product
     const orderMetric = orderByDate.get(day) || {};
     const gaMetric = gaByDate.get(day) || {};
     summary.revenue += Number(orderMetric.revenue || 0);
+    summary.revenueExVat += Number(orderMetric.revenueExVat ?? Number(orderMetric.revenue || 0) / finance.vatDivisor());
     summary.units += Number(orderMetric.units || 0);
     summary.views += Number(gaMetric.views || 0);
     summary.adds += Number(gaMetric.adds || 0);
@@ -13309,7 +13907,9 @@ function summarizeDailyProductMetrics(orderDailyMetrics, gaDailyMetrics, product
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   summary.revenue = roundMetric(summary.revenue, 2);
+  summary.revenueExVat = roundMetric(summary.revenueExVat, 2);
   summary.revenuePerDay = roundMetric(summary.revenue / days, 2);
+  summary.revenuePerDayExVat = roundMetric(summary.revenueExVat / days, 2);
   summary.unitsPerDay = roundMetric(summary.units / days, 2);
   summary.viewsPerDay = roundMetric(summary.views / days, 2);
   summary.addsPerDay = roundMetric(summary.adds / days, 2);
@@ -13363,7 +13963,7 @@ function newInMarketingAction(row) {
   if (Number(row.units || 0) > 0 && Number(row.stock || 0) <= Math.max(3, Number(row.units || 0) * 0.5)) return "Stock watch";
   if (Number(row.gaViews || 0) <= 5 && Number(row.stock || 0) > 0) return "Needs exposure";
   if (Number(row.gaViews || 0) >= 50 && Number(row.cvr || 0) < 0.03 && Number(row.units || 0) <= 1) return "Content check";
-  if (Number(row.unitsPerLiveDay || 0) >= 1 || Number(row.revenuePerLiveDay || 0) >= 75) return "Push";
+  if (Number(row.unitsPerLiveDay || 0) >= 1 || Number(row.revenuePerLiveDayExVat ?? Number(row.revenuePerLiveDay || 0) / finance.vatDivisor()) >= 75) return "Push";
   if (row.cohorts.includes("Updated image") && Number(row.gaViews || 0) > 0) return "Image test";
   return "Watch";
 }
@@ -13392,6 +13992,7 @@ function buildNewInPerformance(products, options) {
     if (isDraftPipeline) cohorts.push("Draft pipeline");
     const activeDays = activeDaysInPerformance(liveAt, performanceRange);
     const revenue = Number(product.revenue || 0);
+    const revenueExVat = Number(product.revenueExVat ?? revenue / finance.vatDivisor());
     const units = Number(product.units || 0);
     const gaViews = Number(product.gaViews || 0);
     const stock = Number(product.stock || 0);
@@ -13434,8 +14035,16 @@ function buildNewInPerformance(products, options) {
       margin: product.margin,
       stock,
       revenue: Math.round(revenue * 100) / 100,
+      revenueIncVat: Math.round(revenue * 100) / 100,
+      revenueExVat: Math.round(revenueExVat * 100) / 100,
+      grossSales: Math.round(Number(product.grossSales || 0) * 100) / 100,
+      grossSalesExVat: Math.round(Number(product.grossSalesExVat || 0) * 100) / 100,
+      grossProfit: product.grossProfit == null ? null : Math.round(Number(product.grossProfit || 0) * 100) / 100,
+      costCoveragePercent: product.costCoveragePercent == null ? null : Number(product.costCoveragePercent || 0),
+      costQuality: product.costQuality || "unknown",
       units,
       revenuePerLiveDay: activeDays ? Math.round((revenue / activeDays) * 100) / 100 : 0,
+      revenuePerLiveDayExVat: activeDays ? Math.round((revenueExVat / activeDays) * 100) / 100 : 0,
       unitsPerLiveDay: activeDays ? Math.round((units / activeDays) * 100) / 100 : 0,
       gaViews,
       gaAdds: Number(product.gaAdds || 0),
@@ -13463,13 +14072,17 @@ function buildNewInPerformance(products, options) {
     if (row.action === "Push") acc.pushCandidates += 1;
     if (row.action === "Needs exposure") acc.exposureCandidates += 1;
     acc.revenue += Number(row.revenue || 0);
+    acc.revenueExVat += Number(row.revenueExVat || 0);
+    if (row.grossProfit != null) acc.knownGrossProfit += Number(row.grossProfit || 0);
     acc.units += Number(row.units || 0);
     acc.views += Number(row.gaViews || 0);
     acc.adds += Number(row.gaAdds || 0);
     acc.stock += Number(row.stock || 0);
     return acc;
-  }, { products: 0, newLaunches: 0, imageUpdates: 0, draftPipeline: 0, pushCandidates: 0, exposureCandidates: 0, revenue: 0, units: 0, views: 0, adds: 0, stock: 0 });
+  }, { products: 0, newLaunches: 0, imageUpdates: 0, draftPipeline: 0, pushCandidates: 0, exposureCandidates: 0, revenue: 0, revenueExVat: 0, knownGrossProfit: 0, units: 0, views: 0, adds: 0, stock: 0 });
   summary.revenue = Math.round(summary.revenue * 100) / 100;
+  summary.revenueExVat = Math.round(summary.revenueExVat * 100) / 100;
+  summary.knownGrossProfit = Math.round(summary.knownGrossProfit * 100) / 100;
   summary.cvr = summary.views > 0 ? Math.round((summary.units / summary.views) * 10000) / 10000 : 0;
   return { rows, summary };
 }
@@ -13500,12 +14113,21 @@ async function fetchNewInPerformance(req, res) {
     let imageImpactAvailable = false;
     let imageImpactGaAvailable = false;
     let imageImpactMessage = "";
+    let imageImpactSalesSource = "";
     if (impactRange && hasImageUpdates) {
       try {
-        orderDailyMetrics = await fetchOrderDailyMetrics(impactRange);
+        orderDailyMetrics = await fetchShopifyQlProductDailyMetrics(impactRange, snapshot.products || []);
+        imageImpactSalesSource = "shopifyql_sales";
         imageImpactAvailable = true;
-      } catch (error) {
-        imageImpactMessage = error.message || "Could not load daily order metrics for image impact.";
+      } catch (shopifyQlError) {
+        try {
+          orderDailyMetrics = await fetchOrderDailyMetrics(impactRange);
+          imageImpactSalesSource = "order_api_fallback";
+          imageImpactAvailable = true;
+          imageImpactMessage = `Daily image-impact sales used the order fallback: ${shopifyQlError.message}`;
+        } catch (orderError) {
+          imageImpactMessage = orderError.message || shopifyQlError.message || "Could not load daily sales metrics for image impact.";
+        }
       }
       try {
         const dailyGa = await fetchGaDailyMetrics(impactRange);
@@ -13533,12 +14155,22 @@ async function fetchNewInPerformance(req, res) {
       imageImpactRange: impactRange,
       impactDays,
       imageImpactAvailable,
+      imageImpactSalesSource,
       imageImpactGaAvailable,
       imageImpactMessage,
       includeDrafts,
       ordersAvailable: Boolean(snapshot.ordersAvailable),
       gaAvailable: Boolean(snapshot.gaAvailable),
       gaMessage: snapshot.gaMessage || "",
+      financialSemantics: snapshot.financialSemantics || {
+        salesValuesIncludeVat: true,
+        displaySalesValuesIncludeVat: true,
+        canonicalSalesValuesIncludeVat: false,
+        grossProfitRevenueBasis: "ex_vat",
+        formulaVersion: finance.FINANCIAL_FORMULA_VERSION,
+        salesSource: "order_api_fallback"
+      },
+      dataQuality: snapshot.dataQuality || {},
       totalProducts: Number(snapshot.totalProducts || (snapshot.products || []).length),
       products: report.rows,
       summary: report.summary
@@ -15055,7 +15687,7 @@ async function handleApi(req, res) {
     if (!requireRoles(req, res, ["Merchandising", "Admin"])) return true;
     try {
       const body = await readJsonBody(req);
-      const range = body.startDate && body.endDate
+      const range = body.startDate || body.endDate
         ? reportRangeFromRequest(new URL(`http://local/?startDate=${encodeURIComponent(body.startDate)}&endDate=${encodeURIComponent(body.endDate)}`))
         : reportRangeFromRequest(url, 28);
       const job = startBestsellersSyncJob(range);
