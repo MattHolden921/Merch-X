@@ -510,7 +510,7 @@ function actualSmall(actual,delta,type="money",exact=false){return `Actual ${val
 function renderMetrics(){
   const s=state.statement;
   if(!s){el("metrics").innerHTML=[
-    metric("Despatch","-"),metric("Demand","-"),metric("Discounts","-"),metric("Returns","-"),metric("Shipping","-"),metric("Net sales","-"),metric("Net profit","-"),metric("Fixed cost drag","-"),metric("Orders","-"),metric("AOV","-"),metric("Variable costs","-"),metric("Variable cost / order","-"),metric("Marketing","-")
+    metric("Despatch","-"),metric("Demand","-"),metric("Discounts","-"),metric("Returns","-"),metric("Shipping","-"),metric("Net sales","-"),metric("Gross profit","-","-"),metric("Net profit","-"),metric("Fixed cost drag","-"),metric("Orders","-"),metric("AOV","-"),metric("Variable costs","-"),metric("Variable cost / order","-"),metric("Marketing","-")
   ].join("");return;}
   const days=Math.max(s.range.days,1);
   el("metrics").innerHTML=[
@@ -520,6 +520,7 @@ function renderMetrics(){
     metric("Returns",signedGbp(-Math.abs(s.returns)),`${pct(s.despatchRevenue?Math.abs(s.returns)/s.despatchRevenue:0)} of despatch`,"bad"),
     metric("Shipping",gbp(s.shippingRevenue),`${gbp(s.shippingRevenue/days)} / day`),
     metric("Net sales",gbp(s.netRevenue),"Ex VAT product"),
+    metric("Gross profit",gbp(s.grossProfit),pct(s.grossMargin),s.grossProfit>=0?"good":"bad"),
     metric("Net profit",gbp(s.operatingProfit),pct(s.operatingMargin),s.operatingProfit>=0?"good":"bad"),
     metric("Fixed cost drag",pct(s.fixedCostImpact),`${gbp(s.fixedCostTotal)} fixed costs`),
     metric("Orders",numberFmt.format(s.orders),`${numberFmt.format(s.units)} units`),
