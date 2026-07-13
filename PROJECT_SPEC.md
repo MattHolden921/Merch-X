@@ -1,6 +1,6 @@
 # Merch X Project Spec
 
-Last reviewed: 2026-07-10
+Last reviewed: 2026-07-13
 
 This is the shared logic and product reference for Merch X. Keep it current when the app's workflows, calculations, data model, integrations, or page responsibilities change.
 
@@ -80,7 +80,7 @@ Primary table groups:
 - Buying/order form: `suppliers`, `products`, `issued_skus`, `orders`.
 - Product/supplier master data: extended `suppliers` and `products` rows plus `product_sync_events`.
 - Order management: `order_workflows`, `order_events`, `order_invoices`, supplier batches, batch-line receipt actuals in `order_receipt_lines`, discrepancy/credit resolution rows in `order_discrepancies`, PAH carrier defaults in `app_settings`, and immutable `order_label_jobs` report snapshots.
-- Collection reorder: `collection_reorder_audit`.
+- Collection reorder: completed apply history in `collection_reorder_audit` and durable job state in `collection_reorder_jobs`. Audit rows retain the actor plus baseline and final order hashes.
 - Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
 - Weekly actions: `weekly_actions`, `weekly_action_events`.
 - Sale planner: `sale_plans`, `sale_plan_items`, `sale_plan_events`, the variant restoration ledger in `sale_state_ledger`, markdown outcomes/actions, durable `sale_planner_jobs` and `sale_planner_job_items`, plus Sale collection mapping stored in `app_settings.salePlannerCollections`.
@@ -110,6 +110,7 @@ Configuration:
 - `SHOPIFY_CLIENT_ID`.
 - `SHOPIFY_CLIENT_SECRET`.
 - `SHOPIFY_API_VERSION`, defaulting to `2026-07`.
+- `COLLECTION_PLANNER_CACHE_MINUTES`, defaulting to 5 minutes for collection, Shopify order-metric, and GA4 metric reads used by the collection planner.
 
 Used for:
 
@@ -478,16 +479,27 @@ Key principles:
 
 ### Collection Reorder Planner
 
-The collection planner fetches Shopify collections/products, ranks products according to the selected strategy, previews movement, and can apply a new order through a background reorder job.
+The collection planner fetches Shopify collections/products, ranks products according to the selected strategy, previews movement, and can apply a new order through a durable background reorder job.
+
+Ranking logic:
+
+- Products are ranked across the complete loaded collection before search or movement filters are applied, so typing a search never changes a product's suggested global position. The table renders at most 500 matching rows and the visual plan at most 200 cards for browser performance; CSV export and Shopify Apply continue to use the complete plan.
+- Strategy signals use percentile/log caps so one extreme seller does not flatten the rest of a collection. A small current-position stability weight reduces low-value churn. Best Sellers uses net sales, net units, gross-profit contribution, stock and margin; New Arrivals also uses units per live day; Clearance uses weeks cover, sell-through, weak sales and sale tags; High Margin prioritises ex-VAT gross-profit contribution and GP%.
+- Conversion Lift and Gold Dust use GA4 ecommerce purchases divided by GA4 item views, with smoothing and view-count confidence. These strategies are disabled when GA4 data is unavailable rather than silently ranking on zero metrics.
+- Only active, Online Store-published, in-stock products are ranking-eligible. Draft/archived, unpublished, and out-of-stock products keep their current relative order below eligible products.
+- Colourway grouping uses the Shopify product metafield `custom.buying_code` first. Because legacy products commonly lack that value, a conservative fallback removes a recognised trailing colour phrase from the title and combines the remaining title with product type. Only products in the same resolved style group and with reasonably close scores are paired; unrelated single styles are never paired merely to fill a two-product block.
+- Shopify order inputs exclude cancelled, test, and voided orders and use current quantity plus prorated discounted revenue to account for returns. The sales date window is inclusive. Product GP% is calculated ex VAT per costed variant as `((price / 1.2) - cost) / (price / 1.2)` and the product uses the lowest available variant GP% so missing or mixed variant economics are not overstated.
+- Missing margins are visible and receive no margin-score credit. If Shopify order metrics fail, the planner remains inspectable but marks sales-based rankings incomplete and blocks Apply until a clean sync.
 
 Guardrails:
 
-- Applying a reorder requires explicit user confirmation.
+- Applying a reorder is Admin-only, requires explicit typed confirmation, a full exact collection sync, no product-count warning, and a SHA-256 baseline of the synced Shopify order. The job reloads Shopify immediately before mutation and rejects a stale plan when the live baseline differs.
 - Manual Lift can stage products whose Shopify featured image media was recently updated, optionally constrained by current collection position, then sends explicit Shopify move inputs for the selected products only, preserving the relative order of everything else. Product-level `updatedAt` is shown for audit but is not used for image lifting.
 - The default Manual Lift shortcut uses `Images 3d` and `From #9`, preserving the first two four-product visual rows before staging recently updated imagery.
-- Reorder jobs are polled until complete/error.
-- Successful applies are written to `collection_reorder_audit`.
-- After apply, the user should sync collections again to verify live Shopify order.
+- Reorder jobs and progress checkpoints are stored in `collection_reorder_jobs` and polled until complete/error. If the server restarts during a running job, the recovered job is marked interrupted and the user must sync to reconcile Shopify before applying again.
+- Shopify is re-read after every completed plan; the live final order hash must match the approved target before the job is marked complete. Failed or interrupted attempts keep Apply locked until a new sync.
+- Successful, verified applies are written to `collection_reorder_audit` with actor identity, strategy/scope, counts, and baseline/target order hashes.
+- The user syncs collections after apply to load the verified live order as the next baseline.
 
 ### New In Performance
 

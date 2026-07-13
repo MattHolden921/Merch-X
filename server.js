@@ -5,6 +5,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const Database = require("better-sqlite3");
 const { createEmailCampaignService } = require("./lib/email-campaign-service");
+const {
+  applyCollectionMove,
+  nextCollectionMoveBatch,
+  normalizeCollectionMoves,
+  orderHash,
+  sameIdSet,
+  uniqueIds
+} = require("./lib/collection-reorder");
 const { buildLabelJobSnapshot, normalizeDoubleBarcodeSnapshot } = require("./lib/label-jobs");
 const orderActuals = require("./lib/order-actuals");
 const { DEFAULT_PAH_SETTINGS, buildPahReport, safeSettings: safePahSettings } = require("./lib/pah-report");
@@ -571,7 +579,13 @@ function normalizeProduct(product, orderMetrics) {
   const price = prices.length ? Math.min(...prices) : 0;
   const compareAtPrice = compareAtPrices.length ? Math.max(...compareAtPrices) : null;
   const cost = costs.length ? costs.reduce((sum, value) => sum + value, 0) / costs.length : null;
-  const margin = price > 0 && cost > 0 ? Math.round(((price - cost) / price) * 100) : null;
+  const variantMargins = variants.map((variant) => {
+    const variantPrice = Number(variant.price || 0);
+    const variantCost = Number(variant.inventoryItem?.unitCost?.amount || 0);
+    const netRetail = variantPrice / 1.2;
+    return netRetail > 0 && variantCost > 0 ? ((netRetail - variantCost) / netRetail) * 100 : null;
+  }).filter(value => value != null && Number.isFinite(value));
+  const margin = variantMargins.length ? Math.round(Math.min(...variantMargins)) : null;
   const metrics = orderMetrics.get(product.id) || { revenue: 0, units: 0 };
   const featuredMediaImage = product.featuredMedia?.image ? {
     url: product.featuredMedia.image.url,
@@ -623,6 +637,7 @@ function normalizeProduct(product, orderMetrics) {
     skus,
     variantIds,
     supplier: productSupplier(product),
+    buyingCode: String(product.buyingCodeMetafield?.value || "").trim(),
     season: productSeason(product),
     color: productColor(product),
     imageUrl: image?.url || "",
@@ -651,6 +666,7 @@ function normalizeCollection(collection) {
     sortOrder: collection.sortOrder || "",
     updatedAt: collection.updatedAt || "",
     productsCount: Number(collection.productsCount?.count || 0),
+    productsCountPrecision: collection.productsCount?.precision || "",
     imageUrl: collection.image?.url || "",
     imageAlt: collection.image?.altText || collection.title
   };
@@ -671,7 +687,7 @@ function isoDateOnly(date) {
 function dateRangeFromDays(days) {
   const end = new Date();
   const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - Math.max(1, Number(days || 14)));
+  start.setUTCDate(start.getUTCDate() - Math.max(0, Number(days || 14) - 1));
   return { startDate: isoDateOnly(start), endDate: isoDateOnly(end) };
 }
 
@@ -881,9 +897,13 @@ async function fetchOrderMetrics(range) {
     query MerchOrders($cursor: String, $query: String!) {
       orders(first: 100, after: $cursor, query: $query, sortKey: CREATED_AT, reverse: true) {
         nodes {
-          lineItems(first: 100) {
+          cancelledAt
+          test
+          displayFinancialStatus
+          lineItems(first: 250) {
             nodes {
               quantity
+              currentQuantity
               discountedTotalSet { shopMoney { amount } }
               product { id }
             }
@@ -897,11 +917,17 @@ async function fetchOrderMetrics(range) {
     const data = await shopifyGraphql(query, { cursor, query: orderQuery });
     const orders = data.orders;
     for (const order of orders.nodes) {
+      if (order.cancelledAt || order.test || order.displayFinancialStatus === "VOIDED") continue;
       for (const item of order.lineItems.nodes) {
         if (!item.product?.id) continue;
+        const orderedQuantity = Math.max(0, Number(item.quantity || 0));
+        const netQuantity = Math.max(0, Number(item.currentQuantity ?? orderedQuantity));
+        if (!netQuantity) continue;
+        const originalRevenue = Number(item.discountedTotalSet?.shopMoney?.amount || 0);
+        const netRevenue = orderedQuantity > 0 ? originalRevenue * Math.min(1, netQuantity / orderedQuantity) : 0;
         const current = metrics.get(item.product.id) || { revenue: 0, units: 0 };
-        current.revenue += Number(item.discountedTotalSet?.shopMoney?.amount || 0);
-        current.units += Number(item.quantity || 0);
+        current.revenue += netRevenue;
+        current.units += netQuantity;
         metrics.set(item.product.id, current);
       }
     }
@@ -2435,6 +2461,17 @@ function getBestsellersReport(req, res) {
   sendJson(res, 200, buildBestsellersPayload(periodRow));
 }
 
+const collectionPlannerCache = {
+  collections: null,
+  collectionsAt: 0,
+  orderMetrics: new Map(),
+  gaMetrics: new Map()
+};
+
+function collectionPlannerCacheTtlMs() {
+  return Math.max(60_000, Number(process.env.COLLECTION_PLANNER_CACHE_MINUTES || 5) * 60_000);
+}
+
 async function fetchCollectionPlanner(req, res) {
   const { shop, clientId, clientSecret } = shopifyConfig();
   if (!shop || !clientId || !clientSecret) {
@@ -2460,7 +2497,14 @@ async function fetchCollectionPlanner(req, res) {
   let ordersAvailable = true;
 
   try {
-    orderMetrics = await fetchOrderMetrics(dateRange);
+    const metricsKey = `${dateRange.startDate}:${dateRange.endDate}`;
+    const cached = collectionPlannerCache.orderMetrics.get(metricsKey);
+    if (cached && Date.now() - cached.storedAt < collectionPlannerCacheTtlMs()) {
+      orderMetrics = cached.value;
+    } else {
+      orderMetrics = await fetchOrderMetrics(dateRange);
+      collectionPlannerCache.orderMetrics.set(metricsKey, { storedAt: Date.now(), value: orderMetrics });
+    }
   } catch {
     ordersAvailable = false;
   }
@@ -2474,7 +2518,7 @@ async function fetchCollectionPlanner(req, res) {
           handle
           sortOrder
           updatedAt
-          productsCount { count }
+          productsCount { count precision }
           image { url altText }
         }
         pageInfo { hasNextPage endCursor }
@@ -2496,6 +2540,7 @@ async function fetchCollectionPlanner(req, res) {
           nodes {
             id
             legacyResourceId
+            status
             title
             handle
             vendor
@@ -2503,6 +2548,7 @@ async function fetchCollectionPlanner(req, res) {
             tags
             seasonMetafield: metafield(namespace: "custom", key: "season") { value }
             productStatusMetafield: metafield(namespace: "custom", key: "product_status") { value }
+            buyingCodeMetafield: metafield(namespace: "custom", key: "buying_code") { value }
             createdAt
             publishedAt
             updatedAt
@@ -2516,7 +2562,7 @@ async function fetchCollectionPlanner(req, res) {
             }
             featuredImage { url altText }
             images(first: 1) { nodes { url altText } }
-            variants(first: 100) {
+            variants(first: 250) {
               nodes {
                 id
                 legacyResourceId
@@ -2534,15 +2580,26 @@ async function fetchCollectionPlanner(req, res) {
   `;
 
   try {
-    const allCollections = [];
-    let collectionCursor = null;
-    let hasMoreCollections = true;
-    while (hasMoreCollections && allCollections.length < collectionLimit) {
-      const remaining = fetchAllCollections ? 250 : Math.min(250, collectionLimit - allCollections.length);
-      const collectionData = await shopifyGraphql(collectionsQuery, { limit: remaining, cursor: collectionCursor });
-      allCollections.push(...collectionData.collections.nodes.map(normalizeCollection));
-      hasMoreCollections = Boolean(collectionData.collections.pageInfo.hasNextPage);
-      collectionCursor = collectionData.collections.pageInfo.endCursor;
+    let allCollections = [];
+    const cachedCollectionsReady = fetchAllCollections
+      && collectionPlannerCache.collections
+      && Date.now() - collectionPlannerCache.collectionsAt < collectionPlannerCacheTtlMs();
+    if (cachedCollectionsReady) {
+      allCollections = collectionPlannerCache.collections;
+    } else {
+      let collectionCursor = null;
+      let hasMoreCollections = true;
+      while (hasMoreCollections && allCollections.length < collectionLimit) {
+        const remaining = fetchAllCollections ? 250 : Math.min(250, collectionLimit - allCollections.length);
+        const collectionData = await shopifyGraphql(collectionsQuery, { limit: remaining, cursor: collectionCursor });
+        allCollections.push(...collectionData.collections.nodes.map(normalizeCollection));
+        hasMoreCollections = Boolean(collectionData.collections.pageInfo.hasNextPage);
+        collectionCursor = collectionData.collections.pageInfo.endCursor;
+      }
+      if (fetchAllCollections) {
+        collectionPlannerCache.collections = allCollections;
+        collectionPlannerCache.collectionsAt = Date.now();
+      }
     }
     const totalCollections = allCollections.length;
     const filteredCollections = allCollections.filter((collection) => collection.productsCount >= minCollectionProducts);
@@ -2575,13 +2632,31 @@ async function fetchCollectionPlanner(req, res) {
       }
 
       try {
-        const ga = await fetchGaMetrics(dateRange);
+        const gaKey = `${dateRange.startDate}:${dateRange.endDate}`;
+        const cachedGa = collectionPlannerCache.gaMetrics.get(gaKey);
+        const ga = cachedGa && Date.now() - cachedGa.storedAt < collectionPlannerCacheTtlMs()
+          ? cachedGa.value
+          : await fetchGaMetrics(dateRange);
+        if (!cachedGa || Date.now() - cachedGa.storedAt >= collectionPlannerCacheTtlMs()) {
+          collectionPlannerCache.gaMetrics.set(gaKey, { storedAt: Date.now(), value: ga });
+        }
         gaAvailable = ga.available;
         gaMessage = ga.message;
         products = mergeGaMetrics(products, ga.metrics);
       } catch (error) {
         gaMessage = error.message;
       }
+    }
+
+    const dataWarnings = [];
+    if (!ordersAvailable) {
+      dataWarnings.push("Shopify order metrics were unavailable, so sales-based rankings are incomplete. Sync again before applying.");
+    }
+    if (selectedCollection
+      && fetchAllProducts
+      && selectedCollection.productsCountPrecision === "EXACT"
+      && Number(selectedCollection.productsCount || 0) !== products.length) {
+      dataWarnings.push(`Shopify reported ${selectedCollection.productsCount.toLocaleString("en-GB")} collection products but returned ${products.length.toLocaleString("en-GB")} during this sync. Sync again before applying.`);
     }
 
     sendJson(res, 200, {
@@ -2595,7 +2670,10 @@ async function fetchCollectionPlanner(req, res) {
       totalCollections,
       minCollectionProducts,
       selectedCollection,
-      products
+      products,
+      baselineOrderHash: orderHash(products.map(product => product.id)),
+      canApply: userHasRole(req.currentUser, ["Admin"]),
+      dataWarnings
     });
   } catch (error) {
     sendJson(res, 502, { configured: true, message: error.message });
@@ -2605,7 +2683,7 @@ async function fetchCollectionPlanner(req, res) {
 function collectionReorderAuditMap() {
   const db = openOrderSqliteDb();
   const rows = db.prepare(`
-    SELECT collection_id, collection_gid, collection_title, collection_handle, applied_at, total_products, total_moves, strategy, scope
+    SELECT collection_id, collection_gid, collection_title, collection_handle, applied_at, total_products, total_moves, strategy, scope, actor_name, baseline_hash, target_hash
     FROM collection_reorder_audit
     ORDER BY applied_at DESC
   `).all();
@@ -2621,7 +2699,10 @@ function collectionReorderAuditMap() {
       totalProducts: row.total_products,
       totalMoves: row.total_moves,
       strategy: row.strategy,
-      scope: row.scope
+      scope: row.scope,
+      actorName: row.actor_name || "",
+      baselineOrderHash: row.baseline_hash || "",
+      targetOrderHash: row.target_hash || ""
     });
   }
   return latest;
@@ -2650,6 +2731,11 @@ function recordCollectionReorder(job) {
       total_moves,
       strategy,
       scope,
+      actor_name,
+      actor_user_id,
+      actor_email,
+      baseline_hash,
+      target_hash,
       data
     ) VALUES (
       @id,
@@ -2662,6 +2748,11 @@ function recordCollectionReorder(job) {
       @totalMoves,
       @strategy,
       @scope,
+      @actorName,
+      @actorUserId,
+      @actorEmail,
+      @baselineOrderHash,
+      @targetOrderHash,
       @data
     )
   `).run({
@@ -2675,11 +2766,60 @@ function recordCollectionReorder(job) {
     totalMoves: job.totalMoves || 0,
     strategy: job.strategy || "",
     scope: job.scope || "",
+    actorName: job.actorName || "",
+    actorUserId: job.actorUserId || "",
+    actorEmail: job.actorEmail || "",
+    baselineOrderHash: job.baselineOrderHash || "",
+    targetOrderHash: job.targetOrderHash || "",
     data: JSON.stringify(publicCollectionReorderJob(job))
   });
 }
 
 const collectionReorderJobs = new Map();
+
+function persistCollectionReorderJob(job) {
+  const db = openOrderSqliteDb();
+  db.prepare(`
+    INSERT INTO collection_reorder_jobs (id, status, collection_gid, actor_name, baseline_hash, target_hash, data, created_at, updated_at)
+    VALUES (@id, @status, @collectionId, @actorName, @baselineOrderHash, @targetOrderHash, @data, @startedAt, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      status = excluded.status,
+      actor_name = excluded.actor_name,
+      baseline_hash = excluded.baseline_hash,
+      target_hash = excluded.target_hash,
+      data = excluded.data,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    id: job.id,
+    status: job.status,
+    collectionId: job.collectionId,
+    actorName: job.actorName || "",
+    baselineOrderHash: job.baselineOrderHash || "",
+    targetOrderHash: job.targetOrderHash || "",
+    data: JSON.stringify(job),
+    startedAt: job.startedAt || new Date().toISOString()
+  });
+}
+
+function loadCollectionReorderJob(jobId) {
+  if (!jobId) return null;
+  const row = openOrderSqliteDb().prepare("SELECT data FROM collection_reorder_jobs WHERE id = ?").get(jobId);
+  if (!row?.data) return null;
+  try {
+    const job = JSON.parse(row.data);
+    if (["queued", "running"].includes(job.status)) {
+      job.status = "error";
+      job.error = "The server restarted while this reorder was running. Sync the collection to reconcile the live order before starting a new apply.";
+      job.message = job.error;
+      job.finishedAt = job.finishedAt || new Date().toISOString();
+      persistCollectionReorderJob(job);
+    }
+    collectionReorderJobs.set(job.id, job);
+    return job;
+  } catch {
+    return null;
+  }
+}
 
 function publicCollectionReorderJob(job) {
   if (!job) return null;
@@ -2691,6 +2831,9 @@ function publicCollectionReorderJob(job) {
     collectionHandle: job.collectionHandle,
     strategy: job.strategy,
     scope: job.scope,
+    actorName: job.actorName,
+    baselineOrderHash: job.baselineOrderHash,
+    targetOrderHash: job.targetOrderHash,
     totalProducts: job.totalProducts,
     totalMoves: job.totalMoves,
     processedMoves: job.processedMoves,
@@ -2700,7 +2843,8 @@ function publicCollectionReorderJob(job) {
     message: job.message,
     error: job.error,
     startedAt: job.startedAt,
-    finishedAt: job.finishedAt
+    finishedAt: job.finishedAt,
+    verifiedAt: job.verifiedAt || ""
   };
 }
 
@@ -2712,7 +2856,7 @@ async function fetchCollectionApplyState(collectionId) {
         title
         handle
         sortOrder
-        productsCount { count }
+        productsCount { count precision }
         products(first: $limit, after: $cursor) {
           nodes { id }
           pageInfo { hasNextPage endCursor }
@@ -2735,73 +2879,37 @@ async function fetchCollectionApplyState(collectionId) {
   return { collection: normalizeCollection(collection), productIds };
 }
 
-function uniqueIds(ids) {
-  const seen = new Set();
-  return (ids || []).filter((id) => {
-    const value = String(id || "").trim();
-    if (!value || seen.has(value)) return false;
-    seen.add(value);
-    return true;
-  });
-}
-
-function sameIdSet(left, right) {
-  if (left.length !== right.length) return false;
-  const rightSet = new Set(right);
-  return left.every((id) => rightSet.has(id));
-}
-
-function normalizeCollectionMoves(moves) {
-  if (!Array.isArray(moves)) return [];
-  return moves.map((move, index) => {
-    const id = String(move?.id || "").trim();
-    const position = Number(move?.newPosition);
-    if (!id || !Number.isInteger(position) || position < 0) {
-      throw new Error(`Invalid collection move at row ${index + 1}.`);
-    }
-    return { id, newPosition: String(position) };
-  });
-}
-
-function applyCollectionMove(order, productId, newPosition) {
-  const currentIndex = order.indexOf(productId);
-  if (currentIndex === -1) return false;
-  const targetIndex = Math.max(0, Math.min(order.length - 1, Number(newPosition)));
-  if (currentIndex === targetIndex) return false;
-  order.splice(currentIndex, 1);
-  order.splice(targetIndex, 0, productId);
-  return true;
-}
-
-function nextCollectionMoveBatch(currentOrder, targetOrder, limit = 250) {
-  const moves = [];
-  for (let index = 0; index < targetOrder.length && moves.length < limit; index += 1) {
-    const wantedId = targetOrder[index];
-    if (currentOrder[index] === wantedId) continue;
-    const currentIndex = currentOrder.indexOf(wantedId);
-    if (currentIndex === -1) continue;
-    applyCollectionMove(currentOrder, wantedId, index);
-    moves.push({ id: wantedId, newPosition: String(index) });
-  }
-  return moves;
-}
-
 async function submitCollectionMoveBatches(job, moves) {
   for (let index = 0; index < moves.length; index += 250) {
     const batch = moves.slice(index, index + 250);
     if (!batch.length) continue;
     job.message = `Submitting Shopify reorder batch ${job.batchesSubmitted + 1}...`;
+    persistCollectionReorderJob(job);
     const shopifyJob = await submitCollectionReorderBatch(job.collectionId, batch);
     job.batchesSubmitted += 1;
     if (shopifyJob?.id) {
       job.shopifyJobs.push(shopifyJob.id);
       job.message = `Waiting for Shopify batch ${job.batchesSubmitted} to finish...`;
+      persistCollectionReorderJob(job);
       await pollShopifyJob(shopifyJob.id);
     }
     job.processedMoves += batch.length;
     job.batchesCompleted += 1;
     job.message = `Applied ${job.processedMoves.toLocaleString("en-GB")} of ${job.totalMoves.toLocaleString("en-GB")} moves.`;
+    persistCollectionReorderJob(job);
   }
+}
+
+async function verifyCollectionReorder(job, targetOrder) {
+  job.message = "Verifying the live Shopify collection order...";
+  persistCollectionReorderJob(job);
+  const verifiedState = await fetchCollectionApplyState(job.collectionId);
+  if (!verifiedState) throw new Error("Collection could not be reloaded from Shopify after applying the reorder.");
+  const verifiedHash = orderHash(verifiedState.productIds);
+  if (verifiedHash !== orderHash(targetOrder)) {
+    throw new Error("Shopify finished the reorder job, but the live order does not match the approved plan. Sync the collection before trying again.");
+  }
+  job.verifiedAt = new Date().toISOString();
 }
 
 async function submitCollectionReorderBatch(collectionId, moves) {
@@ -2841,10 +2949,15 @@ async function runCollectionReorderJob(job) {
   try {
     job.status = "running";
     job.message = "Checking the live Shopify collection order...";
+    persistCollectionReorderJob(job);
     const applyState = await fetchCollectionApplyState(job.collectionId);
     if (!applyState) throw new Error("Collection not found in Shopify.");
     if (applyState.collection.sortOrder !== "MANUAL") {
       throw new Error("Can't reorder products unless the collection sort order is MANUAL.");
+    }
+    const liveBaselineHash = orderHash(applyState.productIds);
+    if (!job.baselineOrderHash || liveBaselineHash !== job.baselineOrderHash) {
+      throw new Error("The live Shopify collection order changed after this plan was synced. Sync the full collection and review the new plan before applying.");
     }
 
     if (job.requestedMoves?.length) {
@@ -2871,25 +2984,28 @@ async function runCollectionReorderJob(job) {
 
       job.totalProducts = applyState.productIds.length;
       job.totalMoves = moves.length;
+      job.targetOrderHash = orderHash(currentOrder);
       if (!moves.length) {
         job.status = "complete";
         job.message = "Shopify collection already matches the requested product moves.";
         job.finishedAt = new Date().toISOString();
+        job.verifiedAt = job.finishedAt;
+        persistCollectionReorderJob(job);
         return;
       }
 
+      persistCollectionReorderJob(job);
       await submitCollectionMoveBatches(job, moves);
+      await verifyCollectionReorder(job, currentOrder);
       job.status = "complete";
-      job.message = `Applied ${job.totalMoves.toLocaleString("en-GB")} product moves to Shopify.`;
+      job.message = `Applied and verified ${job.totalMoves.toLocaleString("en-GB")} product moves in Shopify.`;
       job.finishedAt = new Date().toISOString();
+      persistCollectionReorderJob(job);
       recordCollectionReorder(job);
       return;
     }
 
-    const targetProductIds = uniqueIds(job.targetProductIds);
-    if (targetProductIds.length !== job.targetProductIds.length) {
-      throw new Error("Suggested order contains duplicate or blank product IDs.");
-    }
+    const targetProductIds = [...job.targetProductIds];
     if (!sameIdSet(applyState.productIds, targetProductIds)) {
       throw new Error("Suggested order does not match the live collection products. Sync the full collection again before applying.");
     }
@@ -2898,6 +3014,7 @@ async function runCollectionReorderJob(job) {
     const targetOrder = [...targetProductIds];
     job.totalProducts = targetOrder.length;
     job.totalMoves = 0;
+    job.targetOrderHash = orderHash(targetOrder);
     while (true) {
       const previewOrder = [...currentOrder];
       const moves = nextCollectionMoveBatch(previewOrder, targetOrder, 250);
@@ -2911,24 +3028,30 @@ async function runCollectionReorderJob(job) {
       job.status = "complete";
       job.message = "Shopify collection already matches the suggested order.";
       job.finishedAt = new Date().toISOString();
+      job.verifiedAt = job.finishedAt;
+      persistCollectionReorderJob(job);
       return;
     }
 
+    persistCollectionReorderJob(job);
     while (true) {
       const moves = nextCollectionMoveBatch(currentOrder, targetOrder, 250);
       if (!moves.length) break;
       await submitCollectionMoveBatches(job, moves);
     }
 
+    await verifyCollectionReorder(job, targetOrder);
     job.status = "complete";
-    job.message = `Applied ${job.totalMoves.toLocaleString("en-GB")} product moves to Shopify.`;
+    job.message = `Applied and verified ${job.totalMoves.toLocaleString("en-GB")} product moves in Shopify.`;
     job.finishedAt = new Date().toISOString();
+    persistCollectionReorderJob(job);
     recordCollectionReorder(job);
   } catch (error) {
     job.status = "error";
     job.error = error.message;
     job.message = error.message;
     job.finishedAt = new Date().toISOString();
+    persistCollectionReorderJob(job);
   }
 }
 
@@ -2953,11 +3076,27 @@ async function startCollectionReorder(req, res) {
     sendJson(res, 400, { message: error.message });
     return;
   }
-  const targetProductIds = uniqueIds(body.targetProductIds);
+  const rawTargetProductIds = Array.isArray(body.targetProductIds)
+    ? body.targetProductIds.map(id => String(id || "").trim())
+    : [];
+  const targetProductIds = uniqueIds(rawTargetProductIds);
+  const baselineOrderHash = String(body.baselineOrderHash || "").trim();
   const confirmText = String(body.confirmText || "").trim().toUpperCase();
 
+  if (requestedMoves.length && rawTargetProductIds.length) {
+    sendJson(res, 400, { message: "Send either explicit moves or a complete target order, not both." });
+    return;
+  }
+  if (rawTargetProductIds.some(id => !id) || targetProductIds.length !== rawTargetProductIds.length) {
+    sendJson(res, 400, { message: "Suggested order contains duplicate or blank product IDs." });
+    return;
+  }
   if (!collectionId || (!targetProductIds.length && !requestedMoves.length)) {
     sendJson(res, 400, { message: "Missing collection or suggested product order." });
+    return;
+  }
+  if (!/^[a-f0-9]{64}$/i.test(baselineOrderHash)) {
+    sendJson(res, 400, { message: "The plan is missing a valid Shopify baseline. Sync the full collection again before applying." });
     return;
   }
   if (confirmText !== "APPLY") {
@@ -2973,6 +3112,8 @@ async function startCollectionReorder(req, res) {
     collectionHandle,
     targetProductIds,
     requestedMoves,
+    baselineOrderHash,
+    targetOrderHash: "",
     strategy: String(body.strategy || "").trim(),
     scope: String(body.scope || "").trim(),
     totalProducts: targetProductIds.length || requestedMoves.length,
@@ -2981,19 +3122,24 @@ async function startCollectionReorder(req, res) {
     batchesCompleted: 0,
     batchesSubmitted: 0,
     shopifyJobs: [],
+    actorName: actorName(req),
+    actorUserId: req.currentUser?.id && req.currentUser.id !== "system" ? req.currentUser.id : "",
+    actorEmail: req.currentUser?.email || "",
     message: "Queued Shopify collection reorder.",
     error: "",
     startedAt: new Date().toISOString(),
     finishedAt: ""
   };
   collectionReorderJobs.set(job.id, job);
+  persistCollectionReorderJob(job);
   runCollectionReorderJob(job);
   sendJson(res, 202, { configured: true, job: publicCollectionReorderJob(job) });
 }
 
 function getCollectionReorderJob(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const job = collectionReorderJobs.get(url.searchParams.get("id"));
+  const jobId = url.searchParams.get("id");
+  const job = collectionReorderJobs.get(jobId) || loadCollectionReorderJob(jobId);
   if (!job) {
     sendJson(res, 404, { message: "Reorder job not found. If the server restarted, sync the collection and check Shopify before applying again." });
     return;
@@ -3799,8 +3945,25 @@ function openOrderSqliteDb() {
       total_moves INTEGER DEFAULT 0,
       strategy TEXT,
       scope TEXT,
+      actor_name TEXT,
+      actor_user_id TEXT,
+      actor_email TEXT,
+      baseline_hash TEXT,
+      target_hash TEXT,
       data TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS collection_reorder_jobs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      collection_gid TEXT NOT NULL,
+      actor_name TEXT,
+      baseline_hash TEXT,
+      target_hash TEXT,
+      data TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS report_sources (
@@ -4281,6 +4444,7 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_work_handoffs_entity ON work_handoffs(entity_type, entity_id, status);
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at);
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_applied ON collection_reorder_audit(applied_at);
+    CREATE INDEX IF NOT EXISTS idx_collection_reorder_jobs_status ON collection_reorder_jobs(status, updated_at);
     CREATE INDEX IF NOT EXISTS idx_issued_skus_issued_at ON issued_skus(issued_at);
     CREATE INDEX IF NOT EXISTS idx_order_events_order_created ON order_events(order_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_order_invoices_order ON order_invoices(order_id, updated_at);
@@ -4332,6 +4496,16 @@ function openOrderSqliteDb() {
   const orderColumns = orderSqliteDb.prepare("PRAGMA table_info(orders)").all().map(column => column.name);
   if (!orderColumns.includes("archived_at")) {
     orderSqliteDb.prepare("ALTER TABLE orders ADD COLUMN archived_at TEXT").run();
+  }
+  const collectionAuditColumns = orderSqliteDb.prepare("PRAGMA table_info(collection_reorder_audit)").all().map(column => column.name);
+  for (const [name, definition] of [
+    ["actor_name", "TEXT"],
+    ["actor_user_id", "TEXT"],
+    ["actor_email", "TEXT"],
+    ["baseline_hash", "TEXT"],
+    ["target_hash", "TEXT"]
+  ]) {
+    if (!collectionAuditColumns.includes(name)) orderSqliteDb.prepare(`ALTER TABLE collection_reorder_audit ADD COLUMN ${name} ${definition}`).run();
   }
   const invoiceColumns = orderSqliteDb.prepare("PRAGMA table_info(order_invoices)").all().map(column => column.name);
   if (!invoiceColumns.includes("batch_id")) {
