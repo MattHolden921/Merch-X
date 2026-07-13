@@ -3,182 +3,171 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Merch KK</title>
+<meta name="theme-color" content="#f7f9fb">
+<title>MerchClarity | Retail intelligence</title>
 <link rel="stylesheet" href="design-system.css">
+<script src="/auth.js"></script>
 <style>
-.wrap{max-width:1100px}
-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:28px}
-.brand{font-size:14px;color:var(--text2);margin-bottom:8px}
-h1{font-size:28px;line-height:1.15;font-weight:600;letter-spacing:0;margin-bottom:8px}
-.sub{font-size:14px;line-height:1.6;color:var(--text2);max-width:680px}
-.status{display:inline-flex;align-items:center;min-height:30px;color:var(--success);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:0 10px;white-space:nowrap}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
-.tool{display:flex;flex-direction:column;min-height:178px;background:var(--bg);border:.5px solid var(--border);border-radius:var(--r);padding:18px;color:inherit;text-decoration:none}
-.tool:hover{border-color:var(--border2);background:var(--bg2)}
-.tool.disabled{opacity:.62;pointer-events:none}
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
-.label{font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em}
-.tool h2{font-size:17px;font-weight:600;margin-bottom:8px}
-.tool p{font-size:13px;line-height:1.55;color:var(--text2);margin-bottom:18px}
-.action{margin-top:auto;font-size:13px;color:var(--ds-action);font-weight:600}
-.footer{margin-top:26px;font-size:12px;color:var(--text3);line-height:1.6}
-@media(max-width:620px){body{padding:20px 12px 40px}header{display:block}.status{display:inline-block;margin-top:16px}h1{font-size:24px}.tool{min-height:160px}}
+body{padding:0 0 56px;background:#f7f9fb}
+.site-header{background:#f3f2ed;border-bottom:1px solid #e0e3e5}
+.site-header__inner{width:min(1240px,calc(100% - 40px));margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:112px}
+.logo{display:block;width:270px;max-width:48vw;height:auto}
+.header-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;min-width:0}
+.live-status{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:0 11px;border:1px solid #d5d9df;border-radius:999px;background:rgba(255,255,255,.72);font-size:12px;font-weight:600;color:#465469;white-space:nowrap}
+.live-status::before{content:"";width:7px;height:7px;border-radius:50%;background:#16a56a;box-shadow:0 0 0 3px rgba(22,165,106,.12)}
+.site-header #auth-bar.home-auth-slot{position:relative;top:auto;z-index:50;margin:0;padding:0;border:0;background:transparent;display:flex;align-items:center;justify-content:flex-end;gap:10px;color:#465469}
+.site-header #auth-bar.home-auth-slot:empty{display:none}
+.site-header #auth-bar.home-auth-slot .auth-link{color:#075fa7}
+.site-header #auth-bar.home-auth-slot .auth-menu{top:34px}
+.page{width:min(1240px,calc(100% - 40px));margin:0 auto}
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.55fr);gap:60px;align-items:end;padding:64px 0 54px;border-bottom:1px solid #dfe4ea}
+.eyebrow{margin-bottom:14px;color:#006b91;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.hero h1{max-width:770px;margin:0;color:#102549;font-size:clamp(34px,5vw,58px);font-weight:720;line-height:1.04;letter-spacing:-.045em}
+.hero-copy{max-width:680px;margin-top:20px;color:#58677c;font-size:17px;line-height:1.7}
+.hero-aside{padding:22px 0 3px;border-top:3px solid #08a8bd}
+.hero-aside strong{display:block;margin-bottom:8px;color:#102549;font-size:15px}
+.hero-aside p{color:#69778a;font-size:13px;line-height:1.65}
+.section{padding-top:48px}
+.section-heading{display:flex;align-items:end;justify-content:space-between;gap:24px;margin-bottom:18px}
+.section-kicker{margin-bottom:7px;color:#68768a;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.section h2{margin:0;color:#15294b;font-size:23px;font-weight:680;letter-spacing:-.02em}
+.section-note{max-width:470px;color:#718095;font-size:13px;line-height:1.55;text-align:right}
+.tool-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.tool{position:relative;display:flex;min-height:178px;flex-direction:column;overflow:hidden;padding:20px;background:#fff;border:1px solid #dfe4eb;border-radius:8px;color:inherit;text-decoration:none;box-shadow:0 1px 2px rgba(15,35,65,.025);transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.tool::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--accent,#0a9fba);opacity:0;transition:opacity .16s ease}
+.tool:hover{transform:translateY(-2px);border-color:#b9c6d6;box-shadow:0 12px 28px rgba(22,45,78,.08);color:inherit}
+.tool:hover::before{opacity:1}
+.tool:focus-visible{outline:3px solid rgba(0,82,255,.22);outline-offset:2px}
+.tool-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px}
+.tool-icon{display:grid;width:34px;height:34px;place-items:center;border-radius:7px;background:var(--icon-bg,#e8f7f8);color:var(--accent,#087d96)}
+.tool-icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.tool-meta{color:#8491a2;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.tool h3{margin:0 0 8px;color:#182b4c;font-size:17px;font-weight:680;letter-spacing:-.01em}
+.tool p{margin:0 0 20px;color:#657489;font-size:13px;line-height:1.55}
+.tool-action{display:flex;align-items:center;gap:6px;margin-top:auto;color:#0052b8;font-size:12px;font-weight:700}
+.tool-action span{transition:transform .16s ease}
+.tool:hover .tool-action span{transform:translateX(3px)}
+.tool--blue{--accent:#1e63d5;--icon-bg:#eaf1fd}
+.tool--violet{--accent:#6959c8;--icon-bg:#f0edfb}
+.tool--amber{--accent:#b26a12;--icon-bg:#fbf1df}
+.tool--green{--accent:#18825f;--icon-bg:#e7f5ef}
+.site-footer{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-top:56px;padding-top:22px;border-top:1px solid #dfe4ea;color:#778599;font-size:12px;line-height:1.5}
+.site-footer strong{color:#40506a;font-weight:650}
+@media(max-width:980px){.hero{grid-template-columns:1fr;gap:34px}.hero-aside{max-width:620px}.tool-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.section-note{display:none}}
+@media(max-width:820px){.site-header__inner{align-items:flex-start;padding:18px 0}.header-actions{align-items:flex-end;flex-direction:column-reverse;gap:7px}.site-header #auth-bar.home-auth-slot{align-items:center;justify-content:flex-end;flex-wrap:wrap}.site-header #auth-bar.home-auth-slot>span:first-of-type{display:none}}
+@media(max-width:620px){body{padding-bottom:32px}.site-header__inner,.page{width:min(100% - 28px,1240px)}.site-header__inner{min-height:86px}.logo{width:215px;max-width:58vw}.live-status{padding:0 9px;font-size:0}.live-status::after{content:"Live";font-size:11px}.site-header #auth-bar.home-auth-slot{gap:8px;font-size:11px}.site-header #auth-bar.home-auth-slot .auth-menu{position:fixed;top:82px;right:14px}.hero{padding:42px 0 38px}.hero h1{font-size:36px}.hero-copy{font-size:15px}.section{padding-top:36px}.tool-grid{grid-template-columns:1fr}.tool{min-height:156px}.site-footer{display:block}.site-footer span{display:block;margin-top:6px}}
+@media(prefers-reduced-motion:reduce){.tool,.tool::before,.tool-action span{transition:none}}
+@media(prefers-color-scheme:dark){body{background:#f7f9fb;color:#172033}.site-header{background:#f3f2ed}.tool{background:#fff}.hero h1,.section h2,.tool h3{color:#15294b}}
 </style>
 </head>
 <body>
-<main class="wrap">
-  <header>
-    <div>
-      <div class="brand">Merch KK</div>
-      <h1>Merchandising tools</h1>
-      <p class="sub">A lightweight home for internal merchandising reports and workflow tools. Pick a tool below to open it as a standalone workspace.</p>
+<header class="site-header">
+  <div class="site-header__inner">
+    <img class="logo" src="assets/merchclarity-logo.png" alt="MerchClarity — retail intelligence for modern ecommerce">
+    <div class="header-actions">
+      <span class="live-status">Workspace live</span>
+      <div id="auth-bar" class="home-auth-slot" aria-label="Account and messages"></div>
     </div>
-    <div class="status">Live</div>
-  </header>
+  </div>
+</header>
 
-  <section class="grid" aria-label="Merchandising tools">
-    <a class="tool" href="bestsellers.html">
-      <div class="top">
-        <span class="label">Reporting</span>
-        <span class="pill">Ready</span>
-      </div>
-      <h2>Bestsellers report</h2>
-      <p>Upload Shopify sales, product, inventory, and trade files to analyse bestsellers, stock position, revenue, slow sellers, and weekly trade.</p>
-      <span class="action">Open report &rarr;</span>
-    </a>
-
-    <a class="tool" href="order-form.html">
-      <div class="top">
-        <span class="label">Buying</span>
-        <span class="pill">Prototype</span>
-      </div>
-      <h2>Stock order form</h2>
-      <p>Create supplier orders, look up saved SKUs, prefill repeat products, and store supplier/product details for future buys.</p>
-      <span class="action">Open form &rarr;</span>
-    </a>
-
-    <a class="tool" href="orders.html">
-      <div class="top">
-        <span class="label">Buying</span>
-        <span class="pill">New</span>
-      </div>
-      <h2>Orders</h2>
-      <p>Track saved purchase orders through buying approval, finance payment, intake dates, next actions, and team notes.</p>
-      <span class="action">Open orders &rarr;</span>
-    </a>
-
-    <a class="tool" href="order-reports.html">
-      <div class="top">
-        <span class="label">Reporting</span>
-        <span class="pill">New</span>
-      </div>
-      <h2>Order reports</h2>
-      <p>Review arrivals, overdue intake, missing ETAs, finance exposure, buying mix, and order data quality with links back to order detail.</p>
-      <span class="action">Open reports &rarr;</span>
-    </a>
-
-    <a class="tool" href="supplier-report.html">
-      <div class="top">
-        <span class="label">Reporting</span>
-        <span class="pill">New</span>
-      </div>
-      <h2>Supplier report</h2>
-      <p>Review a supplier from the top down across purchase orders, product rows, receipt actuals, discrepancies, and credit balances.</p>
-      <span class="action">Open report &rarr;</span>
-    </a>
-
-    <a class="tool" href="pnl.html">
-      <div class="top">
-        <span class="label">Finance</span>
-        <span class="pill">New</span>
-      </div>
-      <h2>P&amp;L planner</h2>
-      <p>Load live Shopify actuals, apply saved cost rules and marketing spend, then model profit changes from sales, AOV, and spend drivers.</p>
-      <span class="action">Open planner &rarr;</span>
-    </a>
-
-    <a class="tool" href="sku-register.html">
-      <div class="top">
-        <span class="label">Buying</span>
-        <span class="pill">New</span>
-      </div>
-      <h2>Local SKU register</h2>
-      <p>Review locally saved, non-Shopify product SKUs with supplier codes, costs, order history, images, and attached order-line data.</p>
-      <span class="action">Open register &rarr;</span>
-    </a>
-
-    <a class="tool" href="products.html">
-      <div class="top">
-        <span class="label">Master data</span>
-        <span class="pill">New</span>
-      </div>
-      <h2>Products & suppliers</h2>
-      <p>Create product and supplier master records, review Shopify readiness, and push approved products to Shopify as drafts.</p>
-      <span class="action">Open workspace &rarr;</span>
-    </a>
-
-    <a class="tool" href="merchandising.html">
-      <div class="top">
-        <span class="label">Planning</span>
-        <span class="pill">New</span>
-      </div>
-      <h2>Product merchandising</h2>
-      <p>Sync Shopify products into a print-ready range board ranked by recent sales, stock depth, and gross margin.</p>
-      <span class="action">Open board &rarr;</span>
-    </a>
-
-    <a class="tool" href="new-in-performance.html">
-      <div class="top">
-        <span class="label">Marketing</span>
-        <span class="pill">New</span>
-      </div>
-      <h2>New In performance</h2>
-      <p>Track recently launched products and updated imagery with sales, stock, GA4 engagement, share links, and marketing CSV export.</p>
-      <span class="action">Open report &rarr;</span>
-    </a>
-
-    <a class="tool" href="collection-planner.html">
-      <div class="top">
-        <span class="label">Planning</span>
-        <span class="pill">Draft</span>
-      </div>
-      <h2>Collection reorder planner</h2>
-      <p>Pick a Shopify collection, compare current product order with strategy-led suggestions, and export a CSV review plan.</p>
-      <span class="action">Open planner &rarr;</span>
-    </a>
-
-    <a class="tool" href="sale-planner.html">
-      <div class="top">
-        <span class="label">Trading</span>
-        <span class="pill">New</span>
-      </div>
-      <h2>Sale planner</h2>
-      <p>Plan markdowns, map sale collections, apply Shopify sale prices, and remove products from sale when the promotion ends.</p>
-      <span class="action">Open planner &rarr;</span>
-    </a>
-
-    <a class="tool" href="weekly-actions.html">
-      <div class="top">
-        <span class="label">Trading</span>
-        <span class="pill">New</span>
-      </div>
-      <h2>Weekly actions</h2>
-      <p>Generate saved follow-up tasks from server-side bestsellers reports, then track owners, due dates, notes, and completion.</p>
-      <span class="action">Open actions &rarr;</span>
-    </a>
-
-    <a class="tool" href="email-merchandising.html">
-      <div class="top">
-        <span class="label">Marketing</span>
-        <span class="pill">New</span>
-      </div>
-      <h2>Email merchandiser</h2>
-      <p>Build fresh six-product email capsules, create tracked Klaviyo drafts, and review engagement and revenue.</p>
-      <span class="action">Build campaign &rarr;</span>
-    </a>
+<main class="page">
+  <section class="hero" aria-labelledby="page-title">
+    <div>
+      <p class="eyebrow">Retail intelligence workspace</p>
+      <h1 id="page-title">Make every merchandising decision clearer.</h1>
+      <p class="hero-copy">One connected workspace for buying, trading, product performance and profitability — built to help your team move from insight to action.</p>
+    </div>
+    <aside class="hero-aside">
+      <strong>Choose a workspace to get started</strong>
+      <p>Review live trading signals, manage the product journey and turn opportunities into clear next actions.</p>
+    </aside>
   </section>
 
-  <p class="footer">Each feature can live as a separate page while sharing the same domain, password protection, deployment, and server setup.</p>
+  <section class="section" aria-labelledby="trade-heading">
+    <div class="section-heading">
+      <div><p class="section-kicker">Performance</p><h2 id="trade-heading">Trade with confidence</h2></div>
+      <p class="section-note">See what is working, spot missed demand and give every trading conversation a shared view of performance.</p>
+    </div>
+    <div class="tool-grid">
+      <a class="tool" href="bestsellers.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg></span><span class="tool-meta">Reporting</span></div>
+        <h3>Bestsellers</h3><p>Understand sales, stock, margin and demand across your strongest and slowest products.</p><span class="tool-action">Open report <span>&rarr;</span></span>
+      </a>
+      <a class="tool tool--violet" href="new-in-performance.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="m12 3 1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3Z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"/></svg></span><span class="tool-meta">Launches</span></div>
+        <h3>New In performance</h3><p>Track new launches and refreshed imagery, then identify the products that need more exposure.</p><span class="tool-action">Open report <span>&rarr;</span></span>
+      </a>
+      <a class="tool tool--green" href="merchandising.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7"/><rect x="14" y="4" width="7" height="7"/><rect x="3" y="15" width="7" height="5"/><rect x="14" y="15" width="7" height="5"/></svg></span><span class="tool-meta">Range view</span></div>
+        <h3>Product merchandising</h3><p>Bring products, stock and commercial performance together in one visual range board.</p><span class="tool-action">Open board <span>&rarr;</span></span>
+      </a>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="buy-heading">
+    <div class="section-heading">
+      <div><p class="section-kicker">Buying &amp; supply</p><h2 id="buy-heading">Run a tighter product journey</h2></div>
+      <p class="section-note">Keep product information, purchase orders, suppliers and intake decisions connected from first buy to arrival.</p>
+    </div>
+    <div class="tool-grid">
+      <a class="tool tool--blue" href="order-form.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="M5 3h14v18H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><span class="tool-meta">Create</span></div>
+        <h3>Purchase order</h3><p>Build supplier orders, issue SKUs and reuse trusted product details for faster repeat buys.</p><span class="tool-action">Create order <span>&rarr;</span></span>
+      </a>
+      <a class="tool tool--blue" href="orders.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="M3 7h18v13H3z"/><path d="m3 7 3-4h12l3 4M8 11h8"/></svg></span><span class="tool-meta">Workflow</span></div>
+        <h3>Order workspace</h3><p>Move orders through approval, payment and intake with clear ownership and next actions.</p><span class="tool-action">Open orders <span>&rarr;</span></span>
+      </a>
+      <a class="tool tool--violet" href="products.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="m4 7 8-4 8 4-8 4-8-4Z"/><path d="m4 12 8 4 8-4M4 17l8 4 8-4"/></svg></span><span class="tool-meta">Master data</span></div>
+        <h3>Products &amp; suppliers</h3><p>Prepare product records, check Shopify readiness and manage supplier information.</p><span class="tool-action">Open products <span>&rarr;</span></span>
+      </a>
+      <a class="tool tool--green" href="supplier-report.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="M4 21V7l8-4 8 4v14M9 21v-5h6v5M8 9h.01M12 9h.01M16 9h.01M8 13h.01M12 13h.01M16 13h.01"/></svg></span><span class="tool-meta">Suppliers</span></div>
+        <h3>Supplier performance</h3><p>Review orders, receipts, discrepancies and credit exposure for every supplier.</p><span class="tool-action">Open report <span>&rarr;</span></span>
+      </a>
+      <a class="tool tool--amber" href="order-reports.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 16v-3m4 3V8m4 8v-5"/></svg></span><span class="tool-meta">Operations</span></div>
+        <h3>Order reports</h3><p>Stay ahead of arrivals, overdue intake, finance exposure and data-quality issues.</p><span class="tool-action">Open reports <span>&rarr;</span></span>
+      </a>
+      <a class="tool tool--amber" href="sku-register.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="M4 5v14M7 5v14M11 5v14M14 5v14M20 5v14M17 5v14"/></svg></span><span class="tool-meta">Product codes</span></div>
+        <h3>SKU register</h3><p>Find locally issued SKUs with their costs, images, supplier codes and order history.</p><span class="tool-action">Open register <span>&rarr;</span></span>
+      </a>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="plan-heading">
+    <div class="section-heading">
+      <div><p class="section-kicker">Planning &amp; action</p><h2 id="plan-heading">Turn insight into movement</h2></div>
+      <p class="section-note">Shape the storefront, protect profit and keep the team focused on the decisions that matter next.</p>
+    </div>
+    <div class="tool-grid">
+      <a class="tool tool--violet" href="collection-planner.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h10M4 19h6"/><path d="m17 16 3 3-3 3"/></svg></span><span class="tool-meta">Shopify</span></div>
+        <h3>Collection planner</h3><p>Reorder Shopify collections using sales, margin, stock and conversion signals.</p><span class="tool-action">Open planner <span>&rarr;</span></span>
+      </a>
+      <a class="tool tool--amber" href="sale-planner.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="m3 12 9-9h7l2 2v7l-9 9-9-9Z"/><circle cx="16.5" cy="7.5" r="1"/></svg></span><span class="tool-meta">Markdowns</span></div>
+        <h3>Sale planner</h3><p>Plan markdowns and manage Shopify sale prices and collections with confidence.</p><span class="tool-action">Open planner <span>&rarr;</span></span>
+      </a>
+      <a class="tool tool--green" href="pnl.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="M4 19h16M6 16l4-5 3 2 5-7"/><path d="M15 6h3v3"/></svg></span><span class="tool-meta">Profitability</span></div>
+        <h3>P&amp;L planner</h3><p>Combine actuals, costs and marketing spend to model a clearer path to profit.</p><span class="tool-action">Open planner <span>&rarr;</span></span>
+      </a>
+      <a class="tool tool--blue" href="weekly-actions.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="M9 11 12 14 20 6"/><path d="M20 12v7H4V5h11"/></svg></span><span class="tool-meta">Team workflow</span></div>
+        <h3>Weekly actions</h3><p>Turn report signals into owned actions with due dates, notes and visible progress.</p><span class="tool-action">Open actions <span>&rarr;</span></span>
+      </a>
+      <a class="tool" href="email-merchandising.html">
+        <div class="tool-top"><span class="tool-icon"><svg viewBox="0 0 24 24"><path d="M3 5h18v14H3z"/><path d="m3 7 9 6 9-6"/></svg></span><span class="tool-meta">Campaigns</span></div>
+        <h3>Email merchandiser</h3><p>Build focused product capsules and hand tracked campaigns into Klaviyo.</p><span class="tool-action">Build campaign <span>&rarr;</span></span>
+      </a>
+    </div>
+  </section>
+
+  <footer class="site-footer"><strong>MerchClarity</strong><span>Retail intelligence for modern ecommerce.</span></footer>
 </main>
 </body>
 </html>

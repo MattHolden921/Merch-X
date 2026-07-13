@@ -6,7 +6,7 @@ This is the shared logic and product reference for Merch X. Keep it current when
 
 ## Product Purpose
 
-Merch X is a hosted merchandising toolkit for Kit and Kaboodal / AMG Retail workflows. It brings together sales reporting, stock/order creation, local SKU issuing, Shopify merchandising views, collection reorder planning, order workflow tracking, invoice handling, and weekly trading actions.
+Merch X, presented on the homepage under the MerchClarity brand, is a hosted merchandising toolkit for Kit and Kaboodal / AMG Retail workflows. It brings together sales reporting, stock/order creation, local SKU issuing, Shopify merchandising views, collection reorder planning, order workflow tracking, invoice handling, and weekly trading actions.
 
 The app favours simple operational tools over a large framework:
 
@@ -34,7 +34,7 @@ The app favours simple operational tools over a large framework:
 ## Repository Map
 
 - `server.js`: HTTP server, auth, static serving, API routes, integrations, persistence, migrations, report calculations, workflow logic.
-- `public/index.html`: tool hub.
+- `public/index.html`: branded MerchClarity tool hub, grouped around performance, buying and supply, and planning and action workflows, with shared messages and account controls retained in the header. Local/demo mode shows the Team identity plus Messages and Admin Settings; Google auth mode uses the signed-in user, live notifications, settings access, and sign-out.
 - `public/design-system.css`: shared visual system.
 - `public/bestsellers.html`: TY/LY bestsellers, Forecast & Buy, Mix Performance, slow sellers, methodology, trade last week, CSV/import workflows.
 - `public/order-form.html`: purchase order creation, SKU issuing/lookup, line image upload, printable PO output.

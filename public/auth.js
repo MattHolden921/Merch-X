@@ -75,7 +75,8 @@
   }
 
   async function loadNotifications(){
-    if(state.authMode !== "google" || !state.user)return;
+    const homeSlot = document.querySelector("#auth-bar.home-auth-slot");
+    if(!state.user || (state.authMode !== "google" && !homeSlot))return;
     try{
       const response = await originalFetch("/api/notifications",{credentials:"same-origin"});
       const data = await response.json().catch(()=>({}));
@@ -111,8 +112,9 @@
   }
 
   function renderAuthBar(){
-    if(state.authMode !== "google" || !state.user)return;
     let bar = document.getElementById("auth-bar");
+    const isHomeSlot = Boolean(bar && bar.classList.contains("home-auth-slot"));
+    if(!state.user || (state.authMode !== "google" && !isHomeSlot))return;
     if(!bar){
       bar = document.createElement("div");
       bar.id = "auth-bar";
@@ -120,13 +122,14 @@
     }
     const user = state.user;
     const roles = (user.roles || []).join(", ") || "No roles";
-    const adminLink = user.isAdmin ? '<a class="auth-link" href="/admin-users.html">Users</a>' : "";
+    const adminLink = user.isAdmin ? `<a class="auth-link" href="/admin-users.html">${isHomeSlot ? "Settings" : "Users"}</a>` : "";
+    const logoutButton = state.authMode === "google" ? '<button type="button" class="auth-link auth-button" id="auth-logout">Sign out</button>' : "";
     const notificationRows = (state.notifications || []).slice(0,8).map(item=>`
       <a class="auth-note ${item.isRead?"read":"unread"}" href="${escapeHtml(item.url || "#")}" data-note-id="${escapeHtml(item.id)}">
         <strong>${escapeHtml(item.title)}</strong>
         <span>${escapeHtml(item.body || "")}</span>
       </a>`).join("") || '<p class="auth-empty">No notifications.</p>';
-    const unread = `<button type="button" class="auth-link auth-button" id="auth-notifications">${state.unreadCount ? `${state.unreadCount} unread` : "Notifications"}</button>`;
+    const unread = `<button type="button" class="auth-link auth-button" id="auth-notifications">${state.unreadCount ? `${state.unreadCount} unread` : (isHomeSlot ? "Messages" : "Notifications")}</button>`;
     bar.innerHTML = `
       <style>
         #auth-bar{position:sticky;top:0;z-index:50;margin:-22px -16px 16px;padding:7px 16px;border-bottom:1px solid var(--ds-line);background:var(--ds-bg-surface);display:flex;align-items:center;justify-content:flex-end;gap:10px;font:12px var(--ds-font-sans);color:var(--ds-text-muted)}
@@ -153,7 +156,7 @@
         </span>
       </span>
       ${adminLink}
-      <button type="button" class="auth-link auth-button" id="auth-logout">Sign out</button>
+      ${logoutButton}
     `;
     document.getElementById("auth-logout")?.addEventListener("click",logout);
     document.getElementById("auth-read-all")?.addEventListener("click",markAllRead);
