@@ -106,6 +106,19 @@ h1{font-size:24px;font-weight:650;letter-spacing:0;line-height:1.15;margin-botto
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .btn.icon{min-width:34px;padding:0 10px}
 .panel{background:var(--ds-bg-surface);border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:14px;margin-bottom:14px}
+.page-key-launch{white-space:nowrap}
+.page-key-dialog{position:fixed;inset:50% auto auto 50%;transform:translate(-50%,-50%);margin:0;width:min(920px,calc(100vw - 24px));max-height:min(84vh,900px);padding:0;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);color:var(--ds-text);box-shadow:var(--ds-shadow);overflow:hidden}
+.page-key-dialog::backdrop{background:rgba(15,23,42,.52);backdrop-filter:blur(2px)}
+.page-key-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:16px 18px;border-bottom:1px solid var(--ds-line);background:var(--ds-bg-surface)}
+.page-key-head h2{font-size:18px;line-height:1.25;margin:0}.page-key-head p{margin:5px 0 0;color:var(--ds-text-muted);font-size:12px;line-height:1.5;max-width:720px}
+.page-key-close{min-width:34px;min-height:34px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);color:var(--ds-text);cursor:pointer;font-size:20px;line-height:1}
+.page-key-body{padding:16px 18px 18px;overflow:auto;max-height:calc(84vh - 78px)}
+.page-key-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.page-key-section{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:12px;min-width:0}
+.page-key-section h3{font-size:13px;line-height:1.35;margin:0 0 8px;color:var(--ds-text)}
+.page-key-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}.page-key-list li{font-size:12px;line-height:1.5;color:var(--ds-text-muted)}.page-key-list strong{color:var(--ds-text)}
+.page-key-formula{display:block;margin-top:4px;padding:6px 8px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);color:var(--ds-text);font:11px/1.45 var(--ds-font-mono);overflow-wrap:anywhere}
+@media(max-width:680px){.page-key-grid{grid-template-columns:1fr}.page-key-dialog{max-height:90vh}.page-key-body{max-height:calc(90vh - 78px)}}
 .field label,.metric label{
   display:block;
   font-size:10px;

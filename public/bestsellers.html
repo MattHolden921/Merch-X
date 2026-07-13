@@ -5,11 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bestsellers Report</title>
 <link rel="stylesheet" href="design-system.css">
+<script src="page-key.js" defer></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:var(--ds-bg-surface);--bg2:var(--ds-bg-muted);--bg3:var(--ds-bg-page);--text:var(--ds-text);--text2:var(--ds-text-muted);--text3:var(--ds-text-soft);--border:var(--ds-line);--border2:var(--ds-line-strong);--danger:var(--ds-bad);--warning:var(--ds-warn);--success:var(--ds-good);--info:var(--ds-info);--r:var(--ds-radius);--rl:var(--ds-radius)}
 body{font-family:var(--ds-font-sans);background:var(--ds-bg-page);color:var(--ds-text);min-height:100vh;padding:22px 16px 48px;text-rendering:optimizeLegibility}
 .wrap{max-width:1600px;margin:0 auto}
+.bestsellers-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+.bestsellers-topbar .home-link{margin-bottom:0}
 .home-link{display:inline-flex;align-items:center;gap:6px;margin-bottom:14px;color:var(--text2);font-size:12px;text-decoration:none}
 .home-link:hover{color:var(--text)}
 h1{font-size:24px;font-weight:650;line-height:1.15;margin-bottom:5px}
@@ -262,7 +265,10 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
 </head>
 <body>
 <div class="wrap">
-<a class="home-link" href="/">← Tools home</a>
+<div class="bestsellers-topbar">
+  <a class="home-link" href="/">← Tools home</a>
+  <div class="actions" data-page-key-actions></div>
+</div>
 
 <div id="status" style="display:none"></div>
 
@@ -5336,13 +5342,13 @@ function renderMeth(){
 
   document.getElementById('meth-content').innerHTML=`
 
-  ${sec('Data sources','What each file contributes and where to export it from Shopify.',`
+  ${sec('Data sources','The normal Shopify-backed source and the optional legacy export fallback.',`
     ${row('This year sales source <span style="color:var(--danger)">★ Required</span>',
       'TY bestsellers should normally come from the Shopify API and are cached as Monday-Sunday weeks. Legacy Total Sales by Product CSVs can still be loaded for one-off periods.',
       'CSV fallback export: <em>Analytics → Reports → Total sales by product → set date range → Export</em>. The date range is read automatically from the filename (format: YYYY-MM-DD_-_YYYY-MM-DD).')}
     ${row('Inventory Snapshot XLSX',
-      'Provides current stock per SKU, cost price, RRP, season badge and product image URL. Needed for: stock, cover weeks, forecast buy, reorder simulator, season badges, and dead stock list.',
-      'Export from: <em>Analytics → Reports → Inventory snapshot on a specific date → Export</em>. Stock is summed across all locations. Cost is from the "Inventory Items / Cost" column.')}
+      'Legacy/manual fallback for current stock per SKU, cost price, RRP, season and product image URL. Shopify-backed reports already carry current variant stock, cost, price and images.',
+      'Legacy export: <em>Analytics → Reports → Inventory snapshot on a specific date → Export</em>. Stock is summed across all locations. Cost is from the "Inventory Items / Cost" column.')}
     ${row('Products CSV (optional)',
       'Used as the primary source for product images. Matched by product title against the Image Src column.',
       'Export from: <em>Products → Export → CSV for Excel</em>. Falls back to inventory XLSX image URL if not loaded.')}
@@ -5354,8 +5360,8 @@ function renderMeth(){
       'Weekly Actions can still use the latest completed week for short-term decision prompts, but the main table always reconciles to the range shown.')}
     ${formula('Weekly ROS = net units sold in active range ÷ active range length in weeks')}
     ${row('Period length',
-      'Calculated from the start and end dates in the filename. Example: "2026-04-01_-_2026-04-30" = 30 days = 4.286 weeks.',
-      'Minimum of 7 days is enforced to prevent division errors if filename dates are missing or identical.')}
+      'Calculated from the active loaded start and end dates. For a legacy CSV those dates are read from the filename; Shopify-backed periods already supply them.',
+      'A legacy file named "2026-04-01_-_2026-04-30" represents 30 days = 4.286 weeks. A minimum of 7 days protects against missing or invalid legacy dates.')}
     ${recentFile?ok(`Current last period: <strong>${rosLabel}</strong> = <strong>${rosWeeks} weeks</strong>`):''}
     ${warn('If weekly ROS looks inflated (e.g. showing monthly units as a weekly figure), the filename date range is not being read correctly. Ensure the filename contains the pattern YYYY-MM-DD_-_YYYY-MM-DD. A missing date causes the period to default to 28 days.')}
   `)}
@@ -5363,7 +5369,7 @@ function renderMeth(){
   ${sec('Sales on Bestsellers TY table','Columns and calculations on the main product table.',`
     ${row('Demand card', 'Shopify product sales including VAT, after discounts and before returns. It uses the same ShopifyQL formula as the P&L Planner.', 'This is a loaded-range trading total rather than a product/category-filtered subtotal.')}
     ${row('Despatch card', 'ShopifyQL total sales for the loaded range, matching the P&L Planner Despatch definition.', 'This is a loaded-range trading total rather than a product/category-filtered subtotal.')}
-    ${row('Units', 'Total units sold across all loaded periods.', '')}
+    ${row('Units', 'Net units sold across all loaded periods after unit reversals.', '')}
     ${row('Weekly columns', 'Net units sold in each period, with returned units shown beside them. Expanding a product shows gross units, returned units, refund value and net sales for every week.', '')}
     ${row('Avg price (ASP)', 'Visible sales inc VAT ÷ net items sold across the active range.', '')}
     ${row('Gross sales', 'Shopify gross sales before discounts and returns, displayed including VAT.', '')}
@@ -5373,10 +5379,10 @@ function renderMeth(){
     ${row('RRP value and markdown leakage', 'RRP value prices gross sold units at compare-at RRP for marked-down variants and current price for FP variants. Markdown leakage is RRP value minus gross sales before order discounts.', 'This keeps product markdown separate from discount-code value.')}
     ${row('Sales', 'Shopify sales after discounts and sales reversals for the selected dates, displayed including VAT.', '')}
     ${row('Total GP', 'Shopify gross profit: net sales ex VAT minus Shopify cost of goods sold for the selected dates.', '')}
-    ${row('GP / unit', 'Total GP ÷ total units sold.', '')}
+    ${row('GP / unit', 'Total GP ÷ net units sold.', '')}
     ${row('GP %', 'Achieved GP ÷ costed net sales ex VAT. VAT-inclusive display sales are never used as the margin denominator.', '')}
     ${row('Sales / wk', 'Visible sales inc VAT in the active loaded range ÷ active range length in weeks.', '')}
-    ${row('Stock', 'Current units available from the inventory snapshot, summed across all locations.', '')}
+    ${row('Stock', 'Current units available from loaded Shopify variants, or the legacy inventory snapshot, summed across locations.', '')}
     ${row('Cover wks', 'Current stock ÷ weekly ROS. Colour coded: red = under 4 weeks, amber = will run out before season end, green = covered.',
       'Season end date is set by the date picker in the controls bar. Changing it recalculates cover and forecast buy instantly.')}
     ${formula('Forecast buy = ceil(weekly ROS × weeks to season end) − current stock')}
@@ -5384,8 +5390,8 @@ function renderMeth(){
 
   ${sec('GP% — why it may differ between views','A common source of confusion.',`
     ${row('Formula used everywhere', '<strong>GP% = Gross profit ÷ costed net sales ex VAT</strong>', 'Visible sales figures include VAT; achieved GP and GP% remain ex-VAT calculations, matching New In and P&L.')}
-    ${row('Stock margin (stock position table in Revenue Analysis)', '<strong>Margin% = (retail value ex VAT − cost value) ÷ retail value ex VAT</strong>', 'Different calculation — this is the potential margin on stock held, not the achieved GP on what has been sold.')}
-    ${info('If GP% looks different between Bestsellers TY and Revenue Analysis, check whether you are comparing the same period. Revenue Analysis uses last period only; Bestsellers TY shows the total across all loaded periods.')}
+    ${row('Stock margin (stock position in Mix Performance)', '<strong>Margin% = (retail value ex VAT − cost value) ÷ retail value ex VAT</strong>', 'Different calculation — this is the potential margin on stock held, not the achieved GP on what has been sold.')}
+    ${info('If GP% looks different between Bestsellers TY and Mix Performance, check whether you are comparing achieved sold GP with current stock economics and whether the periods match.')}
   `)}
 
   ${sec('Forecast & Buy — sales forecast','How the 2-period forward projection works.',`
@@ -5407,11 +5413,11 @@ function renderMeth(){
       'Ranked by <strong>total lost revenue (M1 + M2)</strong>, highest first. The top line is always the one costing the most if not reordered.',
       'Not the same as highest ROS — a high-ROS line with plenty of stock won\'t appear. A moderate-ROS line with zero stock and 8 weeks left will rank high.')}
     ${formula('Units to buy = ceil(weekly ROS × 2 periods) − current stock')}
-    ${formula('Cost of reorder = units to buy × cost price  (from Inventory Items / Cost in the snapshot)')}
+    ${formula('Cost of reorder = units to buy × cost price  (from current Shopify variant cost or the legacy inventory snapshot)')}
     ${formula('Reorder revenue ex VAT (calculation) = units to buy × ex-VAT net ASP; the visible reorder-sales value includes VAT')}
     ${row('Cost matching',
-      'Cost price is looked up by product name against "Products / Name" in the inventory snapshot.',
-      'If cost shows "—" the product name in the sales report doesn\'t exactly match the inventory. Check for trailing spaces or capitalisation differences.')}
+      'Shopify-backed rows use current loaded variant costs. Legacy rows look up cost by product name against "Products / Name" in the inventory snapshot.',
+      'If legacy cost shows "—", check that the sales and inventory product names match, including trailing spaces and capitalisation.')}
     ${warn('The reorder simulator shows the revenue you\'d recover if you order exactly enough stock to cover 2 forward periods. It does not account for lead times — if your supplier takes 6 weeks, M1 lost revenue may already be locked in.')}
   `)}
 
@@ -5445,7 +5451,7 @@ function renderMeth(){
   `)}
 
   <p style="font-size:11px;color:var(--text3);padding-top:12px;margin-top:8px;border-top:.5px solid var(--border)">
-    Last updated: ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})}
+    Reviewed against the implementation: 13 July 2026
     · This methodology reflects the calculations used in this version of the tool.
   </p>`;
 }

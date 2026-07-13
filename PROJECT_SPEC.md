@@ -36,6 +36,7 @@ The app favours simple operational tools over a large framework:
 - `server.js`: HTTP server, auth, static serving, API routes, integrations, persistence, migrations, report calculations, workflow logic.
 - `public/index.html`: branded MerchClarity tool hub, grouped around performance, buying and supply, and planning and action workflows, with shared messages and account controls retained in the header. Local/demo mode shows the Team identity plus Messages and Admin Settings; Google auth mode uses the signed-in user, live notifications, settings access, and sign-out.
 - `public/design-system.css`: shared visual system.
+- `public/page-key.js`: shared, page-specific Key definitions and accessible modal behaviour for user-facing pages without a purpose-built explainer.
 - `public/bestsellers.html`: TY/LY bestsellers, Forecast & Buy, Mix Performance, slow sellers, methodology, trade last week, CSV/import workflows.
 - `public/order-form.html`: purchase order creation, SKU issuing/lookup, line image upload, printable PO output.
 - `public/orders.html`: order workspace, approval/payment/intake workflow, supplier batches, received actuals, discrepancies/credits, supplier credit balances, invoices, notes, archive/delete, read-only order-line Shopify live/New Arrivals checks, printable warehouse image reports, and barcode label-job reports for printers and suppliers.
@@ -562,6 +563,8 @@ Marketing, Merchandising, and Admin users can build campaigns, create Klaviyo dr
 - Pages are operational tools, not landing pages.
 - Existing pages use static HTML and inline scripts; keep that approach unless there is a deliberate migration.
 - Shared styling belongs in `public/design-system.css` when it applies across tools.
+- Every user-facing page exposes a visible Key explaining its important definitions, formulas, data sources, statuses, actions, safeguards, and feature boundaries. Most pages use `public/page-key.js`; Product Merchandising and Email Merchandiser retain their detailed purpose-built Key modals, while Bestsellers also retains its full Methodology view.
+- Key copy is part of the page contract and must be updated whenever the underlying calculation, terminology, permission, integration, workflow state, or high-impact action changes.
 - Preserve same-origin API behaviour for deployed use.
 - When adding large calculations, prefer server-side persistence/calculation if multiple tools need the result.
 - Keep user-facing failure states clear: missing credentials, unavailable Shopify scopes, missing saved periods, invalid dates, and upload limits should produce actionable messages.

@@ -14,6 +14,14 @@
 - Add totals only where the values are additive or clearly meaningful. Avoid totals that would imply false precision, such as summing unit prices, statuses, or mixed percentages.
 - Totals should respect the active filters/search whenever the table is filtered.
 
+## Page Keys
+
+- Every new user-facing page must provide a visible **Key** that explains its important definitions, formulas, data sources, statuses, actions, safeguards, and feature boundaries in plain product language.
+- Register new page-key content in `public/page-key.js` and include that shared script on the page. A page may keep a more detailed purpose-built explainer instead only when it provides equivalent Key access, as Merchandising, Email Merchandiser, and the Bestsellers Methodology view do.
+- When changing a page's calculations, terminology, workflow states, permissions, integrations, or high-impact actions, update its Key in the same change.
+- Check Key claims against current implementation and `PROJECT_SPEC.md`; do not copy labels into the Key without confirming their actual calculation or scope.
+- Keep Keys concise enough for in-page reference. Link or point to a detailed methodology where a page needs a longer audit trail.
+
 ## Financial Formulas
 
 - Treat `lib/commerce-finance.js` as the code source of truth for sales VAT treatment, gross/net sales, COGS, gross profit, and gross margin.

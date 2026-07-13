@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Product Merchandising</title>
 <link rel="stylesheet" href="design-system.css">
+<script src="page-key.js" defer></script>
 <style>
 .sub{max-width:780px}
 .toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;align-items:end}
@@ -139,21 +140,22 @@
       <section class="key-section">
         <h3>Core Metrics</h3>
         <ul>
-          <li><b>Sales:</b> order line revenue in the selected window.</li>
-          <li><b>Units:</b> order line quantity in the selected window.</li>
+          <li><b>Sales:</b> Shopify product net sales after discounts and returns in the selected window, displayed including VAT. ShopifyQL is primary and the order API is a fallback.</li>
+          <li><b>Units:</b> net Shopify units in the selected window.</li>
           <li><b>Stock:</b> available Shopify inventory across variants. Negative stock is shown because it can signal oversold items.</li>
-          <li><b>Sell-through:</b> units sold divided by units sold plus current stock.</li>
-          <li><b>GP:</b> calculated from Shopify price and variant cost per item. If cost is missing, the card shows No cost.</li>
+          <li><b>Sell-through:</b> selected-period net units divided by net units plus current positive stock. It is a trading indicator, not lifetime sell-through.</li>
+          <li><b>GP:</b> achieved GP% from dated sales where Shopify GP/COGS is available; otherwise the lowest costed current-variant retail margin. GP uses revenue excluding VAT. If no margin is available, the card shows No cost.</li>
           <li><b>Views:</b> GA4 item views matched by item ID, SKU, Shopify IDs, handle, or item name.</li>
           <li><b>ATC:</b> GA4 items added to cart.</li>
-          <li><b>CVR:</b> Shopify units sold in the selected period divided by GA4 item views for the same period.</li>
+          <li><b>CVR:</b> Shopify net units divided by GA4 item views for the same period; it will not necessarily reconcile to GA4 purchase conversion.</li>
         </ul>
       </section>
       <section class="key-section">
         <h3>Score Logic</h3>
-        <p>Scores compare each product against the current filtered view. Sales strength is revenue divided by the highest revenue in view. Stock strength is available stock divided by the highest stock in view. GP strength is GP percentage divided by 100.</p>
+        <p>Scores compare each product against the current filtered product set. Sales, stock, views and CVR are normalised against the strongest visible value, so ranks and action badges can move when filters or search change.</p>
         <div class="formula">sell-through = units / (units + max(stock, 0))</div>
-        <p>If no GP data is available, Commercial mode falls back to 67% sales and 33% stock. If some products are missing GP, they use the average GP of costed products for scoring so missing cost does not automatically sink them. GA4 metrics are displayed for context, but they do not currently change the Merch score.</p>
+        <p>If no GP data is available, Commercial mode falls back to 67% sales and 33% stock. If some products are missing GP, they use the average GP of costed products for scoring so missing cost does not automatically sink them. Gold Dust and Needs Work use GA4 signals and are not reliable when GA4 data is unavailable. Action badges are relative trading prompts, not fixed commercial rules.</p>
+        <p><b>Send to sale planner</b> stages the product in a sale plan for review; it does not change Shopify prices or collections.</p>
       </section>
     </div>
   </div>
