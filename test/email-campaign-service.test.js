@@ -77,6 +77,18 @@ test("Klaviyo draft creation is idempotent and handles the API contract", { conc
   assert.equal(created.klaviyoCampaignId, "campaign-1");
   assert.equal(calls.length, 3);
   assert.match(calls[0].body.data.attributes.html, /utm_campaign/);
+  assert.equal((calls[0].body.data.attributes.html.match(/width="50%"/g) || []).length, 6);
+  assert.equal((calls[0].body.data.attributes.html.match(/>Shop now<\/a>/g) || []).length, 6);
+  assert.match(calls[0].body.data.attributes.html, /background:#000000/);
+  const campaignAttributes = calls[1].body.data.attributes;
+  const messageAttributes = campaignAttributes["campaign-messages"].data[0].attributes;
+  assert.deepEqual(messageAttributes.definition, {
+    channel: "email",
+    label: "Test",
+    content: { subject: "Subject", preview_text: "" }
+  });
+  assert.equal(messageAttributes.channel, undefined);
+  assert.equal(campaignAttributes.send_strategy, undefined);
   await api.createDraft(campaign.id);
   assert.equal(calls.length, 3);
   db.close();
