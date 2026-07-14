@@ -1138,6 +1138,18 @@ function salesIncVatOf(value={},semantics=window._rpt?.financialSemantics||{}){
 function grossSalesIncVatOf(value={},semantics=window._rpt?.financialSemantics||{}){
   return Number(value.grossSalesIncVat??value.grossIncVat??salesValueIncVat(value.gross??value.grossSales,value.grossExVat??value.grossSalesExVat,semantics));
 }
+function discountsIncVatOf(value={},semantics=window._rpt?.financialSemantics||{}){
+  return Number(value.discountsIncVat??salesValueIncVat(value.discounts??0,value.discountsExVat,semantics));
+}
+function refundsIncVatOf(value={},semantics=window._rpt?.financialSemantics||{}){
+  return Number(value.refundsIncVat??salesValueIncVat(value.refunds??value.returns??0,value.refundsExVat,semantics));
+}
+function hasDiscountBreakdown(value={}){
+  return ['discountsIncVat','discountsExVat','discounts'].some(key=>Object.prototype.hasOwnProperty.call(value,key));
+}
+function hasRefundBreakdown(value={}){
+  return ['refundsIncVat','refundsExVat','refunds','returns'].some(key=>Object.prototype.hasOwnProperty.call(value,key));
+}
 function grossSalesExVatOf(value={},semantics=window._rpt?.financialSemantics||{}){
   if(value.grossExVat!=null||value.grossSalesExVat!=null)return Number(value.grossExVat??value.grossSalesExVat??0);
   const amount=Number(value.gross??value.grossSales??0);
@@ -1613,6 +1625,8 @@ function _build(){
       const units=parseFloat(row['Net items sold'])||0;
       const netSales=parseFloat(row['Net sales'])||0;
       const grossSales=parseFloat(row['Gross sales'])||0;
+      const discounts=Math.abs(parseFloat(row['Discounts'])||0);
+      const refunds=Math.abs(parseFloat(row['Returns'])||0);
       const gp=parseFloat(row['Gross profit'])||0;
       const cat=(row['Product type']||'').trim();
       if(!stats[name]){
@@ -1629,6 +1643,8 @@ function _build(){
       stats[name].periods[sf.label].rev+=netSales;
       stats[name].periods[sf.label].gross+=grossSales;
       stats[name].periods[sf.label].gp+=gp;
+      if(row['Discounts']!=null&&String(row['Discounts']).trim()!=='')stats[name].periods[sf.label].discountsExVat=(stats[name].periods[sf.label].discountsExVat||0)+discounts;
+      if(row['Returns']!=null&&String(row['Returns']).trim()!=='')stats[name].periods[sf.label].refundsExVat=(stats[name].periods[sf.label].refundsExVat||0)+refunds;
     });
   });
 
@@ -2441,6 +2457,8 @@ function buildLY(){
           const units=parseFloat(row['Net items sold'])||0;
           const netSales=parseFloat(row['Net sales'])||0;
           const grossSales=parseFloat(row['Gross sales'])||0;
+          const discounts=Math.abs(parseFloat(row['Discounts'])||0);
+          const refunds=Math.abs(parseFloat(row['Returns'])||0);
           const gp=parseFloat(row['Gross profit'])||0;
           const cat=(row['Product type']||'').trim();
           if(!stats[name])stats[name]={name,cat,units:0,rev:0,gp:0,periods:{},
@@ -2453,6 +2471,8 @@ function buildLY(){
           stats[name].periods[sf.label].units+=units;
           stats[name].periods[sf.label].rev+=netSales;
           stats[name].periods[sf.label].gross+=grossSales;
+          if(row['Discounts']!=null&&String(row['Discounts']).trim()!=='')stats[name].periods[sf.label].discountsExVat=(stats[name].periods[sf.label].discountsExVat||0)+discounts;
+          if(row['Returns']!=null&&String(row['Returns']).trim()!=='')stats[name].periods[sf.label].refundsExVat=(stats[name].periods[sf.label].refundsExVat||0)+refunds;
         });
       });
       const allStarts=lyFiles.map(f=>f.start).filter(Boolean);
@@ -2655,20 +2675,22 @@ function renderRA(){
   decisionProducts.forEach(p=>{
     const cat=p.cat||'Other';
     const pd=p.periods[lastLabel]||{units:0,rev:0,gross:0,gp:0};
-    if(!catBreak[cat])catBreak[cat]={units:0,gross:0,net:0,netExVat:0,costedNetExVat:0,gp:0};
+    if(!catBreak[cat])catBreak[cat]={units:0,gross:0,net:0,netExVat:0,costedNetExVat:0,gp:0,discounts:0,refunds:0,discountsKnown:false,refundsKnown:false};
     catBreak[cat].units+=pd.units||0;
     catBreak[cat].gross+=grossSalesIncVatOf(pd,r.financialSemantics);
     catBreak[cat].net+=salesIncVatOf(pd,r.financialSemantics);
     catBreak[cat].netExVat+=salesExVatOf(pd,r.financialSemantics);
     catBreak[cat].costedNetExVat+=Number(pd.costedRevenueExVat??(pd.gp==null?0:(pd.revenueExVat!=null?Number(pd.revenueExVat):Number(pd.rev||0)/(r.financialSemantics?.salesValuesIncludeVat?1.2:1))));
     catBreak[cat].gp+=Number(pd.knownGp??pd.gp??0);
+    if(hasDiscountBreakdown(pd)){catBreak[cat].discounts+=discountsIncVatOf(pd,r.financialSemantics);catBreak[cat].discountsKnown=true;}
+    if(hasRefundBreakdown(pd)){catBreak[cat].refunds+=refundsIncVatOf(pd,r.financialSemantics);catBreak[cat].refundsKnown=true;}
   });
   // Cap at 15 categories + Other, matching Bestsellers TY bucketing
   const allCatsSorted=Object.entries(catBreak).filter(([,v])=>v.net!==0||v.units!==0).sort((a,b)=>(grossAvailable?b[1].gross-a[1].gross:b[1].net-a[1].net));
   const top15cats=allCatsSorted.slice(0,15);
   const otherCats=allCatsSorted.slice(15);
   if(otherCats.length){
-    const o=otherCats.reduce((acc,[,v])=>{acc.units+=v.units;acc.gross+=v.gross;acc.net+=v.net;acc.netExVat+=v.netExVat;acc.costedNetExVat+=v.costedNetExVat;acc.gp+=v.gp;return acc;},{units:0,gross:0,net:0,netExVat:0,costedNetExVat:0,gp:0});
+    const o=otherCats.reduce((acc,[,v])=>{acc.units+=v.units;acc.gross+=v.gross;acc.net+=v.net;acc.netExVat+=v.netExVat;acc.costedNetExVat+=v.costedNetExVat;acc.gp+=v.gp;acc.discounts+=v.discounts;acc.refunds+=v.refunds;acc.discountsKnown=acc.discountsKnown||v.discountsKnown;acc.refundsKnown=acc.refundsKnown||v.refundsKnown;return acc;},{units:0,gross:0,net:0,netExVat:0,costedNetExVat:0,gp:0,discounts:0,refunds:0,discountsKnown:false,refundsKnown:false});
     top15cats.push(['Other',o]);
   }
   const catList=top15cats;
@@ -2678,6 +2700,10 @@ function renderRA(){
   const totalLastCostedNetExVat=catList.reduce((a,[,v])=>a+v.costedNetExVat,0);
   const totalLastUnits=catList.reduce((a,[,v])=>a+v.units,0);
   const totalLastGP=catList.reduce((a,[,v])=>a+v.gp,0);
+  const totalLastDiscounts=catList.reduce((a,[,v])=>a+v.discounts,0);
+  const totalLastRefunds=catList.reduce((a,[,v])=>a+v.refunds,0);
+  const totalLastDiscountsKnown=catList.some(([,v])=>v.discountsKnown);
+  const totalLastRefundsKnown=catList.some(([,v])=>v.refundsKnown);
   // GP% uses net sales as denominator — matches Bestsellers TY calculation
   const totalLastGPpct=totalLastCostedNetExVat>0?totalLastGP/totalLastCostedNetExVat*100:null;
   const maxCatGross=catList.length?(grossAvailable?catList[0][1].gross:catList[0][1].net):1;
@@ -2838,7 +2864,8 @@ function renderRA(){
     <div class="ra-cards">
       ${grossAvailable?`<div class="ra-card"><label>Gross before discount inc VAT</label><span>${fMoney(totalLastGross)}</span></div>`:''}
       <div class="ra-card"><label>Sales inc VAT</label><span>${fMoney(totalLastNet)}</span></div>
-      ${grossAvailable?`<div class="ra-card"><label>Discount inc VAT</label><span style="color:var(--danger)">${fMoney(totalLastGross-totalLastNet)}</span></div>`:''}
+      ${totalLastDiscountsKnown?`<div class="ra-card"><label>Discounts inc VAT</label><span style="color:var(--warning)">${fMoney(totalLastDiscounts)}</span></div>`:''}
+      ${totalLastRefundsKnown?`<div class="ra-card"><label>Refunds processed inc VAT</label><span style="color:var(--danger)">${fMoney(totalLastRefunds)}</span></div>`:''}
       <div class="ra-card"><label>Units sold</label><span>${fN(totalLastUnits)}</span></div>
       ${grossAvailable?`<div class="ra-card"><label>Gross ASP inc VAT</label><span>${totalLastUnits>0?fMoney(totalLastGross/totalLastUnits):'—'}</span></div>`:''}
       <div class="ra-card"><label>Known GP ex VAT</label><span style="color:var(--success)">${fMoney(totalLastGP)}</span></div>
@@ -3882,26 +3909,30 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
   const salesBySeasonMap={};
   r.products.forEach(function(p){
     const season=p.season||'Unknown';
-    if(!salesBySeasonMap[season])salesBySeasonMap[season]={units:0,rev:0,gp:0,gpBasis:0,gross:0,lines:new Set()};
-    let u,rv,gp,gpBasis,gr;
+    if(!salesBySeasonMap[season])salesBySeasonMap[season]={units:0,rev:0,gp:0,gpBasis:0,discounts:0,refunds:0,discountsKnown:false,refundsKnown:false,lines:new Set()};
+    let u,rv,gp,gpBasis,discounts=0,refunds=0,discountsKnown=false,refundsKnown=false;
     if(periodFilter==='All'){
       u=p.units||0;rv=salesIncVatOf(p,r.financialSemantics);
       gp=Number(p.knownGpValue??p.gp??0);
       gpBasis=Number(p.costedRevenueExVat??(p.gp==null?0:salesExVatOf(p,r.financialSemantics)));
-      gr=allPeriodLabels.reduce(function(a,lbl){return a+(p.periods[lbl]?grossSalesIncVatOf(p.periods[lbl],r.financialSemantics):0);},0);
+      allPeriodLabels.forEach(function(lbl){const pd=p.periods[lbl];if(!pd)return;if(hasDiscountBreakdown(pd)){discounts+=discountsIncVatOf(pd,r.financialSemantics);discountsKnown=true;}if(hasRefundBreakdown(pd)){refunds+=refundsIncVatOf(pd,r.financialSemantics);refundsKnown=true;}});
     }else{
       const pd=p.periods[periodFilter]||{units:0,rev:0,gp:0,gross:0};
       u=pd.units||0;rv=salesIncVatOf(pd,r.financialSemantics);
       gp=Number(pd.knownGp??pd.gp??0);
       gpBasis=Number(pd.costedRevenueExVat??(pd.gp==null?0:salesExVatOf(pd,r.financialSemantics)));
-      gr=grossSalesIncVatOf(pd,r.financialSemantics);
+      if(hasDiscountBreakdown(pd)){discounts=discountsIncVatOf(pd,r.financialSemantics);discountsKnown=true;}
+      if(hasRefundBreakdown(pd)){refunds=refundsIncVatOf(pd,r.financialSemantics);refundsKnown=true;}
     }
-    if(u!==0||rv!==0){
+    if(u!==0||rv!==0||discounts!==0||refunds!==0){
       salesBySeasonMap[season].units+=u;
       salesBySeasonMap[season].rev+=rv;
       salesBySeasonMap[season].gp+=gp;
       salesBySeasonMap[season].gpBasis+=gpBasis;
-      salesBySeasonMap[season].gross+=gr;
+      salesBySeasonMap[season].discounts+=discounts;
+      salesBySeasonMap[season].refunds+=refunds;
+      salesBySeasonMap[season].discountsKnown=salesBySeasonMap[season].discountsKnown||discountsKnown;
+      salesBySeasonMap[season].refundsKnown=salesBySeasonMap[season].refundsKnown||refundsKnown;
       salesBySeasonMap[season].lines.add(p.name);
     }
   });
@@ -3910,7 +3941,7 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
   const ssSeasons=allSeasons.filter(function(s){return s.toUpperCase().startsWith('SS');});
   const awSeasons=allSeasons.filter(function(s){return s.toUpperCase().startsWith('AW');});
 
-  let rows=Object.entries(salesBySeasonMap).filter(function(e){return e[1].units!==0||e[1].rev!==0;});
+  let rows=Object.entries(salesBySeasonMap).filter(function(e){return e[1].units!==0||e[1].rev!==0||e[1].discounts!==0||e[1].refunds!==0;});
   if(seasonFilter!=='All'){
     if(seasonFilter==='SS')rows=rows.filter(function(e){return e[0].toUpperCase().startsWith('SS');});
     else if(seasonFilter==='AW')rows=rows.filter(function(e){return e[0].toUpperCase().startsWith('AW');});
@@ -3922,7 +3953,10 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
   const totRev=rows.reduce(function(a,e){return a+e[1].rev;},0);
   const totGP=rows.reduce(function(a,e){return a+e[1].gp;},0);
   const totGPBasis=rows.reduce(function(a,e){return a+e[1].gpBasis;},0);
-  const totGross=rows.reduce(function(a,e){return a+e[1].gross;},0);
+  const totDiscounts=rows.reduce(function(a,e){return a+e[1].discounts;},0);
+  const totRefunds=rows.reduce(function(a,e){return a+e[1].refunds;},0);
+  const discountsKnown=rows.some(function(e){return e[1].discountsKnown;});
+  const refundsKnown=rows.some(function(e){return e[1].refundsKnown;});
   const totGPpct=totGPBasis>0?totGP/totGPBasis*100:null;
   const totASP=totUnits>0?totRev/totUnits:0;
 
@@ -4000,8 +4034,11 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
       +'</tr></thead>'
       +'<tbody>'+rowsHtml+'</tbody></table></div>';
 
-  const discountCard=totGross>0
-    ?'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">Discount taken</label><span style="font-size:18px;font-weight:500;color:var(--warning)">'+fMoney(totGross-totRev)+'</span></div>'
+  const discountCard=discountsKnown
+    ?'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">Discounts inc VAT</label><span style="font-size:18px;font-weight:500;color:var(--warning)">'+fMoney(totDiscounts)+'</span></div>'
+    :'';
+  const refundCard=refundsKnown
+    ?'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">Refunds processed inc VAT</label><span style="font-size:18px;font-weight:500;color:var(--danger)">'+fMoney(totRefunds)+'</span></div>'
     :'';
 
   const seasonPillsBlock=allSeasons.length>1
@@ -4021,6 +4058,7 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
     +'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">GP %</label><span style="font-size:18px;font-weight:500;color:'+(totGPpct==null?'var(--text3)':'var(--success)')+'">'+(totGPpct==null?'—':fPct(totGPpct))+'</span></div>'
     +'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">Net ASP inc VAT</label><span style="font-size:18px;font-weight:500">'+fMoney(totASP)+'</span></div>'
     +discountCard
+    +refundCard
     +'</div>'
     +tableHtml
     +'</div>';
@@ -5384,6 +5422,7 @@ function renderMeth(){
     ${row('Gross sales', 'Shopify gross sales before discounts and returns, displayed including VAT.', '')}
     ${row('Discounts', 'Shopify discount-code and order-discount value. Discount codes do not make a product a markdown or sale product.', 'Discount % = discounts ÷ gross sales before discount.')}
     ${row('Refunds and return rate', 'Refund value is shown as a percentage of sales before refunds. Unit return rate is returned units ÷ gross units ordered.', 'Refunds are processed in the selected period and can relate to an earlier sale.')}
+    ${row('Forecast & Buy / Sales by Season', 'Discounts and refunds are shown as separate inc-VAT cards using Shopify\'s explicit values. The gross-to-net reduction is never labelled as discount because it includes both.', 'Legacy CSV cards appear only when the export contains the corresponding Discounts and Returns columns.')}
     ${row('Full-price classification', 'The sale line price before discount codes is compared with RRP (compare-at price where available, otherwise current price). It is markdown only when that pre-discount price is below RRP.', 'A discount code does not change the FP classification; a product restored to RRP can still be recognised as a historical markdown.')}
     ${row('RRP value and markdown leakage', 'RRP value prices gross sold units at compare-at RRP for marked-down variants and current price for FP variants. Markdown leakage is RRP value minus gross sales before order discounts.', 'This keeps product markdown separate from discount-code value.')}
     ${row('Sales', 'Shopify sales after discounts and sales reversals for the selected dates, displayed including VAT.', '')}

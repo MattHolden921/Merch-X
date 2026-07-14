@@ -56,6 +56,7 @@
           ["Demand", "Product sales including VAT, after discounts and before returns, for the loaded range."],
           ["Despatch", "Shopify total sales for the loaded range, after discounts and returns and including shipping and tax effects."],
           ["Net sales", "Product revenue after discounts and returns, excluding VAT. Forecast and GP calculations use this basis."],
+          ["Discounts / refunds", "Discount-code and order-discount value is shown separately from refunds processed in the selected period; both visible card values include VAT."],
           ["GP%", "Gross profit divided by costed net sales excluding VAT, including Sales by Season rows and totals; missing cost remains visible rather than being treated as zero margin.", "GP% = gross profit ÷ costed net sales ex VAT"]
         ]],
         ["Trading measures", [
