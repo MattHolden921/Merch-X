@@ -445,7 +445,7 @@ Decision and UI semantics:
 - Slow Sellers consumes the server report's active-product dead-stock rows, so synced reports do not require a separate inventory upload to show stocked products with no sales. Large sales-drop/dead-stock result sets render 100 rows per page while totals continue to cover the full active filter.
 - CSV imports use a supplied product ID/handle as the aggregation key and fall back to title only when the export does not contain a stable product identifier.
 
-Key calculated fields include weekly units, average price, gross and net sales, known GP and cost coverage, GP percent, GP per unit, cover weeks, forecast buy, dead stock, stock value, and category/season summaries.
+Key calculated fields include weekly units, average price, gross and net sales, known GP and cost coverage, GP percent, GP per unit, cover weeks, forecast buy, dead stock, stock value, and category/season summaries. Sales by Season keeps sales and ASP displayed including VAT, while each row and total calculate GP percent from known GP divided by the corresponding costed net sales excluding VAT, matching the main Bestsellers view and canonical commerce-finance semantics.
 
 ### Stock Snapshots
 

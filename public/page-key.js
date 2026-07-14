@@ -56,7 +56,7 @@
           ["Demand", "Product sales including VAT, after discounts and before returns, for the loaded range."],
           ["Despatch", "Shopify total sales for the loaded range, after discounts and returns and including shipping and tax effects."],
           ["Net sales", "Product revenue after discounts and returns, excluding VAT. Forecast and GP calculations use this basis."],
-          ["GP%", "Gross profit divided by costed net sales excluding VAT; missing cost remains visible rather than being treated as zero margin.", "GP% = gross profit ÷ costed net sales ex VAT"]
+          ["GP%", "Gross profit divided by costed net sales excluding VAT, including Sales by Season rows and totals; missing cost remains visible rather than being treated as zero margin.", "GP% = gross profit ÷ costed net sales ex VAT"]
         ]],
         ["Trading measures", [
           ["ROS", "Net units sold divided by the active range length in weeks.", "weekly ROS = net units ÷ active weeks"],

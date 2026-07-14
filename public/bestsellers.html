@@ -3882,19 +3882,25 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
   const salesBySeasonMap={};
   r.products.forEach(function(p){
     const season=p.season||'Unknown';
-    if(!salesBySeasonMap[season])salesBySeasonMap[season]={units:0,rev:0,gp:0,gross:0,lines:new Set()};
-    let u,rv,gp,gr;
+    if(!salesBySeasonMap[season])salesBySeasonMap[season]={units:0,rev:0,gp:0,gpBasis:0,gross:0,lines:new Set()};
+    let u,rv,gp,gpBasis,gr;
     if(periodFilter==='All'){
-      u=p.units||0;rv=p.rev||0;gp=p.gp||0;
-      gr=allPeriodLabels.reduce(function(a,lbl){return a+(p.periods[lbl]?p.periods[lbl].gross||0:0);},0);
+      u=p.units||0;rv=salesIncVatOf(p,r.financialSemantics);
+      gp=Number(p.knownGpValue??p.gp??0);
+      gpBasis=Number(p.costedRevenueExVat??(p.gp==null?0:salesExVatOf(p,r.financialSemantics)));
+      gr=allPeriodLabels.reduce(function(a,lbl){return a+(p.periods[lbl]?grossSalesIncVatOf(p.periods[lbl],r.financialSemantics):0);},0);
     }else{
       const pd=p.periods[periodFilter]||{units:0,rev:0,gp:0,gross:0};
-      u=pd.units||0;rv=pd.rev||0;gp=pd.gp||0;gr=pd.gross||0;
+      u=pd.units||0;rv=salesIncVatOf(pd,r.financialSemantics);
+      gp=Number(pd.knownGp??pd.gp??0);
+      gpBasis=Number(pd.costedRevenueExVat??(pd.gp==null?0:salesExVatOf(pd,r.financialSemantics)));
+      gr=grossSalesIncVatOf(pd,r.financialSemantics);
     }
     if(u!==0||rv!==0){
       salesBySeasonMap[season].units+=u;
       salesBySeasonMap[season].rev+=rv;
       salesBySeasonMap[season].gp+=gp;
+      salesBySeasonMap[season].gpBasis+=gpBasis;
       salesBySeasonMap[season].gross+=gr;
       salesBySeasonMap[season].lines.add(p.name);
     }
@@ -3915,8 +3921,9 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
   const totUnits=rows.reduce(function(a,e){return a+e[1].units;},0);
   const totRev=rows.reduce(function(a,e){return a+e[1].rev;},0);
   const totGP=rows.reduce(function(a,e){return a+e[1].gp;},0);
+  const totGPBasis=rows.reduce(function(a,e){return a+e[1].gpBasis;},0);
   const totGross=rows.reduce(function(a,e){return a+e[1].gross;},0);
-  const totGPpct=totRev>0?totGP/totRev*100:0;
+  const totGPpct=totGPBasis>0?totGP/totGPBasis*100:null;
   const totASP=totUnits>0?totRev/totUnits:0;
 
   function mkPill(val,label,active,isGroup,onclick){
@@ -3946,12 +3953,12 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
   let rowsHtml='';
   rows.forEach(function(e,i){
     const season=e[0],v=e[1];
-    const gpp=v.rev>0?v.gp/v.rev*100:0;
+    const gpp=v.gpBasis>0?v.gp/v.gpBasis*100:null;
     const asp=v.units>0?v.rev/v.units:0;
     const pct=totRev>0?v.rev/totRev*100:0;
     const barW=Math.round(v.rev/maxRev*100);
     const lines=v.lines.size;
-    const gpCol=gpp<20?'var(--warning)':'var(--success)';
+    const gpCol=gpp==null?'var(--text3)':gpp<20?'var(--warning)':'var(--success)';
     const bg=i%2===1?'background:var(--bg2)':'';
     rowsHtml+='<tr style="'+bg+'">'
       +'<td style="padding:9px 12px;font-size:13px;font-weight:500">'+season+'</td>'
@@ -3960,7 +3967,7 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
       +'<td style="padding:9px 12px;font-size:13px;text-align:right">'+fN(v.units)+'</td>'
       +'<td style="padding:9px 12px;font-size:13px;text-align:right;font-weight:500">'+fMoney(v.rev)+'</td>'
       +'<td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--success)">'+fMoney(v.gp)+'</td>'
-      +'<td style="padding:9px 12px;font-size:13px;text-align:right;color:'+gpCol+'">'+fPct(gpp)+'</td>'
+      +'<td style="padding:9px 12px;font-size:13px;text-align:right;color:'+gpCol+'">'+(gpp==null?'—':fPct(gpp))+'</td>'
       +'<td style="padding:9px 12px;font-size:13px;text-align:right">'+fMoney(asp)+'</td>'
       +'<td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--text2)">'+pct.toFixed(1)+'%</td>'
       +'</tr>';
@@ -3972,7 +3979,7 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
     +'<td style="padding:9px 12px;font-size:13px;text-align:right">'+fN(totUnits)+'</td>'
     +'<td style="padding:9px 12px;font-size:13px;text-align:right">'+fMoney(totRev)+'</td>'
     +'<td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--success)">'+fMoney(totGP)+'</td>'
-    +'<td style="padding:9px 12px;font-size:13px;text-align:right;color:var(--success)">'+fPct(totGPpct)+'</td>'
+    +'<td style="padding:9px 12px;font-size:13px;text-align:right;color:'+(totGPpct==null?'var(--text3)':'var(--success)')+'">'+(totGPpct==null?'—':fPct(totGPpct))+'</td>'
     +'<td style="padding:9px 12px;font-size:13px;text-align:right">'+fMoney(totASP)+'</td>'
     +'<td style="padding:9px 12px;font-size:13px;text-align:right">100%</td>'
     +'</tr>';
@@ -3985,10 +3992,10 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
       +'<th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:left">Revenue mix</th>'
       +'<th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Lines</th>'
       +'<th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Units</th>'
-      +'<th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Net sales</th>'
+      +'<th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Net sales inc VAT</th>'
       +'<th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">GP</th>'
       +'<th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">GP %</th>'
-      +'<th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Net ASP</th>'
+      +'<th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">Net ASP inc VAT</th>'
       +'<th style="padding:9px 12px;font-size:11px;color:var(--text2);font-weight:400;border-bottom:.5px solid var(--border);text-align:right">% of rev</th>'
       +'</tr></thead>'
       +'<tbody>'+rowsHtml+'</tbody></table></div>';
@@ -4004,15 +4011,15 @@ function renderSalesBySeason(r,salesFiles,periodFilter,seasonFilter){
   return '<div style="margin-top:32px;padding-top:28px;border-top:.5px solid var(--border)">'
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:16px">'
     +'<div><h2 style="font-size:17px;font-weight:600;margin:0 0 4px">Sales by Season</h2>'
-    +'<p style="font-size:12px;color:var(--text2);margin:0">Net revenue and profitability breakdown by season label</p></div></div>'
+    +'<p style="font-size:12px;color:var(--text2);margin:0">Sales shown inc VAT; GP% uses costed net sales ex VAT</p></div></div>'
     +'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+periodPills+'</div>'
     +seasonPillsBlock
     +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:20px">'
     +'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">Units sold</label><span style="font-size:18px;font-weight:500">'+fN(totUnits)+'</span></div>'
-    +'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">Net sales</label><span style="font-size:18px;font-weight:500">'+fMoney(totRev)+'</span></div>'
+    +'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">Net sales inc VAT</label><span style="font-size:18px;font-weight:500">'+fMoney(totRev)+'</span></div>'
     +'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">Gross profit</label><span style="font-size:18px;font-weight:500;color:var(--success)">'+fMoney(totGP)+'</span></div>'
-    +'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">GP %</label><span style="font-size:18px;font-weight:500;color:var(--success)">'+fPct(totGPpct)+'</span></div>'
-    +'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">Net ASP</label><span style="font-size:18px;font-weight:500">'+fMoney(totASP)+'</span></div>'
+    +'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">GP %</label><span style="font-size:18px;font-weight:500;color:'+(totGPpct==null?'var(--text3)':'var(--success)')+'">'+(totGPpct==null?'—':fPct(totGPpct))+'</span></div>'
+    +'<div style="background:var(--bg2);border-radius:var(--r);padding:12px 14px"><label style="display:block;font-size:11px;color:var(--text2);margin-bottom:4px">Net ASP inc VAT</label><span style="font-size:18px;font-weight:500">'+fMoney(totASP)+'</span></div>'
     +discountCard
     +'</div>'
     +tableHtml
@@ -5382,7 +5389,7 @@ function renderMeth(){
     ${row('Sales', 'Shopify sales after discounts and sales reversals for the selected dates, displayed including VAT.', '')}
     ${row('Total GP', 'Shopify gross profit: net sales ex VAT minus Shopify cost of goods sold for the selected dates.', '')}
     ${row('GP / unit', 'Total GP ÷ net units sold.', '')}
-    ${row('GP %', 'Achieved GP ÷ costed net sales ex VAT. VAT-inclusive display sales are never used as the margin denominator.', '')}
+    ${row('GP %', 'Achieved GP ÷ costed net sales ex VAT, including each Sales by Season row and total. VAT-inclusive display sales are never used as the margin denominator.', '')}
     ${row('Sales / wk', 'Visible sales inc VAT in the active loaded range ÷ active range length in weeks.', '')}
     ${row('Stock', 'Current units available from loaded Shopify variants, or the legacy inventory snapshot, summed across locations.', '')}
     ${row('Cover wks', 'Current stock ÷ weekly ROS. Colour coded: red = under 4 weeks, amber = will run out before season end, green = covered.',
