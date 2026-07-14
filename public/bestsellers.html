@@ -158,9 +158,10 @@ tr.exp-r td{background:var(--bg2);border-bottom:.5px solid var(--border)}
 .gp-bar-fill{height:100%;border-radius:1px;background:var(--success)}
 
 /* ── Monthly sparkline columns ──────────────────────────────────────── */
-.spark-cell{text-align:center;padding:4px 2px;width:56px;max-width:56px}
-.spark-val{font-size:12px;font-weight:500;color:var(--text);text-align:center}
+.spark-cell{text-align:center;padding:5px 3px;width:64px;max-width:64px}
+.spark-val{font-size:12px;font-weight:600;color:var(--text);text-align:center;min-height:16px}
 .spark-val.zero{color:var(--text3);font-weight:400}
+.spark-return{display:inline-flex;align-items:center;justify-content:center;min-width:22px;min-height:17px;margin:3px auto 0;padding:1px 5px;border:1px solid #e9a8a4;border-radius:999px;background:#fff1f0;color:#a92f2a;font-size:10px;font-weight:700;line-height:1;white-space:nowrap}
 .spark-bar-wrap{height:16px;display:flex;align-items:flex-end;justify-content:center;margin-top:2px}
 .spark-bar{border-radius:1px 1px 0 0;min-width:14px;background:var(--text3);opacity:.5;min-height:2px}
 .spark-bar.hi{background:var(--success);opacity:.7}
@@ -2015,9 +2016,10 @@ function render(){
       const isBest=u>0&&u===Math.max(...srtAll.map(x=>x.periods[lbl]?.units||0));
       const cls=u===0?'lo':isBest?'hi':'';
       const uColor=u<0?'var(--danger)':'';
-      return`<td class="spark-cell" title="Net ${u} · returned ${returned}">
-        <div class="spark-val${u===0?' zero':''}" style="color:${uColor}">${u!==0?u:'—'}${returned>0?` <span style="font-size:9px;color:var(--danger)">↩${fN(returned)}</span>`:''}</div>
+      return`<td class="spark-cell" title="Net units ${u}; returned units ${returned}">
+        <div class="spark-val${u===0?' zero':''}" style="color:${uColor}">${u!==0?u:'—'}</div>
         <div class="spark-bar-wrap"><div class="spark-bar ${cls}" style="height:${barH}px;${u<0?'background:var(--danger);opacity:0.5':''}"></div></div>
+        ${returned>0?`<span class="spark-return" aria-label="${fN(returned)} returned unit${returned===1?'':'s'}" title="${fN(returned)} returned unit${returned===1?'':'s'}">${fN(returned)}</span>`:''}
       </td>`;
     }).join(''):'';
 
@@ -5370,7 +5372,7 @@ function renderMeth(){
     ${row('Demand card', 'Shopify product sales including VAT, after discounts and before returns. It uses the same ShopifyQL formula as the P&L Planner.', 'This is a loaded-range trading total rather than a product/category-filtered subtotal.')}
     ${row('Despatch card', 'ShopifyQL total sales for the loaded range, matching the P&L Planner Despatch definition.', 'This is a loaded-range trading total rather than a product/category-filtered subtotal.')}
     ${row('Units', 'Net units sold across all loaded periods after unit reversals.', '')}
-    ${row('Weekly columns', 'Net units sold in each period, with returned units shown beside them. Expanding a product shows gross units, returned units, refund value and net sales for every week.', '')}
+    ${row('Weekly columns', 'Net units sold in each period, with returned units shown as a red number badge beneath the weekly bar. Expanding a product shows gross units, returned units, refund value and net sales for every week.', '')}
     ${row('Avg price (ASP)', 'Visible sales inc VAT ÷ net items sold across the active range.', '')}
     ${row('Gross sales', 'Shopify gross sales before discounts and returns, displayed including VAT.', '')}
     ${row('Discounts', 'Shopify discount-code and order-discount value. Discount codes do not make a product a markdown or sale product.', 'Discount % = discounts ÷ gross sales before discount.')}
