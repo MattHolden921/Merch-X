@@ -159,20 +159,21 @@ test("ShopifyQL product metrics preserve dated ex-VAT sales, reversals, COGS, an
   const result = bestsellers.calculateProductFinancials({
     source: "shopifyql_sales",
     salesIncludeVat: false,
-    revenue: 80,
+    revenue: 70,
     grossSales: 150,
     grossProfit: 50,
     costOfGoods: 30,
     units: -1,
     variants: new Map()
   }, []);
-  assert.equal(result.revenue, 80);
-  assert.equal(result.revenueExVat, 80);
-  assert.equal(result.revenueIncVat, 96);
+  assert.equal(result.revenue, 70);
+  assert.equal(result.revenueExVat, 70);
+  assert.equal(result.revenueIncVat, 84);
   assert.equal(result.grossSalesExVat, 150);
   assert.equal(result.units, -1);
   assert.equal(result.costOfGoods, 30);
   assert.equal(result.grossProfit, 50);
+  assert.equal(result.costedRevenueExVat, 80);
   assert.equal(result.costQuality, "shopify_reported");
 });
 

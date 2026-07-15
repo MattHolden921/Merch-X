@@ -594,8 +594,8 @@ function normalizeProduct(product, orderMetrics) {
   const margin = variantMargins.length ? Math.round(Math.min(...variantMargins)) : null;
   const metrics = orderMetrics.get(product.id) || { revenue: 0, grossSales: 0, units: 0, variants: new Map() };
   const financials = bestsellers.calculateProductFinancials(metrics, variants);
-  const achievedMargin = financials.grossProfit != null && financials.revenueExVat !== 0
-    ? financials.grossProfit / financials.revenueExVat * 100
+  const achievedMargin = financials.grossProfit != null && financials.costedRevenueExVat !== 0
+    ? financials.grossProfit / financials.costedRevenueExVat * 100
     : null;
   const featuredMediaImage = product.featuredMedia?.image ? {
     url: product.featuredMedia.image.url,
@@ -660,7 +660,7 @@ function normalizeProduct(product, orderMetrics) {
     currentInventoryCost: financials.currentInventoryCost,
     averageSoldUnitCost: financials.averageSoldUnitCost,
     margin: achievedMargin ?? margin,
-    marginBasis: achievedMargin == null ? "current_retail_ex_vat" : "achieved_net_sales_ex_vat",
+    marginBasis: achievedMargin == null ? "current_retail_ex_vat" : "achieved_costed_net_sales_ex_vat",
     stock,
     variants: normalizedVariants,
     isGiftCard: Boolean(product.isGiftCard),
@@ -2173,7 +2173,7 @@ function buildBestsellersPayloadFromPeriods(periodRows, requestedRange = null) {
     const weeks = Math.max(publicPeriods.reduce((total, period) => total + reportDaysInclusive(period) / 7, 0), 1);
     const avgP = product.units > 0 ? product.rev / product.units : Number(product.rrp || 0);
     const gp = product.gpComplete ? product.gpKnown : null;
-    const gpPct = gp != null && product.revenueExVat > 0 ? gp / product.revenueExVat * 100 : null;
+    const gpPct = gp != null && product.costedRevenueExVat > 0 ? gp / product.costedRevenueExVat * 100 : null;
     const gpUnit = gp != null && product.units > 0 ? gp / product.units : null;
     const decisionPeriod = product.periods[latestPeriod?.label] || { units: 0, rev: 0 };
     const decision = bestsellers.decisionRateMetrics(decisionPeriod, product.stock, latestPeriodDays, 8);
@@ -2335,6 +2335,7 @@ function buildTransientBestsellersPayload(range, products, meta = {}) {
     const grossExVat = product.grossSalesExVat == null ? gross / 1.2 : Number(product.grossSalesExVat || 0);
     const cost = product.cost == null ? null : Number(product.cost || 0);
     const gp = product.grossProfit == null ? null : Number(product.grossProfit || 0);
+    const costedRevenueExVat = Number(product.costedRevenueExVat ?? (gp == null ? 0 : revenueExVat));
     const knownGp = Number(product.knownGrossProfit ?? gp ?? 0);
     const avgP = units > 0 ? rev / units : Number(product.price || 0);
     const stock = product.stock == null ? null : Number(product.stock || 0);
@@ -2381,14 +2382,14 @@ function buildTransientBestsellersPayload(range, products, meta = {}) {
       markdownLeakageIncVat: Number(product.markdownLeakageIncVat || 0),
       avgP,
       gAsp: units > 0 ? gross / units : avgP,
-      gpPct: gp != null && revenueExVat > 0 ? gp / revenueExVat * 100 : null,
+      gpPct: gp != null && costedRevenueExVat > 0 ? gp / costedRevenueExVat * 100 : null,
       gpUnit: gp != null && units > 0 ? gp / units : null,
       stock,
       cost,
       avgCost: cost,
       costedUnits: Number(product.costedUnits ?? (gp == null ? 0 : units)),
       uncostedUnits: Number(product.uncostedUnits ?? (gp == null ? units : 0)),
-      costedRevenueExVat: Number(product.costedRevenueExVat ?? (gp == null ? 0 : revenueExVat)),
+      costedRevenueExVat,
       costCoveragePercent: Number(product.costCoveragePercent ?? (gp == null && units > 0 ? 0 : 100)),
       costQuality: product.costQuality || (units <= 0 ? "not_applicable" : gp == null ? "missing" : "complete"),
       stockCostValue: product.stockCostValue == null ? null : Number(product.stockCostValue || 0),

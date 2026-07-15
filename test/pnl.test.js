@@ -171,7 +171,8 @@ test("maps ShopifyQL sales report rows to Despatch, Demand, and profit actuals",
   const statement = buildPnl(actuals);
   assert.equal(statement.cogs, 2362.02);
   assert.equal(statement.grossProfit, 17667.89);
-  assert.equal(statement.grossMargin, 17667.89 / 21466.39);
+  assert.equal(statement.grossMarginRevenue, 17667.89 + 2362.02);
+  assert.equal(statement.grossMargin, 17667.89 / (17667.89 + 2362.02));
   assert.equal(statement.operatingProfit, 17667.89);
 });
 

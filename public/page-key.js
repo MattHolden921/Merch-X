@@ -82,8 +82,8 @@
         ["Sales and profit", [
           ["Demand", "Product sales including VAT, after discounts and before returns."],
           ["Despatch", "Shopify total sales for the period. AOV uses Despatch divided by order count."],
-          ["Net sales", "Product revenue excluding VAT after discounts and returns; the profit-margin denominator."],
-          ["Gross profit", "ShopifyQL reported gross profit for the dates. GP% is gross profit divided by net sales excluding VAT.", "GP% = gross profit ÷ net sales ex VAT"]
+          ["Net sales", "Total product revenue excluding VAT after discounts and returns; the net-profit percentage denominator."],
+          ["Gross profit", "ShopifyQL reported gross profit for sales with product cost recorded. GP% uses the matching costed net sales excluding VAT, derived as gross profit plus COGS.", "GP% = gross profit ÷ (gross profit + COGS)"]
         ]],
         ["Costs", [
           ["Variable costs", "Non-fixed cost rules such as fulfilment, postage, pick/pack and payment fees."],
@@ -111,7 +111,7 @@
         ]],
         ["Metrics", [
           ["Sales", "Shopify net sales after discounts and reversals, displayed including VAT for the sales window."],
-          ["GP / GP%", "Achieved gross profit and margin use Shopify net sales excluding VAT and dated COGS where available."],
+          ["GP / GP%", "Achieved gross profit uses Shopify's dated COGS. GP% divides it by the matching costed net sales excluding VAT, so uncosted sales do not overstate or understate margin."],
           ["Engagement / selected-period CVR", "Views, add-to-carts and CVR use the selected Sales start/end period. CVR is Shopify net units divided by GA4 item views and will not necessarily reconcile to GA4 purchase conversion."],
           ["Sell-through", "Selected-period net units divided by net units plus current positive stock; current stock is not a launch-date snapshot."],
           ["Image-impact CVR", "A separate before/after comparison anchored to the featured-image change date. Its dates can differ from the selected sales period, so it should not be expected to match the Engagement CVR. Sales and units are normalised per available day."]

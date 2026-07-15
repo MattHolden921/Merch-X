@@ -1851,7 +1851,7 @@ function render(){
     const markdownLeakageIncVat=periodFiltered?getMetric(p,'markdownLeakageIncVat'):Number(p.markdownLeakageIncVat||0);
     const fullPriceGrossUnits=periodFiltered?getMetric(p,'fullPriceGrossUnits'):Number(p.fullPriceGrossUnits||0);
     const markdownGrossUnits=periodFiltered?getMetric(p,'markdownGrossUnits'):Number(p.markdownGrossUnits||0);
-    return Object.assign({},p,{units,salesIncVat,revenueExVat,grossSalesIncVat,grossUnits,returnedUnits,discountsIncVat,refundsIncVat,rrpOpportunityIncVat,markdownLeakageIncVat,fullPriceGrossUnits,markdownGrossUnits,gp,knownGpValue,costedRevenueExVat,avgPIncVat,gAspIncVat:r.grossAvailable&&units?grossSalesIncVat/units:avgPIncVat,gpPct:periodFiltered?(gp!=null&&revenueExVat?gp/revenueExVat*100:null):(p.gpPct==null?null:Number(p.gpPct)),gpUnit:gp!=null&&units?gp/units:null,wklyU,avgRevPerWeekIncVat,coverWks:p.stock!=null&&wklyU>0?Number(p.stock)/wklyU:null});
+    return Object.assign({},p,{units,salesIncVat,revenueExVat,grossSalesIncVat,grossUnits,returnedUnits,discountsIncVat,refundsIncVat,rrpOpportunityIncVat,markdownLeakageIncVat,fullPriceGrossUnits,markdownGrossUnits,gp,knownGpValue,costedRevenueExVat,avgPIncVat,gAspIncVat:r.grossAvailable&&units?grossSalesIncVat/units:avgPIncVat,gpPct:periodFiltered?(gp!=null&&costedRevenueExVat?gp/costedRevenueExVat*100:null):(p.gpPct==null?null:Number(p.gpPct)),gpUnit:gp!=null&&units?gp/units:null,wklyU,avgRevPerWeekIncVat,coverWks:p.stock!=null&&wklyU>0?Number(p.stock)/wklyU:null});
   });
   const overallProducts=activeProducts.filter(isRelevantMainProduct).filter(p=>p.units!==0||p.salesIncVat!==0||p.grossUnits>0);
   let baseProducts=activeProducts.filter(isRelevantMainProduct);
