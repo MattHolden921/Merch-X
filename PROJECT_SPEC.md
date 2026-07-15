@@ -378,15 +378,15 @@ Important principles:
 
 ### Barcode Label Jobs
 
-- Barcode label jobs can be generated for a full order, a selected supplier batch, or remaining unbatched units.
+- Barcode label jobs can be generated for a full order, a selected supplier batch, or remaining unbatched units. Within any current scope, users can instead select specific order lines so newly added colour/style lines can be issued as a follow-up job without regenerating the earlier export.
 - The barcode value is exactly the normalized Merch X SKU and the printer is instructed to render it as Code 128. GTIN/EAN generation and check-digit transformation are out of scope.
 - The printer workbook has one row per unique SKU and includes barcode value, fixed label size, buying code, style, category, colour, size, match key, ordered units, labels per unit, spare labels, and total labels. Barcode format, RRP, and label-template columns are intentionally omitted. Its job-instructions sheet includes supplier/scope details and the double-barcode requirement.
 - Two identical labels are required for every ordered unit: one on the swing ticket and one on the outside of the product packaging. Required print quantity is `ordered units x 2 + spare labels per SKU`.
 - The standard proof layout is 60 x 40 mm so it fits within a 70 x 50 mm swing-ticket area with 5 mm clearance on every side. It displays style name, buying code labelled `ART`, SKU, colour, and a generated Code 128 barcode in that order; the printable proof is laid out at physical size on A4 for 100% / Actual size printing or PDF export.
 - The supplier guide is available as separate English and Italian print/PDF outputs generated from the same label-job snapshot. Both group variations beneath the style name and use only four columns: Product image, Buying code, Our SKU, and Apply to. Apply-to instructions state the colour/size quantity and require one label on the swing ticket plus one on the outer packaging. Stored style and colour values remain untranslated so they match the purchase order exactly; both guides explicitly note that colour names are shown in English. The final page embeds `public/assets/good-barcode-example.png` as the approved visual example.
-- Preflight validation blocks missing SKUs, non-whole label quantities, conflicting duplicate SKU details, shared buying codes without colour, and same-code/same-colour variations without size. Missing buying code, style, colour, or image can be reported as warnings when the variation remains unambiguous.
+- Preflight validation blocks missing SKUs, non-whole label quantities, conflicting duplicate SKU details, shared buying codes without colour, and same-code/same-colour variations without size. Missing buying code, style, colour, or image can be reported as warnings when the variation remains unambiguous. Generate runs preflight first: a clean job continues from the original click, while any warnings are listed in a confirmation prompt and require an explicit second confirmation before the immutable job is created. The API also rejects warning-bearing generation requests without acknowledgement.
 - An optional fixed spare-label quantity is applied once per unique SKU.
-- Successful generation writes an immutable JSON snapshot to `order_label_jobs`, assigns an order-level versioned job number, and records an order event. Later order or product edits do not alter an existing job.
+- Successful generation writes an immutable JSON snapshot to `order_label_jobs`, including any selected line indexes, assigns an order-level versioned job number, and records an order event. Later order or product edits do not alter an existing job.
 
 ### Invoices
 

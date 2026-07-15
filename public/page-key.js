@@ -189,7 +189,7 @@
         ["Reports and checks", [
           ["Live / New Arrivals", "Read-only Shopify check by SKU for active/live state and the exact New Arrivals collection tag."],
           ["Warehouse report", "Printable order-line image and quantity report for the selected batch scope."],
-          ["Label job", "Immutable barcode-label snapshot using two Code 128 SKU labels per ordered unit plus configured spares."],
+          ["Label job", "Immutable barcode-label snapshot using two Code 128 SKU labels per ordered unit plus configured spares. Choose all lines in the current scope or select only newly added colour/style lines for a follow-up job. Blocking issues stop generation; warnings require confirmation before the job is created."],
           ["Archive vs delete", "Archive preserves the record outside active work; delete is a restricted destructive action."]
         ]]
       ]

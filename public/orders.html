@@ -159,9 +159,10 @@ textarea{min-height:70px;resize:vertical}
 .label-grid{display:grid;grid-template-columns:140px minmax(180px,1fr) minmax(240px,2fr);gap:10px;align-items:end}
 .label-validation{margin-top:10px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px;font-size:12px;line-height:1.55}
 .label-validation ul{margin:6px 0 0;padding-left:20px}.label-history{display:flex;flex-direction:column;gap:7px;margin-top:12px}.label-job-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;border-top:1px solid var(--ds-line);padding-top:8px}.label-job-row:first-child{border-top:0}.label-job-row strong,.label-job-row span{display:block}.label-job-row span{font-size:11px;color:var(--ds-text-muted);margin-top:2px}
+.label-line-picker{margin-top:10px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px}.label-line-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px}.label-line-option{display:flex;gap:8px;align-items:flex-start;background:var(--ds-bg-surface);border:1px solid var(--ds-line);border-radius:6px;padding:7px 8px;font-size:11px;line-height:1.35}.label-line-option input{width:16px;min-height:16px;margin-top:1px}.label-line-option strong,.label-line-option span{display:block}.label-line-option span{color:var(--ds-text-muted)}
 .num{text-align:right;white-space:nowrap}
 @media(max-width:1180px){.toolbar{grid-template-columns:repeat(3,minmax(0,1fr))}.layout{grid-template-columns:1fr}.order-list{max-height:none}.metric-grid,.summary-grid{grid-template-columns:repeat(2,1fr)}.filter-summary{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:760px){.toolbar,.workflow-grid,.grid2,.grid3,.invoice-form,.invoice-totals,.batch-form,.batch-totals,.label-grid,.receipt-import{grid-template-columns:1fr}.metric-grid,.summary-grid,.filter-summary{grid-template-columns:1fr}.filter-context{grid-column:auto}.detail-head{grid-template-columns:1fr}.actions{justify-content:flex-start}.order-row{grid-template-columns:1fr}.order-side{text-align:left;display:flex;gap:6px;flex-wrap:wrap;min-width:0}.order-side span{display:inline-flex;width:auto}.badge{max-width:100%}.label-job-row{grid-template-columns:1fr}}
+@media(max-width:760px){.toolbar,.workflow-grid,.grid2,.grid3,.invoice-form,.invoice-totals,.batch-form,.batch-totals,.label-grid,.label-line-options,.receipt-import{grid-template-columns:1fr}.metric-grid,.summary-grid,.filter-summary{grid-template-columns:1fr}.filter-context{grid-column:auto}.detail-head{grid-template-columns:1fr}.actions{justify-content:flex-start}.order-row{grid-template-columns:1fr}.order-side{text-align:left;display:flex;gap:6px;flex-wrap:wrap;min-width:0}.order-side span{display:inline-flex;width:auto}.badge{max-width:100%}.label-job-row{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -234,7 +235,7 @@ const discrepancyResolutionTypes=[
 const currencyOptions=["EUR","GBP","USD","Other"];
 const owners=["Buyer","Buying Director","FD / Finance","Merchandising","Supplier"];
 const INVOICE_BALANCE_TOLERANCE_GBP=10;
-let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],receiptLines:[],discrepancies:[],labelJobs:[],labelValidation:null,labelSettings:{sparePerSku:0,placementInstructions:""},pahSettings:{},metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,receivingBatchId:"",lineBatchFilter:"all",liveCheck:null,authMode:"none",currentUser:null};
+let state={orders:[],selectedId:new URLSearchParams(location.search).get("id")||"",selected:null,events:[],invoices:[],batches:[],batchLines:[],receiptLines:[],discrepancies:[],labelJobs:[],labelValidation:null,labelSettings:{sparePerSku:0,placementInstructions:""},labelSelectionMode:"all",selectedLabelLineIndexes:[],pahSettings:{},metrics:null,users:[],editingInvoiceId:"",invoiceEditorOpen:false,editingBatchId:"",batchEditorOpen:false,receivingBatchId:"",lineBatchFilter:"all",liveCheck:null,authMode:"none",currentUser:null};
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
@@ -697,6 +698,7 @@ function filteredOrderLines(lines){
 function setLineBatchFilter(filter){
   state.lineBatchFilter=filter||"all";
   state.labelValidation=null;
+  state.selectedLabelLineIndexes=[];
   renderDetail();
 }
 
@@ -709,6 +711,39 @@ function labelScopePayload(){
   if(filter==="unbatched")return {scopeType:"unbatched",batchId:""};
   if(filter!=="all")return {scopeType:"batch",batchId:filter};
   return {scopeType:"order",batchId:""};
+}
+
+function setLabelSelectionMode(mode){
+  state.labelSelectionMode=mode==="selected"?"selected":"all";
+  state.labelValidation=null;
+  renderDetail();
+}
+
+function toggleLabelLine(lineIndex,checked){
+  const selected=new Set((state.selectedLabelLineIndexes||[]).map(Number));
+  if(checked)selected.add(Number(lineIndex));else selected.delete(Number(lineIndex));
+  state.selectedLabelLineIndexes=[...selected].sort((a,b)=>a-b);
+  state.labelValidation=null;
+  renderDetail();
+}
+
+function setAllLabelLines(checked){
+  const lines=state.selected?.order?.lines||[];
+  state.selectedLabelLineIndexes=checked?warehouseReportLines(lines).map(item=>item.index):[];
+  state.labelValidation=null;
+  renderDetail();
+}
+
+function renderLabelLinePicker(){
+  const lines=state.selected?.order?.lines||[];
+  const available=warehouseReportLines(lines);
+  const selected=new Set((state.selectedLabelLineIndexes||[]).map(Number));
+  if(state.labelSelectionMode!=="selected")return "";
+  return `<div class="label-line-picker">
+    <div class="actions" style="justify-content:space-between"><strong>Select the newly added colour/style lines</strong><button type="button" class="btn" onclick="setAllLabelLines(${selected.size!==available.length})">${selected.size===available.length?"Clear all":"Select all"}</button></div>
+    <p class="muted" style="font-size:11px;margin-top:4px">Only checked lines will be included in this new job. Earlier label jobs remain unchanged.</p>
+    <div class="label-line-options">${available.map(({line,index,quantity})=>`<label class="label-line-option"><input type="checkbox" ${selected.has(index)?"checked":""} onchange="toggleLabelLine(${index},this.checked)"><span><strong>${escapeHtml(line.style||line.description||`Line ${index+1}`)} · ${escapeHtml(line.colour||line.color||"No colour")}</strong><span>SKU ${escapeHtml(line.sku||"missing")} · ${escapeHtml(line.buyingCode||line.supplierSku||"No buying code")} · ${Number(quantity||0).toLocaleString("en-GB")} units</span></span></label>`).join("")}</div>
+  </div>`;
 }
 
 function canManagePah(){
@@ -807,6 +842,8 @@ function renderLabelJobGroup(){
   return `<section class="work-panel" style="margin-top:14px">
     <div class="work-head"><h3>Barcode label jobs</h3><div class="actions"><span class="badge info">2 labels per unit</span><span class="badge info">SKU encoded as Code 128</span><span class="pill">${escapeHtml(warehouseReportScope())}</span></div></div>
     <p class="muted" style="font-size:12px;line-height:1.5;margin-bottom:10px">Generate a frozen printer file and matching supplier allocation guide for the selected order-line scope.</p>
+    <div class="field" style="max-width:360px"><label>Job contents</label><select class="select" onchange="setLabelSelectionMode(this.value)" ${canManage?"":"disabled"}><option value="all" ${state.labelSelectionMode==="all"?"selected":""}>All lines in current scope</option><option value="selected" ${state.labelSelectionMode==="selected"?"selected":""}>Selected extra lines only</option></select></div>
+    ${renderLabelLinePicker()}
     <div class="label-grid">
       <div class="field"><label>Spare labels per SKU</label><input id="label-spares" type="number" min="0" max="100" step="1" value="${attr(settings.sparePerSku||0)}" ${canManage?"":"disabled"}></div>
       <div class="field"><label>Label size</label><input value="60 x 40 mm" disabled></div>
@@ -827,20 +864,46 @@ function renderLabelJobGroup(){
 async function runLabelJob(preview){
   if(!state.selectedId)return;
   rememberLabelSettings();
-  const response=await apiFetch("/api/orders/label-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,...labelScopePayload(),...state.labelSettings,preview:Boolean(preview)})});
-  const result=await response.json();
+  const selectionMode=state.labelSelectionMode||"all";
+  const selectedLineIndexes=selectionMode==="selected"?(state.selectedLabelLineIndexes||[]):[];
+  const payload={orderId:state.selectedId,...labelScopePayload(),...state.labelSettings,selectionMode,selectedLineIndexes};
+  const request=async extra=>{
+    const response=await apiFetch("/api/orders/label-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...payload,...extra})});
+    return {response,result:await response.json()};
+  };
+  let {response,result}=await request({preview:true});
   state.labelValidation=result.validation||result.job||null;
   if(!response.ok||!result.ok){
     renderDetail();
     showStatus(result.error||"Could not generate label job","err");
     return;
   }
-  if(!preview){
-    state.labelJobs=result.labelJobs||state.labelJobs;
-    state.events=result.events||state.events;
+  if(preview){
+    renderDetail();
+    showStatus("Label data is ready to generate.","ok");
+    return;
   }
+  const warnings=result.job?.warnings||[];
+  if(warnings.length){
+    const warningList=warnings.map(message=>`• ${message}`).join("\n");
+    const confirmed=window.confirm(`This label job has ${warnings.length} warning${warnings.length===1?"":"s"}:\n\n${warningList}\n\nGenerate the print job anyway?`);
+    if(!confirmed){
+      renderDetail();
+      showStatus("Label job not generated. Review the warnings and try again when ready.","warn");
+      return;
+    }
+  }
+  ({response,result}=await request({preview:false,warningsAcknowledged:warnings.length>0}));
+  state.labelValidation=result.validation||result.job||state.labelValidation;
+  if(!response.ok||!result.ok){
+    renderDetail();
+    showStatus(result.error||"Could not generate label job","err");
+    return;
+  }
+  state.labelJobs=result.labelJobs||state.labelJobs;
+  state.events=result.events||state.events;
   renderDetail();
-  showStatus(preview?"Label data is ready to generate.":`Generated immutable label job ${result.job.jobNumber}.`,"ok");
+  showStatus(`Generated immutable label job ${result.job.jobNumber}.`,"ok");
 }
 
 function labelJobById(id){
@@ -2453,6 +2516,8 @@ async function selectOrder(id){
   state.batchEditorOpen=false;
   state.receivingBatchId="";
   state.labelValidation=null;
+  state.labelSelectionMode="all";
+  state.selectedLabelLineIndexes=[];
   renderOrders();
   el("detail").innerHTML=`<section class="panel"><p class="empty-state">Loading order...</p></section>`;
   const response=await apiFetch(`/api/orders/detail?id=${encodeURIComponent(id)}`);

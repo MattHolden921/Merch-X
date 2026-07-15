@@ -7575,6 +7575,8 @@ function createOrderLabelJob(order, input = {}, createdBy = "") {
     batchLines: readOrderBatchLines(order.id),
     scopeType,
     batchId,
+    selectedLineIndexes: input.selectedLineIndexes,
+    selectionRequired: input.selectionMode === "selected",
     sparePerSku: input.sparePerSku,
     labelTemplate: input.labelTemplate,
     placementInstructions: input.placementInstructions
@@ -7585,6 +7587,11 @@ function createOrderLabelJob(order, input = {}, createdBy = "") {
     throw error;
   }
   if (input.preview) return { ...snapshot, preview: true };
+  if (snapshot.warnings.length && input.warningsAcknowledged !== true) {
+    const error = new Error("Confirm the label-job warnings before generating reports.");
+    error.validation = snapshot;
+    throw error;
+  }
   const db = openOrderSqliteDb();
   const version = Number(db.prepare("SELECT MAX(version) AS version FROM order_label_jobs WHERE order_id = ?").get(String(order.id))?.version || 0) + 1;
   const id = crypto.randomUUID();

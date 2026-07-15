@@ -41,6 +41,27 @@ test("uses batch allocations and rejects empty scopes", () => {
   assert.equal(buildLabelJobSnapshot({ order, batchLines, scopeType: "batch", batchId: "missing" }).valid, false);
 });
 
+test("can generate only selected extra order lines", () => {
+  const result = buildLabelJobSnapshot({
+    order,
+    selectedLineIndexes: [2],
+    selectionRequired: true,
+    sparePerSku: 1
+  });
+  assert.equal(result.valid, true);
+  assert.equal(result.selectionMode, "selected");
+  assert.deepEqual(result.selectedLineIndexes, [2]);
+  assert.equal(result.scopeLabel, "Selected lines (1) from Full order");
+  assert.deepEqual(result.rows.map(row => row.sku), ["15102"]);
+  assert.equal(result.totals.labelsRequired, 17);
+});
+
+test("selected-line mode requires a selection", () => {
+  const result = buildLabelJobSnapshot({ order, selectionRequired: true });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some(message => message.includes("Select at least one extra order line")));
+});
+
 test("corrects legacy label snapshots that only counted one label per unit", () => {
   const corrected = normalizeDoubleBarcodeSnapshot({
     rows: [{ sku: "15110", orderedQuantity: 5, spareQuantity: 2, labelsRequired: 7 }],
