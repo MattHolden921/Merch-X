@@ -62,7 +62,7 @@ test("summarizes supplier performance across operational and finance rows", () =
       batches: { received: 1, onTime: 1, late: 0, openBatches: 0 }
     },
     {
-      supplierName: "Alpha",
+      supplierName: "ALPHA",
       units: 5,
       totalGbp: 50,
       invoices: { outstanding: 0 },
@@ -84,8 +84,8 @@ test("summarizes supplier performance across operational and finance rows", () =
 test("summarizes supplier credit balances from credit-note discrepancies", () => {
   const credits = actuals.summarizeSupplierCredits([
     { supplierName: "Alpha", orderId: "o1", orderNumber: "PO-1", status: "Credit requested", valueGbp: 25, sku: "15100" },
-    { supplierName: "Alpha", orderId: "o2", orderNumber: "PO-2", status: "Open", resolutionType: "credit_note", valueGbp: 35, sku: "15101" },
-    { supplierName: "Alpha", orderId: "o3", orderNumber: "PO-3", status: "Credit received", valueGbp: 12 },
+    { supplierName: "ALPHA", orderId: "o2", orderNumber: "PO-2", status: "Open", resolutionType: "credit_note", valueGbp: 35, sku: "15101" },
+    { supplierName: "alpha", orderId: "o3", orderNumber: "PO-3", status: "Credit received", valueGbp: 12 },
     { supplierName: "Alpha", orderId: "o4", orderNumber: "PO-4", status: "Written off", resolutionType: "credit_note", valueGbp: 9 },
     { supplierName: "Beta", orderId: "o5", orderNumber: "PO-5", status: "Replacement expected", resolutionType: "replacement", valueGbp: 18 }
   ]);

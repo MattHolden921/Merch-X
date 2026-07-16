@@ -6199,7 +6199,7 @@ function publicManagedOrder(order, workflowRow, productMap = null, supplierCredi
   const baseWorkflow = workflowFromRow(workflowRow, order);
   const lines = order.lines || [];
   const units = lines.reduce((total, line) => total + Number(line.quantity || 0), 0);
-  const categories = [...new Set(lines.map(line => line.category).filter(Boolean))];
+  const categories = uniqueReportLabels(lines.map(line => line.category));
   const fxRate = Number(order.fxRate || order.totals?.fxRate || 0);
   const total = orderTotalGbp(order);
   const productCompletion = orderProductCompletion(order, productMap);
@@ -6291,9 +6291,23 @@ function reportGroupKey(value) {
   return text || "Unassigned";
 }
 
+function reportGroupIdentity(value) {
+  return reportGroupKey(value).toLocaleLowerCase("en-GB");
+}
+
+function uniqueReportLabels(values = []) {
+  const labels = new Map();
+  for (const value of values) {
+    const label = String(value || "").trim();
+    if (label && !labels.has(label.toLocaleLowerCase("en-GB"))) labels.set(label.toLocaleLowerCase("en-GB"), label);
+  }
+  return [...labels.values()];
+}
+
 function incrementReportGroup(groups, key, patch = {}) {
-  const id = reportGroupKey(key);
-  if (!groups.has(id)) groups.set(id, { label: id, orders: 0, units: 0, valueGbp: 0, outstandingGbp: 0 });
+  const label = reportGroupKey(key);
+  const id = reportGroupIdentity(label);
+  if (!groups.has(id)) groups.set(id, { label, orders: 0, units: 0, valueGbp: 0, outstandingGbp: 0 });
   const group = groups.get(id);
   group.orders += Number(patch.orders || 0);
   group.units += Number(patch.units || 0);
@@ -6307,7 +6321,7 @@ function sortedReportGroups(groups, metric = "valueGbp") {
 }
 
 function reportLineCategories(lines) {
-  return [...new Set((lines || []).map(line => String(line.category || "").trim()).filter(Boolean))];
+  return uniqueReportLabels((lines || []).map(line => line.category));
 }
 
 function reportLineValueGbp(line) {
@@ -6341,8 +6355,9 @@ function reportOrderLineStats(order) {
   lines.forEach((line, index) => {
     const quantity = Number(line.quantity || 0);
     const category = reportGroupKey(line.category || "Uncategorised");
-    if (!categoryMap.has(category)) categoryMap.set(category, { label: category, units: 0, valueGbp: 0 });
-    const group = categoryMap.get(category);
+    const categoryKey = reportGroupIdentity(category);
+    if (!categoryMap.has(categoryKey)) categoryMap.set(categoryKey, { label: category, units: 0, valueGbp: 0 });
+    const group = categoryMap.get(categoryKey);
     group.units += quantity;
     group.valueGbp += reportLineValueGbp(line);
     unbatchedUnits += quantity;
@@ -6746,12 +6761,12 @@ function buildOrderReports(params = {}) {
     includeArchived,
     metrics,
     filters: {
-      suppliers: [...new Set(orders.map(order => order.supplierName).filter(Boolean))].sort(),
-      seasons: [...new Set(orders.map(order => order.season).filter(Boolean))].sort().reverse(),
-      categories: [...new Set(orders.flatMap(order => order.categories || []).filter(Boolean))].sort(),
-      intakeStatuses: [...new Set(orders.map(order => order.workflow.intakeStatus).filter(Boolean))].sort(),
-      paymentStatuses: [...new Set(orders.map(order => order.workflow.paymentStatus).filter(Boolean))].sort(),
-      owners: [...new Set(orders.map(order => order.workflow.nextActionOwner).filter(Boolean))].sort()
+      suppliers: uniqueReportLabels(orders.map(order => order.supplierName)).sort((a, b) => a.localeCompare(b, "en-GB", { sensitivity: "base" })),
+      seasons: uniqueReportLabels(orders.map(order => order.season)).sort((a, b) => b.localeCompare(a, "en-GB", { sensitivity: "base" })),
+      categories: uniqueReportLabels(orders.flatMap(order => order.categories || [])).sort((a, b) => a.localeCompare(b, "en-GB", { sensitivity: "base" })),
+      intakeStatuses: uniqueReportLabels(orders.map(order => order.workflow.intakeStatus)).sort((a, b) => a.localeCompare(b, "en-GB", { sensitivity: "base" })),
+      paymentStatuses: uniqueReportLabels(orders.map(order => order.workflow.paymentStatus)).sort((a, b) => a.localeCompare(b, "en-GB", { sensitivity: "base" })),
+      owners: uniqueReportLabels(orders.map(order => order.workflow.nextActionOwner)).sort((a, b) => a.localeCompare(b, "en-GB", { sensitivity: "base" }))
     },
     reports: {
       arrivals,
@@ -6875,7 +6890,8 @@ function buildSupplierReport(params = {}) {
         ...patch
       });
     } else {
-      supplierMap.set(key, { ...supplierMap.get(key), ...patch, key, name: supplierName });
+      const current = supplierMap.get(key);
+      supplierMap.set(key, { ...current, ...patch, key, name: current.name });
     }
     return supplierMap.get(key);
   };
@@ -12651,6 +12667,10 @@ function saveOrderFormOrder(dbData, savedOrder) {
       lastOrderedAt: storedOrder.savedAt
     }
   ) : null;
+  if (supplierPatch?.name) {
+    const existingSupplier = sqlite.prepare("SELECT name FROM suppliers WHERE name = ? COLLATE NOCASE").get(supplierPatch.name);
+    if (existingSupplier?.name) supplierPatch.name = existingSupplier.name;
+  }
   const productPatches = (storedOrder.lines || [])
     .filter(line => line.sku)
     .map(line => {
@@ -13475,9 +13495,9 @@ function upsertCatalogSupplier(input) {
   const sqlite = openOrderSqliteDb();
   const current = input.id
     ? supplierFromRow(sqlite.prepare("SELECT * FROM suppliers WHERE id = ?").get(Number(input.id)))
-    : supplierFromRow(sqlite.prepare("SELECT * FROM suppliers WHERE name = ?").get(cleanText(input.name)));
+    : supplierFromRow(sqlite.prepare("SELECT * FROM suppliers WHERE name = ? COLLATE NOCASE").get(cleanText(input.name)));
   const supplier = normalizeSupplierInput(input, current || {});
-  const duplicate = sqlite.prepare("SELECT id FROM suppliers WHERE name = ? AND id != ?").get(supplier.name, Number(current?.id || supplier.id || 0));
+  const duplicate = sqlite.prepare("SELECT id FROM suppliers WHERE name = ? COLLATE NOCASE AND id != ?").get(supplier.name, Number(current?.id || supplier.id || 0));
   if (duplicate) throw new Error(`Supplier ${supplier.name} already exists.`);
   const params = {
     name: supplier.name,
@@ -13515,7 +13535,7 @@ function upsertCatalogSupplier(input) {
       VALUES (@name, @reference, @status, @country, @leadTimeDays, @moq, @currency, @incoterms, @lastOrderNumber, @lastOrderedAt, @data, CURRENT_TIMESTAMP)
     `).run(params);
   }
-  return supplierFromRow(sqlite.prepare("SELECT * FROM suppliers WHERE name = ?").get(supplier.name));
+  return supplierFromRow(sqlite.prepare("SELECT * FROM suppliers WHERE name = ? COLLATE NOCASE").get(supplier.name));
 }
 
 function supplierHistory(name) {

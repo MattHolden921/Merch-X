@@ -153,8 +153,11 @@ function setOptions(id,items,allLabel){
   const current=val(id);
   const opts=[`<option value="">${escapeHtml(allLabel)}</option>`,...(items||[]).map(item=>`<option value="${attr(item)}">${escapeHtml(item)}</option>`)];
   el(id).innerHTML=opts.join("");
-  if([...el(id).options].some(option=>option.value===current))el(id).value=current;
+  const selected=[...el(id).options].find(option=>String(option.value).localeCompare(String(current),"en-GB",{sensitivity:"base"})===0);
+  if(selected)el(id).value=selected.value;
 }
+function reportTextKey(value){return String(value||"").trim().toLocaleLowerCase("en-GB")}
+function sameReportText(left,right){return reportTextKey(left)===reportTextKey(right)}
 function openLink(row){
   return `<a class="btn" href="${attr(row.openUrl||`orders.html?id=${encodeURIComponent(row.id)}`)}">Open order</a>`;
 }
@@ -196,18 +199,18 @@ function rowMatches(row,ignoreDate=false){
   const dateMatch=ignoreDate||(dueScope==="missing"
     ?!row.arrivalDate
     :(!dateFrom||(row.arrivalDate&&row.arrivalDate>=dateFrom))&&(!dateTo||(row.arrivalDate&&row.arrivalDate<=dateTo)));
-  return (!supplier||row.supplierName===supplier)
-    &&(!season||row.season===season)
-    &&(!category||(row.categories||[]).includes(category))
-    &&(!intake||row.workflow?.intakeStatus===intake)
-    &&(!payment||row.workflow?.paymentStatus===payment)
-    &&(!owner||row.workflow?.nextActionOwner===owner)
+  return (!supplier||sameReportText(row.supplierName,supplier))
+    &&(!season||sameReportText(row.season,season))
+    &&(!category||(row.categories||[]).some(value=>sameReportText(value,category)))
+    &&(!intake||sameReportText(row.workflow?.intakeStatus,intake))
+    &&(!payment||sameReportText(row.workflow?.paymentStatus,payment))
+    &&(!owner||sameReportText(row.workflow?.nextActionOwner,owner))
     &&dateMatch;
 }
 function filteredRows(id=state.tab){
   const reports=state.data?.reports||{};
   if(id==="buyingMix")return (reports.orders||[]).filter(row=>rowMatches(row));
-  if(id==="supplierPerformance")return (reports.supplierPerformance||[]).filter(row=>!val("supplier-filter")||row.supplierName===val("supplier-filter"));
+  if(id==="supplierPerformance")return (reports.supplierPerformance||[]).filter(row=>!val("supplier-filter")||sameReportText(row.supplierName,val("supplier-filter")));
   if(id==="withoutDates")return (reports.withoutDates||[]).filter(row=>rowMatches(row,true));
   if(id==="nextActions")return (reports.nextActions||[]).filter(row=>rowMatches(row,true));
   return (reports[id]||[]).filter(row=>rowMatches(row));
@@ -308,8 +311,9 @@ function buildGroups(rows,keyFn){
   for(const row of rows){
     const labels=keyFn(row);
     for(const label of labels){
-      const key=label||"Unassigned";
-      if(!map.has(key))map.set(key,{label:key,orders:0,units:0,valueGbp:0,outstandingGbp:0});
+      const displayLabel=String(label||"Unassigned").trim()||"Unassigned";
+      const key=reportTextKey(displayLabel);
+      if(!map.has(key))map.set(key,{label:displayLabel,orders:0,units:0,valueGbp:0,outstandingGbp:0});
       const group=map.get(key);
       group.orders+=1;
       group.units+=Number(row.units||0);

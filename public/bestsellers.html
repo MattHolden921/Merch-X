@@ -4249,6 +4249,9 @@ function applyAppearanceGrouping(arr, mode, cols) {
   if (mode === 'none' || !arr || arr.length === 0) return arr;
   cols = cols || 4;
   var keyFn = mode === 'colour' ? extractColour : extractStyle;
+  var comparisonKey = function(name) {
+    return String(keyFn(name) || '').trim().toLocaleLowerCase('en-GB');
+  };
 
   // Row-aware: fill the grid row by row.
   // After placing each item, immediately look for a same-key partner
@@ -4263,10 +4266,10 @@ function applyAppearanceGrouping(arr, mode, cols) {
       row.push(item);
       // If room left in row, pull in a same-key partner
       if (row.length < cols) {
-        var myKey = keyFn(item.name);
-        if (myKey && myKey !== 'Other') {
+        var myKey = comparisonKey(item.name);
+        if (myKey && myKey !== 'other') {
           for (var k = 0; k < remaining.length; k++) {
-            if (keyFn(remaining[k].name) === myKey) {
+            if (comparisonKey(remaining[k].name) === myKey) {
               row.push(remaining.splice(k, 1)[0]);
               break;
             }

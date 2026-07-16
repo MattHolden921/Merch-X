@@ -71,6 +71,7 @@
           ["Cost coverage", "Shows how much sold revenue/units had known cost. Incomplete coverage should temper GP conclusions."],
           ["Full price / markdown", "Uses selling price before discount codes versus RRP; a discount code alone does not make a product markdown."],
           ["Mix Performance", "Compares the share of sales with the share of current stock by department and category."],
+          ["Appearance grouping", "The merchandising position view can pair products by colour or by the first style word in the product title. Style matching ignores capitalisation; it does not change Shopify."],
           ["Methodology", "The in-page Methodology view is the detailed source for every report formula, VAT basis and sanity check."]
         ]]
       ]
@@ -210,6 +211,7 @@
           ["Received / accepted", "Physical receipt quantity and the portion accepted after damaged/rejected units."],
           ["Variance", "Accepted compared with expected for the relevant receipt scope."],
           ["Supplier on-time", "Received batches on or before ETA divided by received batches; the current report also counts a received batch with no ETA as on-time."],
+          ["Grouping", "Supplier, season, category and other report group/filter labels ignore capitalization, so capitalization-only differences consolidate into one result."],
           ["Data quality", "Missing or inconsistent order data that can make another report incomplete."],
           ["Filter scope", "Supplier Performance currently responds to Supplier, while other report areas use their displayed filters and inclusive due dates."]
         ]]
@@ -230,6 +232,7 @@
           ["Discrepancy", "A shortage, damage or overage record raised from intake."],
           ["Credit due", "Signed credit-note value still outstanding on unresolved supplier discrepancies."],
           ["Product value estimates", "Product-tab cost and retail totals use current master cost/RRP multiplied by historical ordered units, not historical PO prices."],
+          ["Supplier matching", "Supplier names are matched without regard to capitalization across master products and saved orders."],
           ["Coverage", "Metrics reflect only saved Merch X orders and receipt data; missing dates or receipts remain visible as incomplete data."]
         ]]
       ]
@@ -253,6 +256,7 @@
           ["Push draft", "Creates a Shopify DRAFT only. A saved size group creates one product with multiple Size variants; inventory quantity is not written by this workflow."]
         ]],
         ["Identifiers", [
+          ["Supplier identity", "Supplier filters, reports and normal save flows ignore capitalization-only differences while retaining a readable saved label."],
           ["SKU", "Unique local sellable identifier."],
           ["Buying code", "Style-level code used to group related colourways; written to Shopify custom metadata on new draft creation."],
           ["Colour", "Product-level colour metadata; Size remains the only Shopify variant option for new drafts."],

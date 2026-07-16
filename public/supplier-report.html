@@ -342,7 +342,8 @@ function populateSuppliers(){
   const select=el("supplier-filter");
   const current=val("supplier-filter")||state.data?.selectedSupplier?.name||"";
   select.innerHTML=(state.data?.suppliers||[]).map(supplier=>`<option value="${attr(supplier.name)}">${escapeHtml(supplier.name)} (${numberFmt.format(Number(supplier.orderCount||0))})</option>`).join("");
-  if([...select.options].some(option=>option.value===current))select.value=current;
+  const matchingOption=[...select.options].find(option=>String(option.value).localeCompare(String(current),"en-GB",{sensitivity:"base"})===0);
+  if(matchingOption)select.value=matchingOption.value;
   else if(state.data?.selectedSupplier?.name)select.value=state.data.selectedSupplier.name;
 }
 async function loadReport(){

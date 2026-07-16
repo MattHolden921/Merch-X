@@ -23,7 +23,7 @@ function product(overrides = {}) {
 test("a valid size group keeps distinct SKUs and size values", () => {
   const result = sync.sizeVariantGroupValidation([
     product({ id: 1, sku: "15100", size: "S/M", shopifyVariantGroupPrimary: true }),
-    product({ id: 2, sku: "15101", size: "M/L" })
+    product({ id: 2, sku: "15101", size: "M/L", title: "tessa dress navy", supplierName: "SUPPLIER", buyingCode: "tessa", colour: "NAVY", productType: "DRESSES", season: "aw26" })
   ]);
   assert.equal(result.ready, true);
   assert.equal(result.lead.sku, "15100");

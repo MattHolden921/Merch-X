@@ -117,13 +117,15 @@ function productText(product){
   return [product.sku,product.buyingCode,product.style,product.supplierName,product.category,product.colour,product.size,product.season,product.lastOrderNumber].join(" ").toLowerCase();
 }
 
+function normalizedText(value){return String(value||"").trim().toLocaleLowerCase("en-GB");}
+
 function filteredProducts(){
   const search=el("search").value.trim().toLowerCase();
   const supplier=el("supplier-filter").value;
   const image=el("image-filter").value;
   return products.filter(product=>{
     if(search&&!productText(product).includes(search))return false;
-    if(supplier&&product.supplierName!==supplier)return false;
+    if(supplier&&normalizedText(product.supplierName)!==normalizedText(supplier))return false;
     if(image==="with"&&!product.imageUrl)return false;
     if(image==="without"&&product.imageUrl)return false;
     return true;
@@ -131,7 +133,9 @@ function filteredProducts(){
 }
 
 function renderFilters(){
-  const suppliers=[...new Set(products.map(product=>product.supplierName).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const supplierMap=new Map();
+  products.map(product=>product.supplierName).filter(Boolean).forEach(supplier=>{const key=normalizedText(supplier);if(!supplierMap.has(key))supplierMap.set(key,supplier)});
+  const suppliers=[...supplierMap.values()].sort((a,b)=>a.localeCompare(b,"en-GB",{sensitivity:"base"}));
   el("supplier-filter").innerHTML=`<option value="">All suppliers</option>${suppliers.map(supplier=>`<option>${escapeHtml(supplier)}</option>`).join("")}`;
 }
 
