@@ -1023,7 +1023,7 @@ function exportSupplierLabelGuide(id,language="en"){
   const scopeLabel=italian?(job.scopeType==="order"?"Ordine completo":job.scopeType==="unbatched"?"Rimanente / non assegnato":job.scopeLabel):job.scopeLabel;
   const groups=new Map();
   for(const row of job.rows||[]){
-    const key=`${row.buyingCode||""}|${row.style||""}`;
+    const key=row.supplierGuideGroupKey||[row.buyingCode,row.style].map(value=>String(value||"").trim().toLocaleUpperCase("en-GB")).join("|");
     if(!groups.has(key))groups.set(key,[]);
     groups.get(key).push(row);
   }

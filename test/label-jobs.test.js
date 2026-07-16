@@ -32,6 +32,19 @@ test("requires colour and then size where a buying code is shared", () => {
   assert.ok(noSize.errors.some(message => message.includes("needs a size")));
 });
 
+test("supplier guide grouping ignores buying-code and style capitalization", () => {
+  const result = buildLabelJobSnapshot({
+    order: {
+      lines: [
+        { sku: "1", buyingCode: "MIA24", style: "Mia dress", colour: "Navy", size: "S", quantity: 1 },
+        { sku: "2", buyingCode: "mia24", style: "MIA DRESS", colour: "Red", size: "M", quantity: 1 }
+      ]
+    }
+  });
+  assert.equal(result.valid, true);
+  assert.equal(new Set(result.rows.map(row => row.supplierGuideGroupKey)).size, 1);
+});
+
 test("uses batch allocations and rejects empty scopes", () => {
   const batchLines = [{ batchId: "b1", lineIndex: 1, quantity: 5 }];
   const result = buildLabelJobSnapshot({ order, batchLines, scopeType: "batch", batchId: "b1" });
