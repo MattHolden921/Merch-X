@@ -184,6 +184,7 @@
           ["Accepted", "Defaults to received less damaged units.", "accepted = received − damaged"],
           ["Fill / outstanding", "Fill rate compares accepted with expected; outstanding never falls below zero.", "fill = accepted ÷ expected; outstanding = max(order units − accepted, 0)"],
           ["Variance", "Accepted quantity compared with expected quantity; shortages, damage and overages can create discrepancy records."],
+          ["Saving discrepancies", "Edit any discrepancy rows, then use Save all changes once to persist every changed row."],
           ["Credit due", "Open credit-note value linked to unresolved discrepancies and carried into the supplier balance."]
         ]],
         ["Reports and checks", [

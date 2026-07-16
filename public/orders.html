@@ -140,7 +140,7 @@ textarea{min-height:70px;resize:vertical}
 .discrepancy-table th:nth-child(4),.discrepancy-table td:nth-child(4){width:96px}
 .discrepancy-table th:nth-child(5),.discrepancy-table td:nth-child(5){width:128px}
 .discrepancy-table th:nth-child(6),.discrepancy-table td:nth-child(6){width:124px}
-.discrepancy-table th:nth-child(8),.discrepancy-table td:nth-child(8){width:64px}
+.discrepancy-table th:nth-child(7),.discrepancy-table td:nth-child(7){width:130px}
 .empty-state{padding:38px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.6}
 .line-table-wrap{overflow-x:hidden;border:1px solid var(--ds-line);border-radius:var(--ds-radius)}
 .line-table{width:100%;border-collapse:collapse;table-layout:fixed}
@@ -1682,15 +1682,16 @@ function renderDiscrepancyGroup(order){
   const open=discrepancies.filter(item=>!["Credit received","Replacement received","Accepted variance","Written off","Resolved"].includes(item.status)).length;
   const creditDue=discrepancies.filter(item=>item.status==="Credit requested").reduce((sum,item)=>sum+Number(item.valueGbp||0),0);
   const creditReceived=discrepancies.filter(item=>item.status==="Credit received").reduce((sum,item)=>sum+Number(item.valueGbp||0),0);
+  const canSave=userHasAppRole("Merchandising")||userHasAppRole("Finance")||userHasAppRole("Admin");
   return `<section class="work-panel discrepancy-group">
-    <div class="work-head"><h3>Discrepancies & credits</h3><div class="actions"><span class="pill">${open} open</span><span class="pill">${money.format(creditDue)} due</span><span class="pill">${money.format(creditReceived)} received</span></div></div>
+    <div class="work-head"><h3>Discrepancies & credits</h3><div class="actions"><span class="pill">${open} open</span><span class="pill">${money.format(creditDue)} due</span><span class="pill">${money.format(creditReceived)} received</span>${discrepancies.length?`<button type="button" class="btn primary" id="discrepancy-save-all" onclick="saveAllDiscrepancies()" ${canSave?"":"disabled"}>Save all changes</button>`:""}</div></div>
     ${discrepancies.length?renderDiscrepancyTable(discrepancies):`<p class="empty" style="padding:10px">No receipt discrepancies yet.</p>`}
   </section>`;
 }
 
 function renderDiscrepancyTable(discrepancies){
   return `<div class="discrepancy-table-wrap"><table class="discrepancy-table">
-    <thead><tr><th>Line</th><th>Type</th><th class="num">Qty</th><th class="num">Value</th><th>Status</th><th>Resolution</th><th>Credit note</th><th></th></tr></thead>
+    <thead><tr><th>Line</th><th>Type</th><th class="num">Qty</th><th class="num">Value</th><th>Status</th><th>Resolution</th><th>Credit note</th></tr></thead>
     <tbody>${discrepancies.map(item=>renderDiscrepancyRow(item)).join("")}</tbody>
   </table></div>`;
 }
@@ -1705,22 +1706,45 @@ function renderDiscrepancyRow(item){
     <td><select class="select" id="${discrepancyControlId("status",item.id)}">${options(discrepancyStatuses,item.status||"Open")}</select></td>
     <td><select class="select" id="${discrepancyControlId("resolution",item.id)}">${resolutionOptions(item.resolutionType||"")}</select></td>
     <td><select class="select" id="${discrepancyControlId("invoice",item.id)}" ${financeAttrs}>${creditNoteOptions(item.linkedInvoiceId||"")}</select></td>
-    <td><button type="button" class="mini-btn" onclick="saveDiscrepancy('${attr(item.id)}')">Save</button></td>
   </tr>`;
 }
 
-async function saveDiscrepancy(id){
-  if(!state.selectedId)return;
+async function saveAllDiscrepancies(){
+  if(!state.selectedId||!state.discrepancies?.length)return;
   localStorage.setItem("ordersActorName",val("actor-name"));
-  const patch={
-    status:val(discrepancyControlId("status",id)),
-    resolutionType:val(discrepancyControlId("resolution",id)),
-    linkedInvoiceId:val(discrepancyControlId("invoice",id)),
-    notes:val(discrepancyControlId("notes",id))
-  };
-  const response=await apiFetch("/api/orders/discrepancies",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,discrepancyId:id,patch})});
-  const result=await response.json();
-  if(!response.ok||!result.ok){showError(new Error(result.error||"Could not update discrepancy"));return;}
+  const updates=state.discrepancies.map(item=>({
+    id:item.id,
+    label:item.sku||item.buyingCode||item.style||"Discrepancy",
+    patch:{
+      status:val(discrepancyControlId("status",item.id)),
+      resolutionType:val(discrepancyControlId("resolution",item.id)),
+      linkedInvoiceId:val(discrepancyControlId("invoice",item.id)),
+      notes:val(discrepancyControlId("notes",item.id))
+    },
+    original:{
+      status:item.status||"Open",
+      resolutionType:item.resolutionType||"",
+      linkedInvoiceId:item.linkedInvoiceId||"",
+      notes:String(item.notes||"").trim()
+    }
+  })).filter(item=>Object.keys(item.patch).some(key=>item.patch[key]!==item.original[key]));
+  if(!updates.length){showStatus("There are no discrepancy changes to save.","warn");return;}
+  const button=el("discrepancy-save-all");
+  if(button){button.disabled=true;button.textContent=`Saving 0 of ${updates.length}...`;}
+  let result;
+  try{
+    for(let index=0;index<updates.length;index+=1){
+      const update=updates[index];
+      if(button)button.textContent=`Saving ${index+1} of ${updates.length}...`;
+      const response=await apiFetch("/api/orders/discrepancies",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,discrepancyId:update.id,patch:update.patch})});
+      result=await response.json();
+      if(!response.ok||!result.ok)throw new Error(`${update.label}: ${result.error||"Could not update discrepancy"}`);
+    }
+  }catch(error){
+    if(button){button.disabled=false;button.textContent="Save all changes";}
+    showError(error);
+    return;
+  }
   state.selected=result.order;
   state.invoices=result.invoices||state.invoices||[];
   state.batches=result.batches||state.batches||[];
@@ -1735,6 +1759,7 @@ async function saveDiscrepancy(id){
   renderMetrics();
   renderOrders();
   renderDetail();
+  showStatus(`${updates.length} discrepancy change${updates.length===1?"":"s"} saved.`);
 }
 
 function renderEvents(){
