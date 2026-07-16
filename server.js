@@ -21,6 +21,7 @@ const finance = require("./lib/commerce-finance");
 const salePlanner = require("./lib/sale-planner");
 const windsorMarketing = require("./lib/windsor-marketing");
 const bestsellers = require("./lib/bestsellers");
+const shopifyProductSync = require("./lib/shopify-product-sync");
 
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
@@ -13185,6 +13186,8 @@ function productFromRow(row) {
     shopifyStatus: data.shopifyStatus || row.shopify_status || "",
     syncStatus: data.syncStatus || row.sync_status || "Not synced",
     lastSyncedAt: data.lastSyncedAt || row.last_synced_at || "",
+    shopifyVariantGroupId: data.shopifyVariantGroupId || "",
+    shopifyVariantGroupPrimary: Boolean(data.shopifyVariantGroupPrimary),
     productStatusCode: data.productStatusCode || "N",
     detailsAndFit: data.detailsAndFit || "",
     fabricCare: data.fabricCare || "",
@@ -13349,6 +13352,8 @@ function normalizeProductInput(input = {}, existing = {}) {
     shopifyStatus: cleanText(merged.shopifyStatus || existing.shopifyStatus),
     syncStatus: productSyncStatuses.has(merged.syncStatus) ? merged.syncStatus : status === "Ready for Shopify" ? "Ready" : existing.syncStatus || "Not synced",
     lastSyncedAt: cleanText(merged.lastSyncedAt),
+    shopifyVariantGroupId: cleanText(merged.shopifyVariantGroupId),
+    shopifyVariantGroupPrimary: Boolean(merged.shopifyVariantGroupPrimary),
     productStatusCode: cleanText(merged.productStatusCode || firstNonEmpty(merged, ["Product Status (product.metafields.custom.product_status)"]) || "N"),
     detailsAndFit: cleanText(merged.detailsAndFit || firstNonEmpty(merged, ["Details and Fit (product.metafields.custom.details_and_fit)"])),
     fabricCare: cleanText(merged.fabricCare || firstNonEmpty(merged, ["Fabric & Care (product.metafields.custom.fabric_care)"])),
@@ -13587,9 +13592,102 @@ function successfulShopifySyncEvent(product) {
   `).get({ productId: productId || -1, sku }) || null;
 }
 
-function productShopifyPayload(product, fileInput = null) {
+function catalogProductsForIdentifiers(products, identifiers = []) {
+  const byId = new Map(products.map(product => [String(product.id), product]));
+  const bySku = new Map(products.map(product => [normalizeSku(product.sku), product]));
+  const selected = [];
+  const seen = new Set();
+  for (const identifier of identifiers) {
+    const product = byId.get(String(identifier)) || bySku.get(normalizeSku(identifier));
+    if (!product || seen.has(String(product.id))) continue;
+    seen.add(String(product.id));
+    selected.push(product);
+  }
+  return selected;
+}
+
+function shopifyVariantGroupReadiness(products = []) {
+  const validation = shopifyProductSync.sizeVariantGroupValidation(products);
+  const blocking = [...validation.blocking];
+  const warnings = [...validation.warnings];
+  const groupIds = new Set(products.map(product => cleanText(product.shopifyVariantGroupId)).filter(Boolean));
+  if (groupIds.size !== 1 || products.some(product => !cleanText(product.shopifyVariantGroupId))) {
+    blocking.push("Size variants must belong to one saved Shopify product group");
+  }
+  for (const product of products) {
+    const readiness = productReadiness(product);
+    blocking.push(...(readiness.blocking || []).map(message => `${product.sku}: ${message}`));
+    warnings.push(...(readiness.warnings || []).map(message => `${product.sku}: ${message}`));
+    if (product.status !== "Ready for Shopify" && product.syncStatus !== "Error" && product.syncStatus !== "Conflict") {
+      blocking.push(`${product.sku}: Only products marked Ready for Shopify can be pushed`);
+    }
+  }
+  return {
+    ...validation,
+    ready: blocking.length === 0,
+    blocking: [...new Set(blocking)],
+    warnings: [...new Set(warnings)]
+  };
+}
+
+function saveShopifyVariantGroup(identifiers = [], req = null) {
+  const allProducts = readCatalogProducts({ includeArchived: true });
+  const selected = catalogProductsForIdentifiers(allProducts, identifiers);
+  if (selected.length < 2) throw new Error("Choose at least two products to group as size variants.");
+  if (selected.some(product => product.shopifyVariantGroupId)) throw new Error("One or more selected products already belongs to a size-variant group. Ungroup it before creating a new group.");
+  if (selected.some(product => product.status !== "Ready for Shopify")) throw new Error("Every grouped product must be marked Ready for Shopify.");
+  const prepared = selected.map((product, index) => ({ ...product, shopifyVariantGroupPrimary: index === 0 }));
+  const validation = shopifyProductSync.sizeVariantGroupValidation(prepared);
+  const individualBlocking = prepared.flatMap(product => (productReadiness(product).blocking || []).map(message => `${product.sku}: ${message}`));
+  const blocking = [...validation.blocking, ...individualBlocking];
+  if (blocking.length) throw new Error(`Cannot group these products: ${[...new Set(blocking)].join("; ")}`);
+  const groupId = crypto.randomUUID();
+  const sqlite = openOrderSqliteDb();
+  const updated = sqlite.transaction(() => prepared.map((product, index) => upsertCatalogProduct({
+    ...product,
+    shopifyVariantGroupId: groupId,
+    shopifyVariantGroupPrimary: index === 0
+  }, req)))();
+  for (const product of updated) {
+    recordProductSyncEvent(product, "shopify_variant_group_created", req, {
+      result: "ok",
+      payload: { groupId, leadSku: updated[0]?.sku || "", skus: updated.map(item => item.sku) }
+    });
+  }
+  return {
+    groupId,
+    leadSku: updated[0]?.sku || "",
+    products: updated,
+    warnings: validation.warnings
+  };
+}
+
+function removeShopifyVariantGroups(identifiers = [], req = null) {
+  const allProducts = readCatalogProducts({ includeArchived: true });
+  const selected = catalogProductsForIdentifiers(allProducts, identifiers);
+  const groupIds = [...new Set(selected.map(product => cleanText(product.shopifyVariantGroupId)).filter(Boolean))];
+  if (!groupIds.length) throw new Error("Choose at least one grouped product to ungroup.");
+  const members = allProducts.filter(product => groupIds.includes(cleanText(product.shopifyVariantGroupId)));
+  if (members.some(product => product.shopifyProductGid || product.shopifyVariantGid || product.syncStatus === "Synced draft")) {
+    throw new Error("A Shopify-linked size group cannot be ungrouped. The shared Shopify product link is now its permanent grouping.");
+  }
+  const sqlite = openOrderSqliteDb();
+  const updated = sqlite.transaction(() => members.map(product => upsertCatalogProduct({
+    ...product,
+    shopifyVariantGroupId: "",
+    shopifyVariantGroupPrimary: false
+  }, req)))();
+  for (const product of updated) {
+    recordProductSyncEvent(product, "shopify_variant_group_removed", req, {
+      result: "ok",
+      payload: { groupIds }
+    });
+  }
+  return { groupIds, products: updated };
+}
+
+function productShopifyPayload(product, fileInput = null, variantProducts = [product]) {
   const sizeOptionName = "Size";
-  const optionValue = cleanText(product.size || product.optionValue || "One Size Fits UK 8 to 18") || "One Size Fits UK 8 to 18";
   const colour = cleanText(product.colour || product.color);
   const buyingCode = cleanText(product.buyingCode || product.supplierSku);
   const department = cleanText(product.department || product.category || product.productType);
@@ -13608,21 +13706,7 @@ function productShopifyPayload(product, fileInput = null) {
     product.supplierSku ? { namespace: "custom", key: "supplier_sku", type: "single_line_text_field", value: product.supplierSku } : null
   ].filter(Boolean);
   const metafields = mergeMetafields(product.extraMetafields || [], baseMetafields);
-  const variant = {
-    optionValues: [{ optionName: sizeOptionName, name: optionValue }],
-    ...(colour ? {
-      metafields: [{ namespace: "custom", key: "colour", type: "single_line_text_field", value: colour }]
-    } : {}),
-    price: String(numberOrZero(product.rrp).toFixed(2)),
-    sku: product.sku,
-    inventoryItem: {
-      sku: product.sku,
-      tracked: true,
-      cost: String(numberOrZero(product.unitCostGbp).toFixed(2))
-    }
-  };
-  if (numberOrZero(product.compareAtPrice)) variant.compareAtPrice = String(numberOrZero(product.compareAtPrice).toFixed(2));
-  if (product.barcode) variant.barcode = product.barcode;
+  const variantInput = shopifyProductSync.sizeVariantInputs(variantProducts, sizeOptionName);
 
   const input = {
     title: product.title || product.style,
@@ -13631,8 +13715,8 @@ function productShopifyPayload(product, fileInput = null) {
     descriptionHtml: product.description ? escapeHtml(product.description).replace(/\r?\n/g, "<br>") : undefined,
     seo: product.seoTitle || product.seoDescription ? { title: product.seoTitle || undefined, description: product.seoDescription || undefined } : undefined,
     tags: [...new Set([...(product.tags || []), product.season].filter(Boolean))],
-    productOptions: [{ name: sizeOptionName, position: 1, values: [{ name: optionValue }] }],
-    variants: [variant],
+    productOptions: variantInput.productOptions,
+    variants: variantInput.variants,
     metafields
   };
   if (fileInput) input.files = [fileInput];
@@ -13787,6 +13871,109 @@ async function pushProductDraftToShopify(product, req) {
   return { configured: true, product: updated, shopifyProduct };
 }
 
+async function pushProductVariantGroupToShopify(products, req) {
+  const readiness = shopifyVariantGroupReadiness(products);
+  const members = readiness.members || shopifyProductSync.orderedGroupProducts(products);
+  const lead = readiness.lead || shopifyProductSync.productLead(members);
+  const groupId = cleanText(lead?.shopifyVariantGroupId);
+  if (!readiness.ready) throw new Error(`Size-variant group is not ready: ${readiness.blocking.join(", ")}`);
+
+  const successfulEvents = members.map(product => ({ product, event: successfulShopifySyncEvent(product) })).filter(item => item.event?.shopifyProductGid);
+  if (successfulEvents.length) {
+    const sqlite = openOrderSqliteDb();
+    const restored = sqlite.transaction(() => successfulEvents.map(({ product, event }) => upsertCatalogProduct({
+      ...product,
+      shopifyProductGid: event.shopifyProductGid,
+      status: "Shopify draft",
+      syncStatus: "Synced draft",
+      lastSyncedAt: product.lastSyncedAt || event.createdAt || new Date().toISOString()
+    })))();
+    throw shopifyPushError("One or more variants in this group were already pushed. Local Shopify links were restored where possible; use Refresh status for the complete group.", "already_synced", { products: restored });
+  }
+
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  if (!shop || !clientId || !clientSecret) {
+    return { configured: false, ok: false, groupId, message: "Set SHOPIFY_SHOP, SHOPIFY_CLIENT_ID, and SHOPIFY_CLIENT_SECRET to push Shopify drafts." };
+  }
+
+  const conflicts = [];
+  for (const product of members) {
+    const existingVariant = await shopifyVariantBySku(product.sku);
+    if (existingVariant?.product?.id && normalizeSku(existingVariant.sku) === normalizeSku(product.sku)) {
+      conflicts.push({ product, existingVariant });
+    }
+  }
+  if (conflicts.length) {
+    const sqlite = openOrderSqliteDb();
+    const conflictProducts = sqlite.transaction(() => members.map(product => upsertCatalogProduct({ ...product, syncStatus: "Conflict" })))();
+    for (const product of conflictProducts) {
+      const conflict = conflicts.find(item => item.product.id === product.id);
+      recordProductSyncEvent(product, "shopify_variant_group_duplicate_sku", req, {
+        result: "conflict",
+        shopifyProductGid: conflict?.existingVariant?.product?.id || "",
+        error: conflicts.map(item => `SKU ${item.product.sku} already exists on ${item.existingVariant.product.title || item.existingVariant.product.id}`).join("; "),
+        payload: { groupId, skus: members.map(item => item.sku) }
+      });
+    }
+    throw shopifyPushError(`Cannot create the grouped draft because ${conflicts.map(item => item.product.sku).join(", ")} already ${conflicts.length === 1 ? "exists" : "exist"} in Shopify. Use Refresh status before trying again.`, "duplicate_sku", { products: conflictProducts, conflicts });
+  }
+
+  const fileInput = await stagedShopifyImageFile(lead);
+  const input = productShopifyPayload(lead, fileInput, members);
+  const response = await shopifyGraphql(`mutation createProductVariantDraft($productSet: ProductSetInput!, $synchronous: Boolean!) {
+    productSet(input: $productSet, synchronous: $synchronous) {
+      product {
+        id
+        title
+        status
+        variants(first: 100) {
+          nodes { id sku }
+        }
+      }
+      userErrors { field message code }
+    }
+  }`, { productSet: input, synchronous: true });
+  const payload = response?.productSet || {};
+  if ((payload.userErrors || []).length) throw new Error(payload.userErrors.map(error => error.message).join("; "));
+  const shopifyProduct = payload.product;
+  if (!shopifyProduct?.id) throw new Error("Shopify did not return a product ID for the size-variant group.");
+
+  const variantsBySku = new Map((shopifyProduct.variants?.nodes || []).map(variant => [normalizeSku(variant.sku), variant]));
+  const missingSkus = members.filter(product => !variantsBySku.get(normalizeSku(product.sku))?.id).map(product => product.sku);
+  const sqlite = openOrderSqliteDb();
+  const updated = sqlite.transaction(() => members.map(product => {
+    const variant = variantsBySku.get(normalizeSku(product.sku));
+    return upsertCatalogProduct({
+      ...product,
+      status: "Shopify draft",
+      shopifyProductGid: shopifyProduct.id,
+      shopifyVariantGid: variant?.id || "",
+      shopifyStatus: shopifyProduct.status || "DRAFT",
+      syncStatus: variant?.id ? "Synced draft" : "Conflict",
+      lastSyncedAt: new Date().toISOString()
+    });
+  }))();
+  for (const product of updated) {
+    recordProductSyncEvent(product, "shopify_push_variant_group", req, {
+      result: missingSkus.includes(product.sku) ? "conflict" : "ok",
+      shopifyProductGid: shopifyProduct.id,
+      error: missingSkus.includes(product.sku) ? `Shopify did not return a variant ID for SKU ${product.sku}.` : "",
+      payload: { groupId, leadSku: lead.sku, skus: members.map(item => item.sku), title: input.title, status: "DRAFT" },
+      data: { shopifyProduct, input }
+    });
+  }
+  return {
+    configured: true,
+    ok: missingSkus.length === 0,
+    conflict: missingSkus.length > 0,
+    groupId,
+    products: updated,
+    shopifyProduct,
+    missingSkus,
+    message: missingSkus.length ? `The Shopify product was created, but variant IDs were not returned for ${missingSkus.join(", ")}. Refresh status to reconcile them.` : ""
+  };
+}
+
 async function refreshProductShopifyStatus(product, req) {
   const { shop, clientId, clientSecret } = shopifyConfig();
   if (!shop || !clientId || !clientSecret) return { configured: false, message: "Set Shopify credentials to refresh product sync status." };
@@ -13806,13 +13993,14 @@ async function refreshProductShopifyStatus(product, req) {
         id
         title
         status
-        variants(first: 20) {
+        variants(first: 100) {
           nodes { id sku }
         }
       }
     }`, { id: product.shopifyProductGid });
     node = data?.product || null;
-    variant = (node?.variants?.nodes || []).find(item => normalizeSku(item.sku) === normalizeSku(product.sku)) || node?.variants?.nodes?.[0] || {};
+    const exactVariant = (node?.variants?.nodes || []).find(item => normalizeSku(item.sku) === normalizeSku(product.sku));
+    variant = exactVariant || (!product.shopifyVariantGroupId ? node?.variants?.nodes?.[0] : null) || {};
   } else {
     const variantNode = await shopifyVariantBySku(product.sku);
     data = { productVariant: variantNode };
@@ -13844,17 +14032,23 @@ async function refreshProductShopifyStatus(product, req) {
     return { configured: true, product: updated, found: false };
   }
   const shopifyState = syncedProductStateFromShopifyStatus(node.status);
+  const groupedVariantMissing = Boolean(product.shopifyVariantGroupId && !variant.id);
   const updated = upsertCatalogProduct({
     ...product,
     shopifyProductGid: node.id,
-    shopifyVariantGid: variant.id || product.shopifyVariantGid || "",
+    shopifyVariantGid: groupedVariantMissing ? "" : variant.id || product.shopifyVariantGid || "",
     shopifyStatus: shopifyState.shopifyStatus,
-    syncStatus: shopifyState.syncStatus,
+    syncStatus: groupedVariantMissing ? "Conflict" : shopifyState.syncStatus,
     status: shopifyState.status,
     lastSyncedAt: new Date().toISOString()
   });
-  recordProductSyncEvent(updated, "shopify_sync_status", req, { result: "ok", shopifyProductGid: node.id, data });
-  return { configured: true, product: updated, found: true };
+  recordProductSyncEvent(updated, "shopify_sync_status", req, {
+    result: groupedVariantMissing ? "conflict" : "ok",
+    shopifyProductGid: node.id,
+    error: groupedVariantMissing ? `Shopify product does not contain grouped SKU ${product.sku}.` : "",
+    data
+  });
+  return { configured: true, product: updated, found: true, conflict: groupedVariantMissing };
 }
 
 async function reconcileOrderProductsFromShopify(order, req) {
@@ -15675,22 +15869,53 @@ async function handleApi(req, res) {
     return true;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/products/shopify/variant-group") {
+    if (!requireRoles(req, res, ["Buyer", "Admin"], "Only Admin or Buyer users can manage Shopify size groups.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const identifiers = (body.ids || []).map(String).filter(Boolean);
+      if (!identifiers.length) throw new Error("Choose products in the Shopify sync queue first.");
+      const result = body.action === "ungroup"
+        ? removeShopifyVariantGroups(identifiers, req)
+        : saveShopifyVariantGroup(identifiers, req);
+      sendJson(res, 200, {
+        ok: true,
+        ...result,
+        products: readCatalogProducts({ includeArchived: true })
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not update the Shopify size group." });
+    }
+    return true;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/products/shopify/preview") {
     if (!requireRoles(req, res, ["Buyer", "Admin"])) return true;
     try {
       const body = await readJsonBody(req);
-      const ids = new Set((body.ids || []).map(String));
-      if (!ids.size) throw new Error("Choose at least one product to preview.");
-      const products = readCatalogProducts({ includeArchived: true }).filter(product => !ids.size || ids.has(String(product.id)) || ids.has(product.sku));
-      const previews = products.map(product => ({
-        product,
-        readiness: product.readiness,
-        exportMetadata: {
-          productCategory: product.productCategory || "",
-          googleProductCategory: product.googleProductCategory || ""
-        },
-        payload: productShopifyPayload(product, shopifyRemoteImageFileInput(product))
-      }));
+      const ids = (body.ids || []).map(String).filter(Boolean);
+      if (!ids.length) throw new Error("Choose at least one product to preview.");
+      const allProducts = readCatalogProducts({ includeArchived: true });
+      const units = shopifyProductSync.selectedProductSyncUnits(allProducts, ids);
+      if (!units.length) throw new Error("None of the selected products could be found.");
+      const previews = units.map(unit => {
+        const primary = unit.primary;
+        const readiness = unit.mode === "size_variants" ? shopifyVariantGroupReadiness(unit.products) : primary.readiness;
+        return {
+          mode: unit.mode,
+          groupId: unit.groupId || "",
+          leadSku: primary.sku,
+          skus: unit.products.map(product => product.sku),
+          product: primary,
+          products: unit.products,
+          readiness,
+          exportMetadata: {
+            productCategory: primary.productCategory || "",
+            googleProductCategory: primary.googleProductCategory || ""
+          },
+          payload: productShopifyPayload(primary, shopifyRemoteImageFileInput(primary), unit.products)
+        };
+      });
       sendJson(res, 200, {
         ok: true,
         configured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret),
@@ -15706,11 +15931,55 @@ async function handleApi(req, res) {
     if (!requireRoles(req, res, ["Admin", "Buyer"], "Only Admin or Buyer users can push Shopify drafts.")) return true;
     try {
       const body = await readJsonBody(req);
-      const ids = new Set((body.ids || []).map(String));
-      if (!ids.size) throw new Error("Choose at least one product to push.");
-      const products = readCatalogProducts({ includeArchived: true }).filter(product => ids.has(String(product.id)) || ids.has(product.sku));
+      const ids = (body.ids || []).map(String).filter(Boolean);
+      if (!ids.length) throw new Error("Choose at least one product to push.");
+      const allProducts = readCatalogProducts({ includeArchived: true });
+      const units = shopifyProductSync.selectedProductSyncUnits(allProducts, ids);
+      if (!units.length) throw new Error("None of the selected products could be found.");
       const results = [];
-      for (const product of products) {
+      for (const unit of units) {
+        if (unit.mode === "size_variants") {
+          try {
+            const result = await pushProductVariantGroupToShopify(unit.products, req);
+            results.push({
+              id: unit.groupId,
+              mode: unit.mode,
+              groupId: unit.groupId,
+              skus: unit.products.map(product => product.sku),
+              ok: Boolean(result.ok),
+              ...result
+            });
+          } catch (error) {
+            const resultProducts = error.products?.length ? error.products : unit.products;
+            if (error.code === "already_synced") {
+              for (const product of resultProducts) {
+                recordProductSyncEvent(product, "shopify_variant_group_push_blocked", req, {
+                  result: "blocked",
+                  error: error.message || "",
+                  payload: { groupId: unit.groupId, skus: unit.products.map(item => item.sku) }
+                });
+              }
+              results.push({ id: unit.groupId, mode: unit.mode, groupId: unit.groupId, skus: unit.products.map(product => product.sku), ok: false, blocked: true, products: resultProducts, error: error.message || "Size group is already synced." });
+              continue;
+            }
+            if (error.code === "duplicate_sku") {
+              results.push({ id: unit.groupId, mode: unit.mode, groupId: unit.groupId, skus: unit.products.map(product => product.sku), ok: false, conflict: true, products: resultProducts, error: error.message || "Duplicate Shopify SKU." });
+              continue;
+            }
+            const sqlite = openOrderSqliteDb();
+            const failed = sqlite.transaction(() => unit.products.map(product => upsertCatalogProduct({ ...product, syncStatus: "Error" })))();
+            for (const product of failed) {
+              recordProductSyncEvent(product, "shopify_push_variant_group", req, {
+                result: "error",
+                error: error.message || "Shopify grouped draft push failed.",
+                payload: { groupId: unit.groupId, skus: unit.products.map(item => item.sku) }
+              });
+            }
+            results.push({ id: unit.groupId, mode: unit.mode, groupId: unit.groupId, skus: unit.products.map(product => product.sku), ok: false, products: failed, error: error.message || "Shopify grouped draft push failed." });
+          }
+          continue;
+        }
+        const product = unit.primary;
         try {
           const result = await pushProductDraftToShopify(product, req);
           results.push({ id: product.id, sku: product.sku, ok: Boolean(result.product), ...result });
@@ -15762,9 +16031,10 @@ async function handleApi(req, res) {
     if (!requireRoles(req, res, ["Buyer", "Admin", "Merchandising"])) return true;
     try {
       const body = await readJsonBody(req);
-      const ids = new Set((body.ids || []).map(String));
-      if (!ids.size) throw new Error("Choose at least one product to refresh.");
-      const products = readCatalogProducts({ includeArchived: true }).filter(product => ids.has(String(product.id)) || ids.has(product.sku));
+      const ids = (body.ids || []).map(String).filter(Boolean);
+      if (!ids.length) throw new Error("Choose at least one product to refresh.");
+      const units = shopifyProductSync.selectedProductSyncUnits(readCatalogProducts({ includeArchived: true }), ids);
+      const products = [...new Map(units.flatMap(unit => unit.products).map(product => [String(product.id), product])).values()];
       const results = [];
       for (const product of products) {
         try {

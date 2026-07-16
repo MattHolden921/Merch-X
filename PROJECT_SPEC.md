@@ -229,6 +229,7 @@ Product and supplier master data:
 - `GET /api/suppliers/report`
 - `POST /api/suppliers/update`
 - `POST /api/products/shopify/preview`
+- `POST /api/products/shopify/variant-group`
 - `POST /api/products/shopify/push-draft`
 - `POST /api/products/shopify/sync-status`
 
@@ -301,6 +302,7 @@ Shopify and Google:
 
 - Merch X is the source of truth for pre-launch product records.
 - Products are still keyed by SKU, with indexed columns for supplier, product type, season, price, cost, Shopify IDs, product status, and sync status while retaining JSON `data` for flexible fields.
+- Rare multi-size styles remain separate local product rows because each sellable size has its own SKU. Before Shopify creation, two or more eligible rows can persist an explicit shared `shopifyVariantGroupId`; one row is marked as the product-level lead. Successful grouped pushes keep that group metadata, store the same Shopify product GID on every member, and store each member's exact Shopify variant GID.
 - Supported product statuses are `Draft`, `Ready for Shopify`, `Shopify draft`, `Live`, and `Archived`.
 - Supported product sync statuses are `Not synced`, `Ready`, `Synced draft`, `Conflict`, and `Error`.
 - Readiness checks block Shopify draft push when SKU, supplier, title/style, RRP, product type, image, cost, or local SKU uniqueness is missing.
@@ -313,6 +315,9 @@ Shopify and Google:
 
 - Only products marked `Ready for Shopify` and passing readiness checks can be pushed.
 - Product pushes use Shopify Admin GraphQL `productSet` with `status: DRAFT`.
+- The default push remains one local SKU to one Shopify draft. In the Shopify sync queue, users can explicitly group two or more unlinked, Ready for Shopify rows as size variants. Grouping is never inferred automatically from titles or buying codes. The first selected row is the lead and supplies product-level title, image, description, tags, collections, and metadata; the queue and preview identify that lead.
+- A size group requires at least two individually ready rows, unique SKUs, unique non-empty Size values, and matching title/style, supplier, buying code, colour, product type, and season. Product-level field differences are preview warnings because the lead value wins. Grouped rows cannot be pushed individually: selecting any member for preview, push, or status refresh expands to the complete saved group. Unlinked groups can be removed; Shopify-linked groups cannot be ungrouped locally.
+- Group pushes make one `productSet` request containing one Size option and every member as a variant, including its own SKU, barcode, RRP, compare-at price, cost, inventory tracking, and variant colour metafield. Shopify variants are matched back to local rows by exact normalized SKU. A missing returned variant ID is stored as a Conflict while retaining the created Shopify product link so a status refresh can reconcile without creating a duplicate product.
 - New draft pushes keep the primary order/product `colour` value in the existing Shopify product-level swatch and variant-colour metafields and also write it to the Shopify variant metafield `custom.colour`. `Size` remains the only Shopify variant option; colour must not create a separate variant dimension. The buying code is written to the product metafield `custom.buying_code`. These mappings apply only when creating new drafts; no backfill or repair is performed for products already pushed.
 - Local uploaded product images are sent through Shopify staged uploads before being referenced by the product payload.
 - Successful pushes store Shopify product and variant GIDs, set local status to `Shopify draft`, and set sync status to `Synced draft`.

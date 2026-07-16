@@ -248,12 +248,15 @@
           ["Readiness", "Requires SKU, supplier, title/style, RRP, product type, image, cost and unique local SKU."],
           ["Sync status", "Not synced, Ready, Synced draft, Conflict or Error describes the handoff/link state; it is separate from product status."],
           ["Preview", "Validates and shows the intended Shopify draft payload without creating a product."],
-          ["Push draft", "Creates a Shopify DRAFT only; inventory quantity is not written by this workflow."]
+          ["Group sizes", "Explicitly joins selected local SKUs into one future Shopify product. The first selected SKU is the lead for product-level content; selecting any member later includes the whole group."],
+          ["Size-group safeguards", "Members must be unlinked and ready, with unique SKUs/sizes and matching title, supplier, buying code, colour, product type and season. Grouping is never inferred automatically."],
+          ["Push draft", "Creates a Shopify DRAFT only. A saved size group creates one product with multiple Size variants; inventory quantity is not written by this workflow."]
         ]],
         ["Identifiers", [
           ["SKU", "Unique local sellable identifier."],
           ["Buying code", "Style-level code used to group related colourways; written to Shopify custom metadata on new draft creation."],
           ["Colour", "Product-level colour metadata; Size remains the only Shopify variant option for new drafts."],
+          ["Shared Shopify product", "Grouped size rows keep separate local SKUs and variant IDs while sharing one Shopify product ID."],
           ["Supplier credit", "Open credit exposure derived from unresolved discrepancy credit notes."]
         ]]
       ]
