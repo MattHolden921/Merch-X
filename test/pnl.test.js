@@ -13,10 +13,23 @@ const {
   normalizeActuals,
   operatingLeverage,
   shopifyQlSalesActualsFromRow,
-  sensitivityTables
+  sensitivityTables,
+  validateRange
 } = require("../lib/pnl");
 
 const range = { startDate: "2026-06-15", endDate: "2026-07-14" };
+
+test("accepts inclusive P&L ranges up to 366 days", () => {
+  assert.deepEqual(validateRange({ startDate: "2024-01-01", endDate: "2024-12-31" }), {
+    startDate: "2024-01-01",
+    endDate: "2024-12-31",
+    days: 366
+  });
+  assert.throws(
+    () => validateRange({ startDate: "2024-01-01", endDate: "2025-01-01" }),
+    /366 days or less/i
+  );
+});
 
 test("prorates fixed monthly cost across partial calendar months", () => {
   const line = calculateCostRule({

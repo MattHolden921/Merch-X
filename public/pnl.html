@@ -11,6 +11,7 @@
 [hidden]{display:none!important}
 .head{align-items:start}
 .toolbar{display:grid;grid-template-columns:170px 150px 150px auto minmax(220px,1fr);gap:10px;align-items:end}
+.actual-compare-tools{display:grid;grid-template-columns:150px 150px auto;gap:8px;align-items:end;margin-bottom:10px}
 .metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
 .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
 .settings-grid>.panel,.scenario-layout>*{min-width:0}
@@ -29,6 +30,7 @@
 .scaler-number{min-height:34px;padding:0 8px;font-size:12px}
 .baseline{display:block;margin-top:6px;font-size:11px;color:var(--ds-text-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .scenario-actions{display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap}
+.actual-compare-actions{margin-bottom:10px}
 .scenario-tools{display:grid;grid-template-columns:minmax(180px,1fr) auto auto;gap:8px;align-items:end;margin-top:10px}
 .scenario-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:10px}
 .checkline{display:flex;align-items:center;gap:8px;min-height:38px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:0 10px;background:var(--ds-bg-surface);font-size:12px;color:var(--ds-text-muted)}
@@ -58,6 +60,9 @@ tr:last-child td{border-bottom:0}
 .btn.small{min-height:28px;padding:0 8px;font-size:11px}
 .muted{color:var(--ds-text-soft)}
 .compare-name{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.compare-name>span{display:grid;gap:2px;text-align:right;text-transform:none;letter-spacing:normal}
+.compare-name>span>strong{color:var(--ds-text);font-size:11px}
+.compare-name>span>small{color:var(--ds-text-soft);font-size:10px;font-weight:400}
 .compare-value strong{display:block;color:var(--ds-text);font-weight:650}
 .compare-value small{display:block;color:var(--ds-text-soft);font-size:11px;margin-top:2px}
 .sync-strip{display:flex;justify-content:space-between;gap:12px;align-items:center;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px;margin-bottom:10px}
@@ -76,8 +81,8 @@ tr:last-child td{border-bottom:0}
 .chart-bar{display:block;height:100%;min-width:2px;background:var(--ds-good)}
 .chart-bar.bad{background:var(--ds-bad)}
 .chart-value{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-@media(max-width:1080px){.scenario-layout,.settings-grid,.sensitivity{grid-template-columns:1fr}.toolbar{grid-template-columns:repeat(3,1fr)}.toolbar .status{grid-column:1/-1}}
-@media(max-width:720px){body{padding:18px 10px 36px}.toolbar,.metric-grid,.form-grid,.scaler-grid,.scenario-kpis,.scenario-tools{grid-template-columns:1fr}.form-grid .wide{grid-column:auto}.actions,.scenario-actions{justify-content:flex-start}.range-control{grid-template-columns:1fr}}
+@media(max-width:1080px){.scenario-layout,.settings-grid,.sensitivity{grid-template-columns:1fr}.toolbar{grid-template-columns:repeat(3,1fr)}.toolbar .status{grid-column:1/-1}.actual-compare-tools{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:720px){body{padding:18px 10px 36px}.toolbar,.actual-compare-tools,.metric-grid,.form-grid,.scaler-grid,.scenario-kpis,.scenario-tools{grid-template-columns:1fr}.form-grid .wide{grid-column:auto}.actions,.scenario-actions{justify-content:flex-start}.range-control{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -96,7 +101,7 @@ tr:last-child td{border-bottom:0}
 
   <section class="panel">
     <div class="toolbar">
-      <div class="field"><label>Quick period</label><select class="select" id="quick-period"><option value="completed-week" selected>Last completed week</option><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option><option value="60">Last 60 days</option><option value="92">Last 92 days</option><option value="custom">Custom</option></select></div>
+      <div class="field"><label>Quick period</label><select class="select" id="quick-period"><option value="completed-week" selected>Last completed week</option><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option><option value="60">Last 60 days</option><option value="92">Last 92 days</option><option value="180">Last 180 days</option><option value="366">Last 366 days</option><option value="custom">Custom</option></select></div>
       <div class="field"><label>From</label><input id="date-from" type="date"></div>
       <div class="field"><label>To</label><input id="date-to" type="date"></div>
       <div class="field"><label>&nbsp;</label><button class="btn" type="button" id="apply-quick-btn">Apply quick period</button></div>
@@ -220,6 +225,27 @@ tr:last-child td{border-bottom:0}
     <div class="table-wrap" id="pnl-table"></div>
   </section>
 
+  <section class="panel">
+    <div class="section-head">
+      <div>
+        <p class="section-title">Actual period comparison</p>
+        <p class="status">Compare the primary actuals above with a second Shopify actualised period.</p>
+      </div>
+      <span class="pill" id="actual-comparison-pill">Not loaded</span>
+    </div>
+    <div class="actual-compare-tools">
+      <div class="field"><label>Comparison from</label><input id="compare-date-from" type="date"></div>
+      <div class="field"><label>Comparison to</label><input id="compare-date-to" type="date"></div>
+      <div class="field"><label>&nbsp;</label><button class="btn" type="button" id="load-comparison-btn">Load comparison</button></div>
+    </div>
+    <div class="scenario-actions actual-compare-actions">
+      <p class="status" id="actual-comparison-note">Load primary actuals first.</p>
+      <button class="btn" type="button" id="clear-actual-comparison-btn">Clear comparison</button>
+    </div>
+    <div class="scenario-kpis" id="actual-comparison-summary"></div>
+    <div class="table-wrap" id="actual-comparison-table"></div>
+  </section>
+
   <section class="settings-grid">
     <section class="panel">
       <div class="section-head">
@@ -278,7 +304,7 @@ const exactMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",
 const numberFmt=new Intl.NumberFormat("en-GB",{maximumFractionDigits:1});
 const pctFmt=new Intl.NumberFormat("en-GB",{style:"percent",minimumFractionDigits:1,maximumFractionDigits:1});
 const API_ORIGINS=location.protocol==="file:"?["http://localhost:3003","http://localhost:3001","http://localhost:3000"]:[""];
-let state={settings:{costRules:[],marketingSpend:[],automatedMarketingSpend:[],integrations:{},windsor:{configured:false},canWrite:false},statement:null,scenario:null,sensitivity:null,scenarioComparisons:[]};
+let state={settings:{costRules:[],marketingSpend:[],automatedMarketingSpend:[],integrations:{},windsor:{configured:false},canWrite:false},statement:null,actualComparison:null,scenario:null,sensitivity:null,scenarioComparisons:[]};
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
 const SCALERS=["sc-daily-sales","sc-aov-delta","sc-marketing","sc-google-spend","sc-google-roas","sc-meta-spend","sc-meta-roas","sc-marketing-return","sc-margin","sc-items-order"];
@@ -486,7 +512,28 @@ function setQuick(period=val("quick-period")||"completed-week"){
   el("date-to").value=localIso(end);
 }
 function markCustomPeriod(){el("quick-period").value="custom";clearSpend();setStatus("Custom period selected. Click Load actuals to fetch this exact range.","");}
-function query(){return `?startDate=${encodeURIComponent(val("date-from"))}&endDate=${encodeURIComponent(val("date-to"))}`;}
+function pnlQuery(startDate=val("date-from"),endDate=val("date-to")){return `?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;}
+function query(){return pnlQuery();}
+function setPreviousComparisonRange(){
+  const range=state.statement?.range;
+  if(!range?.startDate||!range?.endDate)return;
+  const primaryStart=new Date(`${range.startDate}T00:00:00.000Z`);
+  const days=Math.max(1,Number(range.days||1));
+  const compareEnd=new Date(primaryStart);
+  compareEnd.setUTCDate(compareEnd.getUTCDate()-1);
+  const compareStart=new Date(compareEnd);
+  compareStart.setUTCDate(compareStart.getUTCDate()-days+1);
+  el("compare-date-from").value=compareStart.toISOString().slice(0,10);
+  el("compare-date-to").value=compareEnd.toISOString().slice(0,10);
+  el("actual-comparison-note").className="status";
+  el("actual-comparison-note").textContent="Previous equal-length period selected. Click Load comparison.";
+}
+function markComparisonDirty(){
+  state.actualComparison=null;
+  el("actual-comparison-note").className="status";
+  el("actual-comparison-note").textContent="Comparison dates changed. Click Load comparison.";
+  renderActualComparison();
+}
 function metric(label,value,small="",className=""){return `<div class="metric"><label>${esc(label)}</label><span class="${className}">${esc(value)}</span>${small?`<small>${esc(small)}</small>`:""}</div>`;}
 function deltaText(value,isPct=false){
   const numeric=Number(value||0);
@@ -583,6 +630,104 @@ function renderPnl(){
   ].join("");
   const costRows=(s.costGroups||[]).map(group=>`<tr><td>${esc(group.category)}</td><td class="num">${gbp(group.amount,true)}</td></tr>`).join("");
   el("pnl-table").innerHTML=`<table><tbody>${rows}${costRows?`${section("Cost breakdown")}${costRows}`:""}</tbody></table>`;
+}
+const ACTUAL_COMPARISON_ROWS=[
+  ["Despatch","despatchRevenue",false],
+  ["Demand","demandRevenue",false],
+  ["Gross sales ex VAT","grossRevenue",false],
+  ["Discounts","discounts",false],
+  ["Returns","returns",false],
+  ["Net sales","netRevenue",false],
+  ["Shipping charges","shippingRevenue",false],
+  ["Orders","orders",false],
+  ["Units","units",false],
+  ["AOV","aov",false],
+  ["Variable costs","variableCostTotal",false],
+  ["Variable cost / order","variableCostPerOrder",false],
+  ["Fixed monthly costs","fixedCostTotal",false],
+  ["Fixed cost / order","fixedCostPerOrder",false],
+  ["Fixed cost drag","fixedCostImpact",true],
+  ["Order-driven variable costs","orderVariableCostTotal",false],
+  ["Revenue-driven variable costs","revenueVariableCostTotal",false],
+  ["Order-driven cost / order","orderVariableCostPerOrder",false],
+  ["Gross profit","grossProfit",false],
+  ["Gross profit %","grossMargin",true],
+  ["Marketing spend","marketingSpend",false],
+  ["Contribution before fixed","contributionProfit",false],
+  ["Contribution %","contributionMargin",true],
+  ["Total costs","operatingCosts",false],
+  ["Net profit","operatingProfit",false],
+  ["Net profit %","operatingMargin",true],
+  ["Net profit / day","profitPerDay",false]
+];
+const ACTUAL_COMPARISON_BAD_HIGHER=new Set(["discounts","returns","variableCostTotal","variableCostPerOrder","fixedCostTotal","fixedCostPerOrder","fixedCostImpact","orderVariableCostTotal","orderVariableCostPerOrder","revenueVariableCostTotal","marketingSpend","operatingCosts"]);
+const ACTUAL_COMPARISON_EXACT_MONEY=new Set(["aov","variableCostPerOrder","fixedCostPerOrder","orderVariableCostPerOrder"]);
+function actualComparisonCell(key,value,isPct,isDelta=false){
+  if(isPct)return isDelta?`${Number(value||0)>0?"+":""}${(Number(value||0)*100).toFixed(1)}pp`:pct(value);
+  if(key==="orders"||key==="units")return isDelta?`${Number(value||0)>0?"+":""}${numberFmt.format(value)}`:numberFmt.format(value);
+  if(!isDelta&&(key==="discounts"||key==="returns"))return signedGbp(-Math.abs(Number(value||0)));
+  if(isDelta)return signedGbp(value,ACTUAL_COMPARISON_EXACT_MONEY.has(key));
+  return gbp(value,ACTUAL_COMPARISON_EXACT_MONEY.has(key));
+}
+function primarySmall(primary,delta,type="money",exact=false){return `Primary ${valueText(primary,type,exact)} (${deltaValueText(delta,type,exact)})`;}
+function actualMarketingRoas(statement){return Number(statement?.marketingSpend||0)>0?Number(statement.despatchRevenue||0)/Number(statement.marketingSpend):0;}
+function renderActualComparisonSummary(){
+  const box=el("actual-comparison-summary");
+  if(!box)return;
+  const primary=state.statement;
+  const comparison=state.actualComparison?.statement;
+  if(!primary||!comparison){
+    box.innerHTML=[
+      metric("Comparison net profit","-"),metric("Despatch","-"),metric("AOV","-"),metric("Variable costs","-"),metric("Variable cost / order","-"),metric("Fixed cost drag","-"),metric("Marketing spend","-"),metric("Marketing ROAS","-"),metric("Gross profit %","-"),metric("Net profit %","-"),metric("Profit / day","-")
+    ].join("");
+    return;
+  }
+  const delta=(key)=>Number(comparison[key]||0)-Number(primary[key]||0);
+  const primaryRoas=actualMarketingRoas(primary);
+  const comparisonRoas=actualMarketingRoas(comparison);
+  box.innerHTML=[
+    metric("Comparison net profit",gbp(comparison.operatingProfit),primarySmall(primary.operatingProfit,delta("operatingProfit")),comparison.operatingProfit>=0?"good":"bad"),
+    metric("Despatch",gbp(comparison.despatchRevenue),primarySmall(primary.despatchRevenue,delta("despatchRevenue")),delta("despatchRevenue")>=0?"good":"bad"),
+    metric("AOV",gbp(comparison.aov,true),primarySmall(primary.aov,delta("aov"),"money",true),delta("aov")>=0?"good":"bad"),
+    metric("Variable costs",gbp(comparison.variableCostTotal),primarySmall(primary.variableCostTotal,delta("variableCostTotal")),delta("variableCostTotal")>0?"bad":"good"),
+    metric("Variable cost / order",gbp(comparison.variableCostPerOrder,true),primarySmall(primary.variableCostPerOrder,delta("variableCostPerOrder"),"money",true),delta("variableCostPerOrder")>0?"bad":"good"),
+    metric("Fixed cost drag",pct(comparison.fixedCostImpact),primarySmall(primary.fixedCostImpact,delta("fixedCostImpact"),"pct"),delta("fixedCostImpact")>0?"bad":"good"),
+    metric("Marketing spend",gbp(comparison.marketingSpend),primarySmall(primary.marketingSpend,delta("marketingSpend")),delta("marketingSpend")>0?"bad":"good"),
+    metric("Marketing ROAS",roas(comparisonRoas),primarySmall(primaryRoas,comparisonRoas-primaryRoas,"roas"),comparisonRoas>=primaryRoas?"good":"bad"),
+    metric("Gross profit %",pct(comparison.grossMargin),primarySmall(primary.grossMargin,delta("grossMargin"),"pct"),delta("grossMargin")>=0?"good":"bad"),
+    metric("Net profit %",pct(comparison.operatingMargin),primarySmall(primary.operatingMargin,delta("operatingMargin"),"pct"),delta("operatingMargin")>=0?"good":"bad"),
+    metric("Profit / day",gbp(comparison.profitPerDay),primarySmall(primary.profitPerDay,delta("profitPerDay")),delta("profitPerDay")>=0?"good":"bad")
+  ].join("");
+}
+function renderActualComparison(){
+  const box=el("actual-comparison-table");
+  const pill=el("actual-comparison-pill");
+  if(!box||!pill)return;
+  const primary=state.statement;
+  const comparison=state.actualComparison?.statement;
+  renderActualComparisonSummary();
+  el("clear-actual-comparison-btn").disabled=!comparison;
+  if(!primary){
+    pill.textContent="Not loaded";
+    box.innerHTML='<div class="empty-state">Load primary actuals to prepare an equal-length comparison period.</div>';
+    return;
+  }
+  if(!comparison){
+    pill.textContent="Primary ready";
+    box.innerHTML='<div class="empty-state">Load a comparison period to view Primary, Comparison and Delta actuals.</div>';
+    return;
+  }
+  pill.textContent=`${comparison.range.startDate} to ${comparison.range.endDate}`;
+  const rows=ACTUAL_COMPARISON_ROWS.map(([label,key,isPct])=>{
+    const primaryValue=Number(primary[key]||0);
+    const comparisonValue=Number(comparison[key]||0);
+    const delta=comparisonValue-primaryValue;
+    const cls=delta>=0?(ACTUAL_COMPARISON_BAD_HIGHER.has(key)?"bad":"good"):(ACTUAL_COMPARISON_BAD_HIGHER.has(key)?"good":"bad");
+    return `<tr><td>${esc(label)}</td><td class="num">${actualComparisonCell(key,primaryValue,isPct)}</td><td class="num">${actualComparisonCell(key,comparisonValue,isPct)}</td><td class="num ${cls}">${actualComparisonCell(key,delta,isPct,true)}</td></tr>`;
+  }).join("");
+  const primaryDates=`${primary.range.startDate} to ${primary.range.endDate}`;
+  const comparisonDates=`${comparison.range.startDate} to ${comparison.range.endDate}`;
+  box.innerHTML=`<table><thead><tr><th>Metric</th><th class="num">${esc(primaryDates)}</th><th class="num">${esc(comparisonDates)}</th><th class="num">Delta</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 function renderWarnings(){
   const warnings=[...(state.statement?.warnings||[])];
@@ -761,6 +906,7 @@ function compareFormat(value,type){
   if(value==null||value==="")return "-";
   if(type==="pct")return pct(value);
   if(type==="roas")return roas(value);
+  if(type==="number")return numberFmt.format(value);
   if(type==="moneyExact")return gbp(value,true);
   return gbp(value);
 }
@@ -769,6 +915,7 @@ function compareDelta(actual,scenario,type){
   const delta=Number(scenario||0)-Number(actual||0);
   if(type==="pct")return `${delta>0?"+":""}${(delta*100).toFixed(1)}pp`;
   if(type==="roas")return `${delta>0?"+":""}${delta.toFixed(2)}x`;
+  if(type==="number")return `${delta>0?"+":""}${numberFmt.format(delta)}`;
   return type==="moneyExact"?signedGbp(delta,true):signedGbp(delta);
 }
 function renderScenarioComparison(){
@@ -839,7 +986,7 @@ function renderLeverage(){
   table.innerHTML=`${chart}<table><thead><tr><th>Daily despatch</th><th class="num">Despatch</th><th class="num">Fixed / order</th><th class="num">Fixed drag</th><th class="num">Contribution</th><th class="num">Net profit</th><th class="num">Net profit %</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 function renderAll(){
-  renderMetrics();renderSalesBridge();renderPnl();renderWarnings();renderRules();renderSpend();renderScenario();renderScenarioComparison();renderLeverage();renderSensitivity();updateScalerOutputs();setScenarioControlsEnabled(Boolean(state.statement));setWriteMode();
+  renderMetrics();renderSalesBridge();renderPnl();renderActualComparison();renderWarnings();renderRules();renderSpend();renderScenario();renderScenarioComparison();renderLeverage();renderSensitivity();updateScalerOutputs();setScenarioControlsEnabled(Boolean(state.statement));setWriteMode();
 }
 function setWriteMode(){
   const can=Boolean(state.settings.canWrite);
@@ -884,10 +1031,12 @@ async function loadActuals(){
     setStatus(`Loading Shopify actuals for ${val("date-from")} to ${val("date-to")}...`,"warn");
     const data=await apiJson(`/api/pnl${query()}`);
     state.settings=data.settings||state.settings;
-    if(!data.configured){state.statement=null;setStatus(data.message||"Shopify is not configured.","warn");renderAll();return;}
+    if(!data.configured){state.statement=null;state.actualComparison=null;setStatus(data.message||"Shopify is not configured.","warn");renderAll();return;}
     state.statement=data.statement;
+    state.actualComparison=null;
     state.scenario=null;state.sensitivity=null;
     state.scenarioComparisons=[];
+    setPreviousComparisonRange();
     const sourceType=data.source?.type==="shopifyql_sales"?"ShopifyQL dated sales, GP and COGS":`${Number(data.source?.orderCount||0).toLocaleString("en-GB")} Shopify orders`;
     el("source-note").textContent=`${sourceType} fetched for ${data.range?.startDate||val("date-from")} to ${data.range?.endDate||val("date-to")} ${data.source?.fetchedAt?`at ${new Date(data.source.fetchedAt).toLocaleString("en-GB")}`:""}`;
     applyStatementDefaults();
@@ -903,6 +1052,41 @@ async function loadActuals(){
     renderAll();
     await runScenario({auto:true});
   }catch(error){setStatus(error.message,"err");}
+}
+async function loadActualComparison(){
+  const button=el("load-comparison-btn");
+  const note=el("actual-comparison-note");
+  try{
+    if(!state.statement){note.className="status warn";note.textContent="Load primary actuals before loading a comparison.";return;}
+    const startDate=val("compare-date-from");
+    const endDate=val("compare-date-to");
+    if(!startDate||!endDate){note.className="status warn";note.textContent="Select comparison From and To dates.";return;}
+    button.disabled=true;
+    note.className="status warn";
+    note.textContent=`Loading Shopify comparison actuals for ${startDate} to ${endDate}...`;
+    const data=await apiJson(`/api/pnl${pnlQuery(startDate,endDate)}`);
+    state.settings=data.settings||state.settings;
+    if(!data.configured){state.actualComparison=null;note.className="status warn";note.textContent=data.message||"Shopify is not configured.";renderAll();return;}
+    state.actualComparison={statement:snapshot(data.statement)};
+    const warningCount=(data.statement?.warnings||[]).length;
+    const autoSync=data.windsorSync||{};
+    const syncText=autoSync.status==="synced"?" Windsor marketing spend was synced.":autoSync.status==="error"?` Windsor sync failed: ${autoSync.error}`:"";
+    note.className=`status ${autoSync.status==="error"||warningCount?"warn":"ok"}`;
+    note.textContent=`Comparison actuals loaded.${syncText}${warningCount?` ${warningCount} data warning${warningCount===1?"":"s"} apply to that period.`:""}`;
+    renderAll();
+  }catch(error){
+    note.className="status err";
+    note.textContent=error.message;
+    renderActualComparison();
+  }finally{
+    button.disabled=false;
+  }
+}
+function clearActualComparison(){
+  state.actualComparison=null;
+  el("actual-comparison-note").className="status";
+  el("actual-comparison-note").textContent="Actual comparison cleared.";
+  renderActualComparison();
 }
 async function runScenario(options={}){
   if(!state.statement){setStatus("Load actuals before running a scenario.","warn");return;}
@@ -1009,6 +1193,10 @@ document.getElementById("quick-period").addEventListener("change",()=>{setQuick(
 document.getElementById("date-from").addEventListener("change",markCustomPeriod);
 document.getElementById("date-to").addEventListener("change",markCustomPeriod);
 document.getElementById("load-btn").addEventListener("click",loadActuals);
+document.getElementById("compare-date-from").addEventListener("change",markComparisonDirty);
+document.getElementById("compare-date-to").addEventListener("change",markComparisonDirty);
+document.getElementById("load-comparison-btn").addEventListener("click",()=>loadActualComparison().catch(error=>setStatus(error.message,"err")));
+document.getElementById("clear-actual-comparison-btn").addEventListener("click",clearActualComparison);
 document.getElementById("settings-btn").addEventListener("click",async()=>{await loadSettings();setStatus("Settings refreshed.","ok");});
 document.getElementById("scenario-btn").addEventListener("click",runScenario);
 document.getElementById("save-scenario-btn").addEventListener("click",()=>saveScenarioComparison().catch(error=>setStatus(error.message,"err")));

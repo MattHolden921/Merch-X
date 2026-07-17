@@ -78,13 +78,14 @@
     },
     "pnl.html": {
       title: "P&L planner key",
-      intro: "Actuals use ShopifyQL for the selected dates; scenarios are decision-support estimates and are not accounting entries.",
+      intro: "Actuals use ShopifyQL for an inclusive range of up to 366 days; scenarios are decision-support estimates and are not accounting entries.",
       sections: [
         ["Sales and profit", [
           ["Demand", "Product sales including VAT, after discounts and before returns."],
           ["Despatch", "Shopify total sales for the period. AOV uses Despatch divided by order count."],
           ["Net sales", "Total product revenue excluding VAT after discounts and returns; the net-profit percentage denominator."],
-          ["Gross profit", "ShopifyQL reported gross profit for sales with product cost recorded. GP% uses the matching costed net sales excluding VAT, derived as gross profit plus COGS.", "GP% = gross profit ÷ (gross profit + COGS)"]
+          ["Gross profit", "ShopifyQL reported gross profit for sales with product cost recorded. GP% uses the matching costed net sales excluding VAT, derived as gross profit plus COGS.", "GP% = gross profit ÷ (gross profit + COGS)"],
+          ["Actual comparison", "Loads a second actualised Shopify period using the same P&L rules. KPI tiles show the comparison with primary context, and the detailed table labels both value columns with their dates before showing comparison-minus-primary Delta values."]
         ]],
         ["Costs", [
           ["Variable costs", "Non-fixed cost rules such as fulfilment, postage, pick/pack and payment fees."],

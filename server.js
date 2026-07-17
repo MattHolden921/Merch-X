@@ -14539,7 +14539,7 @@ function pnlDefaultRange() {
 function pnlRangeFromRequest(url, fallback = pnlDefaultRange()) {
   const startDate = String(url.searchParams.get("startDate") || fallback.startDate || "").trim();
   const endDate = String(url.searchParams.get("endDate") || fallback.endDate || "").trim();
-  return pnl.validateRange({ startDate, endDate }, { maxDays: 92 });
+  return pnl.validateRange({ startDate, endDate }, { maxDays: 366 });
 }
 
 function cleanPnlDate(value) {
@@ -15084,7 +15084,7 @@ async function syncPnlWindsorMarketingSpend(input, req) {
   const range = pnl.validateRange({
     startDate: input?.startDate,
     endDate: input?.endDate
-  }, { maxDays: 92 });
+  }, { maxDays: 366 });
   const channels = pnlWindsorChannelsFromInput(input?.channels);
   if (!channels.length) throw new Error("Choose at least one enabled Windsor marketing channel.");
   const results = [];
