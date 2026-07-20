@@ -1,6 +1,6 @@
 # Merch X Project Spec
 
-Last reviewed: 2026-07-13
+Last reviewed: 2026-07-20
 
 This is the shared logic and product reference for Merch X. Keep it current when the app's workflows, calculations, data model, integrations, or page responsibilities change.
 
@@ -48,6 +48,7 @@ The app favours simple operational tools over a large framework:
 - `public/merchandising.html`: Shopify product merchandising view using product, order, and optional GA4 metrics.
 - `public/new-in-performance.html`: launch and image-refresh performance report for recent New In products, draft pipeline rows, image-change impact comparisons, marketing actions, share links, and CSV export.
 - `public/collection-planner.html`: Shopify collection reorder planning and apply-to-Shopify workflow.
+- `public/seasonal-sale-review.html`: persisted whole-season sale-candidate review using current Shopify state, full/recent trading windows, tracked live dates, GA4 CVR, and first/second-drop handoff into Sale Planner.
 - `public/sale-planner.html`: markdown and sale planning workspace for importing products, reviewing markdown prices, mapping Sale collections, applying Shopify sale state, and removing sale state.
 - `public/weekly-actions.html`: action board generated from saved bestsellers periods.
 - `public/email-merchandising.html`: guided six-product email campaign builder, Klaviyo draft handoff, campaign history, and performance reporting.
@@ -84,7 +85,7 @@ Primary table groups:
 - Collection reorder: completed apply history in `collection_reorder_audit` and durable job state in `collection_reorder_jobs`. Audit rows retain the actor plus baseline and final order hashes.
 - Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
 - Weekly actions: `weekly_actions`, `weekly_action_events`.
-- Sale planner: `sale_plans`, `sale_plan_items`, `sale_plan_events`, the variant restoration ledger in `sale_state_ledger`, markdown outcomes/actions, durable `sale_planner_jobs` and `sale_planner_job_items`, plus Sale collection mapping stored in `app_settings.salePlannerCollections`.
+- Seasonal sale review and Sale Planner: `product_live_dates` tracks the best-known product live timestamp and its source; `sale_season_reviews` and `sale_season_review_items` persist seasonal scope, frozen metrics, buyer decisions, first/second-drop assignments, notes, and handoff links. Operational sale state remains in `sale_plans`, `sale_plan_items`, `sale_plan_events`, the variant restoration ledger in `sale_state_ledger`, markdown outcomes/actions, durable `sale_planner_jobs` and `sale_planner_job_items`, plus Sale collection mapping stored in `app_settings.salePlannerCollections`.
 - P&L planner: reusable `pnl_cost_rules`, dated manual/automated `pnl_marketing_spend` entries, raw `pnl_marketing_spend_actuals` rows for Windsor campaign spend, and `pnl_windsor_sync_runs` for sync coverage/cooldown tracking.
 - Email merchandising: `email_campaigns`, immutable product snapshots in `email_campaign_products`, and source-specific `email_campaign_metric_snapshots`.
 
@@ -122,6 +123,7 @@ Used for:
 - Collection planner product and collection sync.
 - Collection reorder apply jobs.
 - Sale planner price, compare-at price, and Sale collection apply/remove jobs.
+- Seasonal Sale Review current catalogue, variant inventory/cost/price, publication date, and full/recent product-sales windows.
 - Bestsellers sync from Shopify orders/products.
 - P&L actual sales via ShopifyQL reports.
 
@@ -137,7 +139,7 @@ Configuration supports either OAuth refresh token or service account credentials
 
 Used for:
 
-- Product view/add/purchase/revenue metrics merged into merchandising and collection planning reports.
+- Product view/add/purchase/revenue metrics merged into merchandising, collection planning, and Seasonal Sale Review. Seasonal Sale Review CVR is GA4 item purchases divided by GA4 item views and is kept separate from Shopify unit conversion proxies.
 - Google OAuth start/callback endpoints can write a refresh token back to `.env`.
 
 ### Windsor.ai
@@ -258,6 +260,10 @@ Shopify and Google:
 - `GET /api/shopify-collection-planner`
 - `POST /api/shopify-collection-reorder/start`
 - `GET /api/shopify-collection-reorder/status`
+- `GET /api/sale-season-reviews`
+- `POST /api/sale-season-reviews/build`
+- `POST /api/sale-season-reviews/items/update`
+- `POST /api/sale-season-reviews/send-to-plan`
 - `GET /api/sale-planner`
 - `POST /api/sale-planner/import`
 - `POST /api/sale-planner/items/update`
@@ -471,6 +477,23 @@ Weekly actions are generated from saved canonical Monday-Sunday Shopify bestsell
 Actions use a `dedupe_key` by type/product so unresolved existing actions are updated rather than duplicated. Statuses are `Open`, `In progress`, `Snoozed`, `Blocked`, and `Done`.
 Actions keep their role owner and can also be assigned to an active user. Owner/assignee changes create handoff records and notifications.
 
+### Seasonal Sale Review
+
+Seasonal Sale Review is the complete-assortment decision step before the operational Sale Planner:
+
+- Buyer, Merchandising, and Admin users can build and update reviews. A review selects one or more season labels, a full trading range, a recent decision window of 1-12 weeks, a minimum number of live days, and an optional second-drop date.
+- Building a review reads current active/draft Shopify products and variants plus ShopifyQL/GA4 product metrics for both the full period and recent window. Products are matched to the selected season through the normalized Shopify `custom.season` metafield/tag result. Active, draft, stocked, zero-stock, and zero-sale products inside that season remain visible so the buyer can reconcile the complete Shopify assortment; gift cards and archived products are excluded by the shared Shopify product query.
+- Current stock, prices, costs, status, and variants are live at rebuild time. Full-period units/sales/GA describe seasonal performance. Recent units/revenue/cover feed the existing `lib/sale-planner.js` markdown ladder so strong early-season volume does not hide a late-season slowdown.
+- `product_live_dates` persists the best-known actual live date. Shopify `publishedAt` is preferred and the earliest observed value is retained; an explicit manual correction is authoritative. If an active product has no Shopify publication timestamp, Merch X stores the first date it observed the product active and labels that lower-confidence source.
+- The default recent-launch safeguard is 28 live days and is editable per review. Products younger than that threshold are suggested as `hold` even when stock risk is high. A buyer can explicitly override the suggestion; that override remains visible as a warning after handoff.
+- GA CVR is `GA4 item purchases / GA4 item views`. Full-period and recent CVR are both shown. Fewer than 30 views is labelled insufficient traffic rather than interpreted as 0% conversion. With sufficient traffic, low CVR increases candidate urgency and strong CVR reduces it; the plain-language reason remains visible.
+- System suggestions are separate from buyer decisions. Supported decisions are `undecided`, `first_drop`, `second_drop`, `hold`, `carry_forward`, `exclude`, and `needs_data`. Rebuilding refreshes metrics and suggestions while preserving buyer decisions, notes, tracked live dates, and prior handoff links for products still in scope.
+- Product-row boxes are transient bulk-selection controls, not saved decisions. Selecting a row gives immediate row highlighting and enables the bulk-decision buttons; those buttons require at least one selected product and never silently apply to every filtered product.
+- First-drop and second-drop products are sent to separate Sale Plans. Second-drop plans inherit the review's planned second-drop date as their review date. Handoff stages product-level rows through the existing Sale Planner pricing and collection logic, stores the seasonal/GA/live-date source metrics, invalidates any affected approval, and never changes Shopify by itself.
+- Products already present in another non-archived Sale Plan are called out, suggested to hold, and skipped from a new drop plan unless an explicit server-side override is supplied. Sent review rows retain their Sale Plan and item links and are not resent by default.
+- Summary and filtered totals add only meaningful quantities such as products, units, retail value, views, and purchases. The whole-review First Drop, Second Drop, and Not in a Drop tiles show each group's product count, current stock units, and stock-retail-weighted average suggested discount (`total markdown investment / stock retail at RRP`); Not in a Drop means every saved decision other than First Drop or Second Drop. Table filters do not change these tiles. The table has a reversible in-stock-only control that hides products with no positive current stock without changing decisions, plus a compound Not in a Drop buyer-decision filter. Filtered totals recalculate the visible not-in-drop count, stock, and weighted suggested discount. GA CVR is recomputed from filtered purchases/views rather than averaging row percentages. Cover, CVR, discount, and margin percentages are never summed.
+- The selected-period sell-through concept remains a proxy (`net units / (net units + current stock)`) because opening stock, receipts, and transfers are not available for the complete range; the page Key must not describe it as true seasonal sell-through.
+
 ### Sale Planner
 
 The Sale Planner is the operational markdown workflow for Shopify sale changes.
@@ -479,7 +502,7 @@ Key principles:
 
 - Buyer, Merchandising, and Admin users can import products, review suggested markdowns, and edit sale-plan items. Only Admin users can apply or remove live Shopify sale state.
 - Plans can be created, renamed, duplicated, given a review date, and archived once they have no live Applied rows. Users submit an editable plan for approval; an Admin approves a SHA-256 snapshot of its items, variant targets, and collection targets. Any later item, import, removal, or propagated mapping edit invalidates that approval. Shopify apply requires the current plan to match its approved snapshot.
-- Products can be imported from Weekly Actions or Product Merchandising. Importing Weekly Action rows sets open markdown actions to `In progress` and records a weekly action event.
+- Products can be imported from Seasonal Sale Review, Weekly Actions, or Product Merchandising. Seasonal handoff preserves source live-date, GA4, full-season, recent-window, and drop metrics on the Sale Plan item. Importing Weekly Action rows sets open markdown actions to `In progress` and records a weekly action event.
 - Non-applied rows can be removed from the planner without changing Shopify. Applied rows must use the remove-from-sale workflow first, preserving the audit trail and stored collection targets.
 - Suggested markdowns use a risk ladder of 10%, 20%, 30%, 40%, and 50%. The score considers stock, cover weeks, sell-through, weak sales, stock value, age, season, existing markdown state, and failed/deeper markdown signals.
 - Sale prices round to the nearest pound by default. Existing markdowns use `compareAtPrice` as the original price and only recommend the same or a deeper markdown step.

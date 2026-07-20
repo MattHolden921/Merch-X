@@ -19,6 +19,7 @@ const { DEFAULT_PAH_SETTINGS, buildPahReport, safeSettings: safePahSettings } = 
 const pnl = require("./lib/pnl");
 const finance = require("./lib/commerce-finance");
 const salePlanner = require("./lib/sale-planner");
+const seasonalSaleReview = require("./lib/seasonal-sale-review");
 const windsorMarketing = require("./lib/windsor-marketing");
 const bestsellers = require("./lib/bestsellers");
 const shopifyProductSync = require("./lib/shopify-product-sync");
@@ -4886,6 +4887,85 @@ function openOrderSqliteDb() {
       last_error TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS product_live_dates (
+      shopify_product_id TEXT PRIMARY KEY,
+      live_at TEXT,
+      source TEXT,
+      first_seen_active_at TEXT,
+      last_shopify_published_at TEXT,
+      updated_by TEXT,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sale_season_reviews (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Draft',
+      seasons_json TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      recent_start_date TEXT NOT NULL,
+      recent_end_date TEXT NOT NULL,
+      recent_weeks INTEGER NOT NULL DEFAULT 4,
+      min_live_days INTEGER NOT NULL DEFAULT 28,
+      second_drop_date TEXT,
+      created_by TEXT,
+      data TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      refreshed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS sale_season_review_items (
+      id TEXT PRIMARY KEY,
+      review_id TEXT NOT NULL,
+      product_key TEXT NOT NULL,
+      shopify_product_id TEXT,
+      title TEXT NOT NULL,
+      sku TEXT,
+      product_type TEXT,
+      season TEXT,
+      image_url TEXT,
+      shopify_status TEXT,
+      live_at TEXT,
+      live_date_source TEXT,
+      active_days INTEGER,
+      stock REAL DEFAULT 0,
+      current_price REAL DEFAULT 0,
+      original_price REAL DEFAULT 0,
+      cost REAL,
+      stock_retail_value REAL DEFAULT 0,
+      full_units REAL DEFAULT 0,
+      full_revenue REAL DEFAULT 0,
+      full_ga_views REAL DEFAULT 0,
+      full_ga_purchases REAL DEFAULT 0,
+      full_ga_cvr REAL,
+      recent_units REAL DEFAULT 0,
+      recent_revenue REAL DEFAULT 0,
+      recent_ga_views REAL DEFAULT 0,
+      recent_ga_purchases REAL DEFAULT 0,
+      recent_ga_cvr REAL,
+      cover_weeks REAL,
+      risk_score REAL DEFAULT 0,
+      candidate_score REAL DEFAULT 0,
+      suggested_decision TEXT NOT NULL DEFAULT 'hold',
+      decision TEXT NOT NULL DEFAULT 'undecided',
+      note TEXT,
+      protected_recent_launch INTEGER NOT NULL DEFAULT 0,
+      warnings_json TEXT,
+      reasons_json TEXT,
+      variants_json TEXT,
+      metrics_json TEXT,
+      data TEXT,
+      sale_plan_id TEXT,
+      sale_plan_item_id TEXT,
+      sent_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS sale_plan_events (
       id TEXT PRIMARY KEY,
       plan_id TEXT,
@@ -5180,6 +5260,9 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_sale_outcomes_plan ON sale_markdown_outcomes(plan_id, updated_at);
     CREATE INDEX IF NOT EXISTS idx_sale_outcomes_item ON sale_markdown_outcomes(item_id, discount_percent);
     CREATE INDEX IF NOT EXISTS idx_sale_outcomes_learning ON sale_markdown_outcomes(product_type, season, discount_percent, outcome);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_season_review_product ON sale_season_review_items(review_id, product_key);
+    CREATE INDEX IF NOT EXISTS idx_sale_season_review_decision ON sale_season_review_items(review_id, decision, suggested_decision);
+    CREATE INDEX IF NOT EXISTS idx_product_live_dates_source ON product_live_dates(source, live_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_actions_unique ON sale_analysis_actions(plan_id, item_id, action_type);
     CREATE INDEX IF NOT EXISTS idx_sale_actions_plan_status ON sale_analysis_actions(plan_id, status, changed, updated_at);
     CREATE INDEX IF NOT EXISTS idx_sale_actions_type ON sale_analysis_actions(action_type, status, priority);
@@ -9820,6 +9903,501 @@ async function handleWeeklyActionsUpdate(req, res) {
   sendJson(res, 200, { ok: true, ...readWeeklyActions(url) });
 }
 
+function productLiveDateFromRow(row) {
+  if (!row) return null;
+  return {
+    shopifyProductId: row.shopify_product_id || "",
+    liveAt: row.live_at || "",
+    source: row.source || "",
+    firstSeenActiveAt: row.first_seen_active_at || "",
+    lastShopifyPublishedAt: row.last_shopify_published_at || "",
+    updatedBy: row.updated_by || "",
+    data: parseJson(row.data, {}),
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function validIsoDateTime(value) {
+  const raw = String(value || "").trim();
+  const parsed = raw ? new Date(raw) : null;
+  return parsed && Number.isFinite(parsed.getTime()) ? parsed.toISOString() : "";
+}
+
+function upsertTrackedProductLiveDate(product, req) {
+  const productId = String(product?.id || product?.shopifyProductId || "").trim();
+  if (!productId) return null;
+  const db = openOrderSqliteDb();
+  const existing = productLiveDateFromRow(db.prepare("SELECT * FROM product_live_dates WHERE shopify_product_id = ?").get(productId));
+  const publishedAt = validIsoDateTime(product.publishedAt);
+  const active = String(product.status || product.shopifyStatus || "").toUpperCase() === "ACTIVE";
+  const observedAt = new Date().toISOString();
+  const firstSeenActiveAt = existing?.firstSeenActiveAt || (active ? observedAt : "");
+  let liveAt = existing?.liveAt || "";
+  let source = existing?.source || "";
+  if (source !== "manual") {
+    if (publishedAt && (!liveAt || new Date(publishedAt) < new Date(liveAt))) {
+      liveAt = publishedAt;
+      source = "shopify_published_at";
+    } else if (!liveAt && active) {
+      liveAt = firstSeenActiveAt;
+      source = "first_seen_active";
+    }
+  }
+  db.prepare(`
+    INSERT INTO product_live_dates (
+      shopify_product_id, live_at, source, first_seen_active_at,
+      last_shopify_published_at, updated_by, data, created_at, updated_at
+    ) VALUES (?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(shopify_product_id) DO UPDATE SET
+      live_at=excluded.live_at, source=excluded.source,
+      first_seen_active_at=COALESCE(product_live_dates.first_seen_active_at, excluded.first_seen_active_at),
+      last_shopify_published_at=excluded.last_shopify_published_at,
+      updated_by=excluded.updated_by, data=excluded.data, updated_at=CURRENT_TIMESTAMP
+  `).run(productId, liveAt, source, firstSeenActiveAt, publishedAt, actorName(req), JSON.stringify({
+    title: product.title || "", handle: product.handle || "", status: product.status || product.shopifyStatus || ""
+  }));
+  return productLiveDateFromRow(db.prepare("SELECT * FROM product_live_dates WHERE shopify_product_id = ?").get(productId));
+}
+
+function setManualProductLiveDate(productId, value, req) {
+  const cleanId = String(productId || "").trim();
+  const date = dateOnlyFromIso(value);
+  if (!cleanId) throw new Error("Missing Shopify product ID for the live date.");
+  if (!date) throw new Error("Choose a valid product live date.");
+  const liveAt = `${date}T00:00:00.000Z`;
+  const db = openOrderSqliteDb();
+  db.prepare(`
+    INSERT INTO product_live_dates (
+      shopify_product_id, live_at, source, updated_by, data, created_at, updated_at
+    ) VALUES (?, ?, 'manual', ?, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(shopify_product_id) DO UPDATE SET
+      live_at=excluded.live_at, source='manual', updated_by=excluded.updated_by, updated_at=CURRENT_TIMESTAMP
+  `).run(cleanId, liveAt, actorName(req));
+  return { shopifyProductId: cleanId, liveAt, source: "manual", updatedBy: actorName(req) };
+}
+
+function saleSeasonReviewFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id, name: row.name || "", status: row.status || "Draft",
+    seasons: parseJson(row.seasons_json, []), startDate: row.start_date || "", endDate: row.end_date || "",
+    recentStartDate: row.recent_start_date || "", recentEndDate: row.recent_end_date || "",
+    recentWeeks: Number(row.recent_weeks || 4), minLiveDays: Number(row.min_live_days || 28),
+    secondDropDate: row.second_drop_date || "", createdBy: row.created_by || "",
+    data: parseJson(row.data, {}), createdAt: row.created_at || "", updatedAt: row.updated_at || "",
+    refreshedAt: row.refreshed_at || ""
+  };
+}
+
+function saleSeasonReviewItemFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id, reviewId: row.review_id, productKey: row.product_key || "",
+    shopifyProductId: row.shopify_product_id || "", title: row.title || "", sku: row.sku || "",
+    productType: row.product_type || "", season: row.season || "", imageUrl: row.image_url || "",
+    shopifyStatus: row.shopify_status || "", liveAt: row.live_at || "", liveDateSource: row.live_date_source || "",
+    activeDays: row.active_days == null ? null : Number(row.active_days), stock: Number(row.stock || 0),
+    currentPrice: Number(row.current_price || 0), originalPrice: Number(row.original_price || 0),
+    cost: row.cost == null ? null : Number(row.cost), stockRetailValue: Number(row.stock_retail_value || 0),
+    fullUnits: Number(row.full_units || 0), fullRevenue: Number(row.full_revenue || 0),
+    fullGaViews: Number(row.full_ga_views || 0), fullGaPurchases: Number(row.full_ga_purchases || 0),
+    fullGaCvr: row.full_ga_cvr == null ? null : Number(row.full_ga_cvr), recentUnits: Number(row.recent_units || 0),
+    recentRevenue: Number(row.recent_revenue || 0), recentGaViews: Number(row.recent_ga_views || 0),
+    recentGaPurchases: Number(row.recent_ga_purchases || 0), recentGaCvr: row.recent_ga_cvr == null ? null : Number(row.recent_ga_cvr),
+    coverWks: row.cover_weeks == null ? null : Number(row.cover_weeks), riskScore: Number(row.risk_score || 0),
+    candidateScore: Number(row.candidate_score || 0), suggestedDecision: row.suggested_decision || "hold",
+    decision: seasonalSaleReview.normalizeDecision(row.decision), note: row.note || "",
+    protectedRecentLaunch: Boolean(row.protected_recent_launch), warnings: parseJson(row.warnings_json, []),
+    reasons: parseJson(row.reasons_json, []), variants: parseJson(row.variants_json, []),
+    metrics: parseJson(row.metrics_json, {}), data: parseJson(row.data, {}), salePlanId: row.sale_plan_id || "",
+    salePlanItemId: row.sale_plan_item_id || "", sentAt: row.sent_at || "", createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readSaleSeasonReviewItems(reviewId) {
+  if (!reviewId) return [];
+  return openOrderSqliteDb().prepare(`
+    SELECT * FROM sale_season_review_items WHERE review_id = ?
+    ORDER BY CASE decision WHEN 'undecided' THEN 0 WHEN 'first_drop' THEN 1 WHEN 'second_drop' THEN 2
+      WHEN 'needs_data' THEN 3 WHEN 'hold' THEN 4 WHEN 'carry_forward' THEN 5 ELSE 6 END,
+      candidate_score DESC, stock_retail_value DESC, title COLLATE NOCASE
+  `).all(reviewId).map(saleSeasonReviewItemFromRow);
+}
+
+function saleSeasonReviewOptions() {
+  const db = openOrderSqliteDb();
+  const seasons = db.prepare(`
+    SELECT season FROM report_product_metrics WHERE trim(COALESCE(season, '')) <> ''
+    UNION SELECT season FROM products WHERE trim(COALESCE(season, '')) <> ''
+    ORDER BY season COLLATE NOCASE DESC
+  `).all().map(row => row.season).filter(Boolean);
+  const range = db.prepare(`SELECT MIN(start_date) min_start_date, MAX(end_date) max_end_date
+    FROM report_periods WHERE report_type='bestsellers' AND status='ready'`).get();
+  return { seasons, savedRange: { startDate: range?.min_start_date || "", endDate: range?.max_end_date || "" },
+    defaults: { recentWeeks: 4, minLiveDays: 28, minGaViews: 30 } };
+}
+
+function readSaleSeasonReviews(selectedId = "") {
+  const db = openOrderSqliteDb();
+  const reviews = db.prepare(`SELECT * FROM sale_season_reviews
+    ORDER BY CASE status WHEN 'Archived' THEN 1 ELSE 0 END, updated_at DESC LIMIT 100`).all().map(saleSeasonReviewFromRow);
+  const selected = selectedId
+    ? saleSeasonReviewFromRow(db.prepare("SELECT * FROM sale_season_reviews WHERE id = ?").get(selectedId))
+    : reviews[0] || null;
+  const items = selected ? readSaleSeasonReviewItems(selected.id) : [];
+  return { reviews, review: selected, items, summary: seasonalSaleReview.reviewSummary(items),
+    options: saleSeasonReviewOptions(), generatedAt: new Date().toISOString() };
+}
+
+function saleSeasonProductKey(product = {}) {
+  return String(product.id || product.productKey || product.handle || (product.skus || [])[0] || product.sku || product.title || "").trim();
+}
+
+function productMapBySaleKey(products = []) {
+  const map = new Map();
+  for (const product of products) {
+    for (const key of [product.id, product.productKey, product.handle, product.sku, ...(product.skus || [])]) {
+      if (key) map.set(String(key).toLowerCase(), product);
+    }
+  }
+  return map;
+}
+
+function matchingMappedProduct(map, product) {
+  for (const key of [product.id, product.productKey, product.handle, product.sku, ...(product.skus || [])]) {
+    const found = key ? map.get(String(key).toLowerCase()) : null;
+    if (found) return found;
+  }
+  return null;
+}
+
+function recentRangeForSeasonReview(range, recentWeeks) {
+  const start = new Date(`${range.startDate}T00:00:00.000Z`);
+  const end = new Date(`${range.endDate}T00:00:00.000Z`);
+  const recentStart = new Date(end.getTime() - (Math.max(1, recentWeeks) * 7 - 1) * 864e5);
+  return { startDate: isoDateOnly(recentStart < start ? start : recentStart), endDate: range.endDate };
+}
+
+function activeSalePlanRefs() {
+  const rows = openOrderSqliteDb().prepare(`SELECT i.shopify_product_id, i.product_key, i.status item_status,
+      p.id plan_id, p.name plan_name, p.status plan_status FROM sale_plan_items i JOIN sale_plans p ON p.id=i.plan_id
+      WHERE p.status <> 'Archived' AND i.status IN ('Planned','Applied','Error')`).all();
+  const map = new Map();
+  for (const row of rows) {
+    const ref = { planId: row.plan_id, planName: row.plan_name || "", planStatus: row.plan_status || "", itemStatus: row.item_status || "" };
+    for (const key of [row.shopify_product_id, row.product_key]) {
+      if (!key) continue;
+      const normalized = String(key).toLowerCase();
+      map.set(normalized, [...(map.get(normalized) || []), ref]);
+    }
+  }
+  return map;
+}
+
+function refsForSaleProduct(refs, product) {
+  const unique = new Map();
+  for (const key of [product.id, product.productKey, product.handle]) {
+    for (const ref of refs.get(String(key || "").toLowerCase()) || []) unique.set(ref.planId, ref);
+  }
+  return [...unique.values()];
+}
+
+async function handleSaleSeasonReviewBuild(req, res) {
+  const body = await readJsonBody(req);
+  const seasons = [...new Set((Array.isArray(body.seasons) ? body.seasons : String(body.seasons || "").split(","))
+    .map(value => String(value || "").trim()).filter(Boolean))];
+  if (!seasons.length) throw new Error("Choose at least one season.");
+  const range = bestsellers.validateRange({ startDate: body.startDate, endDate: body.endDate }, 367);
+  const recentWeeks = Math.max(1, Math.min(12, Number(body.recentWeeks || 4)));
+  const minLiveDays = Math.max(0, Math.min(180, Number(body.minLiveDays ?? 28)));
+  const recentRange = recentRangeForSeasonReview(range, recentWeeks);
+  const reviewId = String(body.reviewId || "").trim() || crypto.randomUUID();
+  const db = openOrderSqliteDb();
+  const existingReview = saleSeasonReviewFromRow(db.prepare("SELECT * FROM sale_season_reviews WHERE id = ?").get(reviewId));
+  const existingItems = new Map(readSaleSeasonReviewItems(reviewId).map(item => [item.productKey, item]));
+  const secondDropDate = body.secondDropDate ? dateOnlyFromIso(body.secondDropDate) : existingReview?.secondDropDate || "";
+  if (body.secondDropDate && !secondDropDate) throw new Error("Choose a valid second drop date.");
+
+  const fullResult = await fetchShopifyBestsellersProducts(range);
+  if (!fullResult.configured) throw new Error(fullResult.message || "Shopify is not configured.");
+  const recentResult = recentRange.startDate === range.startDate && recentRange.endDate === range.endDate
+    ? fullResult
+    : await fetchShopifyBestsellersProducts(recentRange);
+  const recentByKey = productMapBySaleKey(recentResult.products || []);
+  const chosenSeasons = new Set(seasons.map(value => value.toLowerCase()));
+  const products = (fullResult.products || []).filter(product => chosenSeasons.has(String(product.season || "").toLowerCase()));
+  if (!products.length) throw new Error(`No Shopify products matched ${seasons.join(", ")}. Check the Shopify season metafield and selected season.`);
+  const planRefs = activeSalePlanRefs();
+  const actualRecentWeeks = Math.max(reportDaysInclusive(recentRange) / 7, 1 / 7);
+  const rows = [];
+
+  for (const full of products) {
+    const recent = matchingMappedProduct(recentByKey, full) || {};
+    const productKey = saleSeasonProductKey(full);
+    const trackedLive = upsertTrackedProductLiveDate(full, req);
+    const liveAt = trackedLive?.liveAt || "";
+    const recentUnits = Number(recent.units || 0);
+    const recentRevenue = Number(recent.revenueIncVat ?? recent.revenue ?? recent.rev ?? 0);
+    const coverWks = recentUnits > 0 ? Number(full.stock || 0) / (recentUnits / actualRecentWeeks) : null;
+    const activeRefs = refsForSaleProduct(planRefs, full);
+    const decisionProduct = {
+      ...full, liveAt, units: recentUnits, revenue: recentRevenue, coverWks,
+      gaViews: Number(recent.gaViews || 0), gaPurchases: Number(recent.gaPurchases || 0)
+    };
+    const recommendation = seasonalSaleReview.reviewRecommendation(decisionProduct, {
+      minLiveDays, minGaViews: 30, asOf: new Date()
+    });
+    if (activeRefs.length && ["first_drop", "second_drop"].includes(recommendation.suggestedDecision)) {
+      recommendation.suggestedDecision = "hold";
+      recommendation.suggestedDecisionLabel = seasonalSaleReview.decisionLabel("hold");
+      recommendation.reasons.unshift(`Already present in active Sale Plan: ${activeRefs.map(ref => ref.planName).join(", ")}.`);
+    }
+    const fullGaViews = Number(full.gaViews || 0);
+    const fullGaPurchases = Number(full.gaPurchases || 0);
+    const recentGaViews = Number(recent.gaViews || 0);
+    const recentGaPurchases = Number(recent.gaPurchases || 0);
+    const warnings = [...recommendation.dataIssues];
+    if (full.cost == null) warnings.push("Cost is missing; target GP may be unavailable.");
+    if (full.variantDataWarning) warnings.push(full.variantDataWarning);
+    if (activeRefs.length) warnings.push(`Already in ${activeRefs.length} active Sale Plan${activeRefs.length === 1 ? "" : "s"}.`);
+    if (trackedLive?.source === "first_seen_active") warnings.push("Shopify publication date was missing; live date is when Merch X first observed the product active.");
+    const previous = existingItems.get(productKey);
+    rows.push({
+      id: previous?.id || crypto.randomUUID(), reviewId, productKey, shopifyProductId: full.id || "",
+      title: full.title || productKey, sku: full.sku || (full.skus || [])[0] || "",
+      productType: full.productType || full.cat || "", season: full.season || "",
+      imageUrl: full.imageUrl || full.img || "", shopifyStatus: full.status || full.shopifyStatus || "",
+      liveAt, liveDateSource: trackedLive?.source || "", activeDays: recommendation.activeDays,
+      stock: Number(full.stock || 0), currentPrice: Number(full.price ?? full.rrp ?? 0),
+      originalPrice: Number(recommendation.markdown.originalPrice || 0), cost: full.cost == null ? null : Number(full.cost),
+      stockRetailValue: seasonalSaleReview.stockRetailValue(full), fullUnits: Number(full.units || 0),
+      fullRevenue: Number(full.revenueIncVat ?? full.revenue ?? full.rev ?? 0), fullGaViews, fullGaPurchases,
+      fullGaCvr: fullGaViews > 0 ? fullGaPurchases / fullGaViews : null,
+      recentUnits, recentRevenue, recentGaViews, recentGaPurchases,
+      recentGaCvr: recentGaViews > 0 ? recentGaPurchases / recentGaViews : null,
+      coverWks, riskScore: Number(recommendation.markdown.riskScore || 0),
+      candidateScore: recommendation.candidateScore, suggestedDecision: recommendation.suggestedDecision,
+      decision: previous?.decision || "undecided", note: previous?.note || "",
+      protectedRecentLaunch: recommendation.protectedRecentLaunch, warnings: [...new Set(warnings)],
+      reasons: recommendation.reasons, variants: full.variants || [],
+      metrics: {
+        fullRange: range, recentRange, targetPrice: recommendation.markdown.targetPrice,
+        discountPercent: recommendation.markdown.discountPercent, markdownRationale: recommendation.markdown.rationale,
+        gaSignalAvailable: recommendation.gaSignalAvailable
+      },
+      data: { product: decisionProduct, activePlanRefs: activeRefs, liveDate: trackedLive, sourceType: "season_review" },
+      salePlanId: previous?.salePlanId || "", salePlanItemId: previous?.salePlanItemId || "", sentAt: previous?.sentAt || ""
+    });
+  }
+
+  const name = String(body.name || existingReview?.name || `${seasons.join(" + ")} sale review`).trim().slice(0, 160);
+  const reviewData = {
+    fullGaAvailable: Boolean(fullResult.gaAvailable), fullGaMessage: fullResult.gaMessage || "",
+    recentGaAvailable: Boolean(recentResult.gaAvailable), recentGaMessage: recentResult.gaMessage || "",
+    fullDataQuality: fullResult.dataQuality || {}, recentDataQuality: recentResult.dataQuality || {},
+    missingSeasonProducts: (fullResult.products || []).filter(product => !String(product.season || "").trim()).length,
+    productSnapshotAt: new Date().toISOString()
+  };
+  const upsertItem = db.prepare(`
+    INSERT INTO sale_season_review_items (
+      id, review_id, product_key, shopify_product_id, title, sku, product_type, season, image_url,
+      shopify_status, live_at, live_date_source, active_days, stock, current_price, original_price, cost,
+      stock_retail_value, full_units, full_revenue, full_ga_views, full_ga_purchases, full_ga_cvr,
+      recent_units, recent_revenue, recent_ga_views, recent_ga_purchases, recent_ga_cvr, cover_weeks,
+      risk_score, candidate_score, suggested_decision, decision, note, protected_recent_launch,
+      warnings_json, reasons_json, variants_json, metrics_json, data, sale_plan_id, sale_plan_item_id, sent_at,
+      created_at, updated_at
+    ) VALUES (
+      @id, @reviewId, @productKey, @shopifyProductId, @title, @sku, @productType, @season, @imageUrl,
+      @shopifyStatus, NULLIF(@liveAt,''), @liveDateSource, @activeDays, @stock, @currentPrice, @originalPrice, @cost,
+      @stockRetailValue, @fullUnits, @fullRevenue, @fullGaViews, @fullGaPurchases, @fullGaCvr,
+      @recentUnits, @recentRevenue, @recentGaViews, @recentGaPurchases, @recentGaCvr, @coverWks,
+      @riskScore, @candidateScore, @suggestedDecision, @decision, @note, @protectedRecentLaunch,
+      @warningsJson, @reasonsJson, @variantsJson, @metricsJson, @dataJson, NULLIF(@salePlanId,''),
+      NULLIF(@salePlanItemId,''), NULLIF(@sentAt,''), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    ) ON CONFLICT(review_id, product_key) DO UPDATE SET
+      shopify_product_id=excluded.shopify_product_id, title=excluded.title, sku=excluded.sku,
+      product_type=excluded.product_type, season=excluded.season, image_url=excluded.image_url,
+      shopify_status=excluded.shopify_status, live_at=excluded.live_at, live_date_source=excluded.live_date_source,
+      active_days=excluded.active_days, stock=excluded.stock, current_price=excluded.current_price,
+      original_price=excluded.original_price, cost=excluded.cost, stock_retail_value=excluded.stock_retail_value,
+      full_units=excluded.full_units, full_revenue=excluded.full_revenue, full_ga_views=excluded.full_ga_views,
+      full_ga_purchases=excluded.full_ga_purchases, full_ga_cvr=excluded.full_ga_cvr,
+      recent_units=excluded.recent_units, recent_revenue=excluded.recent_revenue,
+      recent_ga_views=excluded.recent_ga_views, recent_ga_purchases=excluded.recent_ga_purchases,
+      recent_ga_cvr=excluded.recent_ga_cvr, cover_weeks=excluded.cover_weeks,
+      risk_score=excluded.risk_score, candidate_score=excluded.candidate_score,
+      suggested_decision=excluded.suggested_decision, decision=excluded.decision, note=excluded.note,
+      protected_recent_launch=excluded.protected_recent_launch, warnings_json=excluded.warnings_json,
+      reasons_json=excluded.reasons_json, variants_json=excluded.variants_json, metrics_json=excluded.metrics_json,
+      data=excluded.data, sale_plan_id=excluded.sale_plan_id, sale_plan_item_id=excluded.sale_plan_item_id,
+      sent_at=excluded.sent_at, updated_at=CURRENT_TIMESTAMP
+  `);
+  const write = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO sale_season_reviews (
+        id, name, status, seasons_json, start_date, end_date, recent_start_date, recent_end_date,
+        recent_weeks, min_live_days, second_drop_date, created_by, data, created_at, updated_at, refreshed_at
+      ) VALUES (?, ?, 'Draft', ?, ?, ?, ?, ?, ?, ?, NULLIF(?,''), ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name, seasons_json=excluded.seasons_json,
+        start_date=excluded.start_date, end_date=excluded.end_date, recent_start_date=excluded.recent_start_date,
+        recent_end_date=excluded.recent_end_date, recent_weeks=excluded.recent_weeks,
+        min_live_days=excluded.min_live_days, second_drop_date=excluded.second_drop_date,
+        data=excluded.data, updated_at=CURRENT_TIMESTAMP, refreshed_at=CURRENT_TIMESTAMP
+    `).run(reviewId, name, JSON.stringify(seasons), range.startDate, range.endDate, recentRange.startDate,
+      recentRange.endDate, recentWeeks, minLiveDays, secondDropDate, actorName(req), JSON.stringify(reviewData));
+    for (const row of rows) upsertItem.run({
+      ...row, protectedRecentLaunch: row.protectedRecentLaunch ? 1 : 0,
+      warningsJson: JSON.stringify(row.warnings), reasonsJson: JSON.stringify(row.reasons),
+      variantsJson: JSON.stringify(row.variants), metricsJson: JSON.stringify(row.metrics), dataJson: JSON.stringify(row.data)
+    });
+    const liveKeys = new Set(rows.map(row => row.productKey));
+    for (const old of existingItems.values()) {
+      if (!liveKeys.has(old.productKey) && !old.sentAt) db.prepare("DELETE FROM sale_season_review_items WHERE id=?").run(old.id);
+    }
+  });
+  write();
+  sendJson(res, 200, { ok: true, ...readSaleSeasonReviews(reviewId) });
+}
+
+function refreshSaleSeasonItemRecommendation(item, review, liveAt) {
+  const product = { ...(item.data?.product || {}), liveAt };
+  const recommendation = seasonalSaleReview.reviewRecommendation(product, {
+    minLiveDays: review.minLiveDays, minGaViews: 30, asOf: new Date()
+  });
+  if ((item.data?.activePlanRefs || []).length && ["first_drop", "second_drop"].includes(recommendation.suggestedDecision)) {
+    recommendation.suggestedDecision = "hold";
+    recommendation.reasons.unshift(`Already present in active Sale Plan: ${item.data.activePlanRefs.map(ref => ref.planName).join(", ")}.`);
+  }
+  return { product, recommendation };
+}
+
+async function handleSaleSeasonReviewItemsUpdate(req, res) {
+  const body = await readJsonBody(req);
+  const reviewId = String(body.reviewId || "").trim();
+  const db = openOrderSqliteDb();
+  const review = saleSeasonReviewFromRow(db.prepare("SELECT * FROM sale_season_reviews WHERE id=?").get(reviewId));
+  if (!review) throw new Error("Seasonal sale review not found.");
+  const patches = Array.isArray(body.items) ? body.items : [body.item || body];
+  const update = db.prepare(`UPDATE sale_season_review_items SET
+    decision=@decision, note=@note, live_at=NULLIF(@liveAt,''), live_date_source=@liveDateSource,
+    active_days=@activeDays, candidate_score=@candidateScore, risk_score=@riskScore,
+    suggested_decision=@suggestedDecision, protected_recent_launch=@protectedRecentLaunch,
+    warnings_json=@warningsJson, reasons_json=@reasonsJson, metrics_json=@metricsJson,
+    data=@dataJson, updated_at=CURRENT_TIMESTAMP WHERE id=@id AND review_id=@reviewId`);
+  let updated = 0;
+  const write = db.transaction(() => {
+    for (const patch of patches) {
+      const current = saleSeasonReviewItemFromRow(db.prepare("SELECT * FROM sale_season_review_items WHERE id=? AND review_id=?").get(String(patch.id || ""), reviewId));
+      if (!current) continue;
+      let liveAt = current.liveAt;
+      let liveDateSource = current.liveDateSource;
+      if (Object.prototype.hasOwnProperty.call(patch, "liveAt")) {
+        const tracked = setManualProductLiveDate(current.shopifyProductId, patch.liveAt, req);
+        liveAt = tracked.liveAt;
+        liveDateSource = tracked.source;
+      }
+      const recalculated = refreshSaleSeasonItemRecommendation(current, review, liveAt);
+      const warnings = (current.warnings || []).filter(message => !/Live date is missing|Shopify publication date was missing/.test(String(message)));
+      const decision = patch.acceptSuggestion
+        ? recalculated.recommendation.suggestedDecision
+        : seasonalSaleReview.normalizeDecision(patch.decision ?? current.decision);
+      update.run({
+        id: current.id, reviewId, decision, note: String(patch.note ?? current.note ?? "").slice(0, 1000),
+        liveAt, liveDateSource, activeDays: recalculated.recommendation.activeDays,
+        candidateScore: recalculated.recommendation.candidateScore,
+        riskScore: recalculated.recommendation.markdown.riskScore,
+        suggestedDecision: recalculated.recommendation.suggestedDecision,
+        protectedRecentLaunch: recalculated.recommendation.protectedRecentLaunch ? 1 : 0,
+        warningsJson: JSON.stringify([...new Set(warnings)]), reasonsJson: JSON.stringify(recalculated.recommendation.reasons),
+        metricsJson: JSON.stringify({ ...(current.metrics || {}), gaSignalAvailable: recalculated.recommendation.gaSignalAvailable }),
+        dataJson: JSON.stringify({ ...(current.data || {}), product: recalculated.product,
+          decisionBy: actorName(req), decisionAt: new Date().toISOString() })
+      });
+      updated += 1;
+    }
+    db.prepare("UPDATE sale_season_reviews SET updated_at=CURRENT_TIMESTAMP WHERE id=?").run(reviewId);
+  });
+  write();
+  sendJson(res, 200, { ok: true, updated, ...readSaleSeasonReviews(reviewId) });
+}
+
+async function handleSaleSeasonReviewSendToPlan(req, res) {
+  const body = await readJsonBody(req);
+  const reviewId = String(body.reviewId || "").trim();
+  const drop = String(body.drop || "first_drop").trim();
+  if (!["first_drop", "second_drop"].includes(drop)) throw new Error("Choose the first or second sale drop.");
+  const db = openOrderSqliteDb();
+  const review = saleSeasonReviewFromRow(db.prepare("SELECT * FROM sale_season_reviews WHERE id=?").get(reviewId));
+  if (!review) throw new Error("Seasonal sale review not found.");
+  let candidates = readSaleSeasonReviewItems(reviewId).filter(item => item.decision === drop && (body.resend || !item.sentAt));
+  if (!candidates.length) throw new Error(`No unsent ${seasonalSaleReview.decisionLabel(drop).toLowerCase()} products are ready.`);
+  const requestedPlanId = String(body.planId || "").trim();
+  const skipped = [];
+  candidates = candidates.filter(item => {
+    const conflicts = (item.data?.activePlanRefs || []).filter(ref => !requestedPlanId || ref.planId !== requestedPlanId);
+    if (!conflicts.length || body.allowExistingPlan === true) return true;
+    skipped.push({ id: item.id, title: item.title, reason: `Already in ${conflicts.map(ref => ref.planName).join(", ")}.` });
+    return false;
+  });
+  if (!candidates.length) throw new Error("All selected products are already in another active Sale Plan.");
+  const dropLabel = drop === "first_drop" ? "First drop" : "Second drop";
+  const plan = ensureSalePlan({
+    planId: requestedPlanId, createNew: !requestedPlanId,
+    name: String(body.name || `${review.name} - ${dropLabel}`).slice(0, 160),
+    sourceType: "season_review", sourceLabel: `${review.name} - ${dropLabel}`
+  }, req);
+  const planData = { ...(plan.data || {}), seasonReviewId: review.id, saleDrop: drop,
+    reviewDate: drop === "second_drop" ? review.secondDropDate || plan.data?.reviewDate || "" : plan.data?.reviewDate || "" };
+  db.prepare("UPDATE sale_plans SET data=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(JSON.stringify(planData), plan.id);
+  const config = readSalePlannerConfig();
+  let collections = [];
+  let collectionWarning = "";
+  try {
+    const result = await fetchShopifyCollectionsForSalePlanner();
+    collections = result.collections || [];
+    if (!result.configured) collectionWarning = result.message || "";
+  } catch (error) {
+    collectionWarning = error.message || "Could not sync Shopify Sale collections.";
+  }
+  const imported = [];
+  for (const reviewItem of candidates) {
+    const sourceProduct = {
+      ...(reviewItem.data?.product || {}), id: reviewItem.shopifyProductId || reviewItem.productKey,
+      productKey: reviewItem.productKey, title: reviewItem.title, sku: reviewItem.sku,
+      productType: reviewItem.productType, season: reviewItem.season, imageUrl: reviewItem.imageUrl,
+      stock: reviewItem.stock, units: reviewItem.recentUnits, revenue: reviewItem.recentRevenue,
+      coverWks: reviewItem.coverWks, variants: reviewItem.variants, sourceType: "season_review",
+      sourceId: reviewItem.id, sourceLabel: `${review.name} - ${dropLabel}`,
+      sourceUrl: `seasonal-sale-review.html?id=${encodeURIComponent(review.id)}`,
+      metrics: {
+        seasonUnits: reviewItem.fullUnits, seasonRevenue: reviewItem.fullRevenue,
+        seasonGaViews: reviewItem.fullGaViews, seasonGaPurchases: reviewItem.fullGaPurchases,
+        seasonGaCvr: reviewItem.fullGaCvr, recentGaViews: reviewItem.recentGaViews,
+        recentGaPurchases: reviewItem.recentGaPurchases, recentGaCvr: reviewItem.recentGaCvr,
+        liveAt: reviewItem.liveAt, activeDays: reviewItem.activeDays, saleDrop: drop, seasonReviewId: review.id
+      }
+    };
+    const params = salePlanItemParams(plan, sourceProduct, collections, config);
+    const warnings = parseJson(params.warningsJson, []);
+    if (collectionWarning) warnings.push(collectionWarning);
+    if (reviewItem.protectedRecentLaunch) warnings.push(`Recent-launch override: live for ${reviewItem.activeDays ?? 0} days when assigned to ${dropLabel.toLowerCase()}.`);
+    params.warningsJson = JSON.stringify([...new Set(warnings)]);
+    const saleItem = upsertSalePlanItem(params, actorName(req));
+    imported.push(saleItem);
+    db.prepare(`UPDATE sale_season_review_items SET sale_plan_id=?, sale_plan_item_id=?,
+      sent_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(plan.id, saleItem.id, reviewItem.id);
+  }
+  recordSalePlanEvent(plan.id, "", "season_review_import", actorName(req),
+    `${imported.length} ${dropLabel.toLowerCase()} product${imported.length === 1 ? "" : "s"} imported from ${review.name}`,
+    { reviewId: review.id, drop, skipped, ...actorData(req) });
+  sendJson(res, 200, { ok: true,
+    plan: salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id=?").get(plan.id)),
+    imported: imported.length, skipped, ...readSaleSeasonReviews(reviewId) });
+}
+
 function readAppSettingJson(key, fallback) {
   const row = openOrderSqliteDb().prepare("SELECT value FROM app_settings WHERE key = ?").get(String(key));
   return parseJson(row?.value, fallback);
@@ -10373,7 +10951,8 @@ function salePlanItemParams(plan, product, collections, config, options = {}) {
       rationale: recommendation.rationale,
       existingMarkdownPercent: recommendation.existingMarkdownPercent,
       targetGpPct: saleItemTargetGpPct(variants),
-      forecastBuy: product.forecastBuy == null ? null : Number(product.forecastBuy || 0)
+      forecastBuy: product.forecastBuy == null ? null : Number(product.forecastBuy || 0),
+      sourceMetrics: product.metrics && typeof product.metrics === "object" ? product.metrics : {}
     }),
     data: JSON.stringify({
       sourceUrl: product.sourceUrl || "",
@@ -16136,6 +16715,46 @@ async function handleApi(req, res) {
       snapshots: readStockSnapshots(url),
       generatedAt: new Date().toISOString()
     });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/sale-season-reviews") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      sendJson(res, 200, readSaleSeasonReviews(url.searchParams.get("id") || ""));
+    } catch (error) {
+      sendJson(res, 500, { error: error.message || "Could not load seasonal sale reviews" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-season-reviews/build") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      await handleSaleSeasonReviewBuild(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not build the seasonal sale review" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-season-reviews/items/update") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      await handleSaleSeasonReviewItemsUpdate(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not update seasonal review items" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-season-reviews/send-to-plan") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      await handleSaleSeasonReviewSendToPlan(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not send the seasonal review to Sale Planner" });
+    }
     return true;
   }
 

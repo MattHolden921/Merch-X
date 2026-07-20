@@ -311,6 +311,34 @@
         ]]
       ]
     },
+    "seasonal-sale-review.html": {
+      title: "Seasonal sale review key",
+      intro: "Builds a complete season-level decision workspace before products enter the operational Sale Planner.",
+      sections: [
+        ["Scope and sources", [
+          ["Full period", "Shopify sales and GA4 item metrics across the complete selected seasonal review range."],
+          ["Recent window", "The latest selected number of weeks; this demand rate drives cover and the markdown recommendation."],
+          ["Current stock", "Live Shopify variant inventory at the time the review is rebuilt, not opening-season stock."],
+          ["Live date", "The earliest tracked Shopify published date, a manual correction, or first-seen-active date when Shopify has no publication timestamp."]
+        ]],
+        ["Decision signals", [
+          ["GA CVR", "GA4 item purchases divided by GA4 item views. Fewer than 30 views is labelled low signal rather than treated as failed conversion.", "GA CVR = GA purchases ÷ GA item views"],
+          ["Period sell-through proxy", "Selected-period net units divided by those units plus current stock; receipts and transfers are not available, so this is not true opening-stock sell-through."],
+          ["Recent-launch protection", "Products live for fewer than the review's minimum live days are suggested to Hold, even when stock or cover is high."],
+          ["Suggestion", "An explainable first drop, second drop, hold, exclude or needs-data prompt. It never replaces the buyer decision."]
+        ]],
+        ["Drops and handoff", [
+          ["Row selection", "The box beside a product image selects that row for the bulk decision buttons; selection alone does not change its buyer decision."],
+          ["In-stock only", "Hide zero stock removes products with no current positive Shopify inventory from the visible table and filtered totals. It does not change decisions or the whole-review tiles."],
+          ["First drop", "Products intended for the initial sale launch."],
+          ["Second drop", "Products retained for a later planned release date and handed to a separate Sale Plan."],
+          ["Not in a drop", "Products whose saved buyer decision is neither First Drop nor Second Drop, including Undecided, Hold, Carry Forward, Exclude, and Needs Data. The buyer-decision filter can isolate this complete group."],
+          ["Drop summary tiles", "First Drop, Second Drop, and Not in a Drop tiles cover the whole saved review and show product count, current stock units, and the stock-retail-weighted average suggested discount. Table filters do not change these tiles.", "average discount = total markdown investment ÷ stock retail at RRP"],
+          ["Buyer decision", "The saved operational classification. New and rebuilt rows remain Undecided until a buyer accepts or overrides a suggestion."],
+          ["Create Sale Plan", "Stages unsent products in a reviewed Sale Plan; it does not change Shopify prices, collections or product status."]
+        ]]
+      ]
+    },
     "sale-planner.html": {
       title: "Sale planner key",
       intro: "Plans markdown prices, checks live Shopify state and applies or removes sale state through a durable reviewed job.",
