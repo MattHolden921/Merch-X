@@ -4910,7 +4910,13 @@ function openOrderSqliteDb() {
       recent_end_date TEXT NOT NULL,
       recent_weeks INTEGER NOT NULL DEFAULT 4,
       min_live_days INTEGER NOT NULL DEFAULT 28,
+      first_drop_date TEXT,
       second_drop_date TEXT,
+      season_end_date TEXT,
+      target_remaining_pct REAL NOT NULL DEFAULT 10,
+      first_drop_uplift REAL NOT NULL DEFAULT 2,
+      second_drop_uplift REAL NOT NULL DEFAULT 3,
+      max_second_drop_share_pct REAL NOT NULL DEFAULT 25,
       created_by TEXT,
       data TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -5314,6 +5320,17 @@ function openOrderSqliteDb() {
     SET document_kind = 'credit_note'
     WHERE LOWER(COALESCE(invoice_type, '')) = 'credit note'
   `).run();
+  const saleSeasonReviewColumns = orderSqliteDb.prepare("PRAGMA table_info(sale_season_reviews)").all().map(column => column.name);
+  for (const [name, definition] of [
+    ["first_drop_date", "TEXT"],
+    ["season_end_date", "TEXT"],
+    ["target_remaining_pct", "REAL NOT NULL DEFAULT 10"],
+    ["first_drop_uplift", "REAL NOT NULL DEFAULT 2"],
+    ["second_drop_uplift", "REAL NOT NULL DEFAULT 3"],
+    ["max_second_drop_share_pct", "REAL NOT NULL DEFAULT 25"]
+  ]) {
+    if (!saleSeasonReviewColumns.includes(name)) orderSqliteDb.prepare(`ALTER TABLE sale_season_reviews ADD COLUMN ${name} ${definition}`).run();
+  }
   const pnlMarketingColumns = orderSqliteDb.prepare("PRAGMA table_info(pnl_marketing_spend)").all().map(column => column.name);
   if (!pnlMarketingColumns.includes("source")) {
     orderSqliteDb.prepare("ALTER TABLE pnl_marketing_spend ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'").run();
@@ -9979,12 +9996,25 @@ function setManualProductLiveDate(productId, value, req) {
 
 function saleSeasonReviewFromRow(row) {
   if (!row) return null;
+  const planning = seasonalSaleReview.forecastOptions({
+    firstDropDate: row.first_drop_date || row.end_date,
+    secondDropDate: row.second_drop_date,
+    seasonEndDate: row.season_end_date,
+    recentWeeks: row.recent_weeks,
+    targetRemainingPct: row.target_remaining_pct,
+    firstDropUplift: row.first_drop_uplift,
+    secondDropUplift: row.second_drop_uplift,
+    maxSecondDropSharePct: row.max_second_drop_share_pct
+  });
   return {
     id: row.id, name: row.name || "", status: row.status || "Draft",
     seasons: parseJson(row.seasons_json, []), startDate: row.start_date || "", endDate: row.end_date || "",
     recentStartDate: row.recent_start_date || "", recentEndDate: row.recent_end_date || "",
     recentWeeks: Number(row.recent_weeks || 4), minLiveDays: Number(row.min_live_days || 28),
-    secondDropDate: row.second_drop_date || "", createdBy: row.created_by || "",
+    firstDropDate: planning.firstDropDate, secondDropDate: planning.secondDropDate,
+    seasonEndDate: planning.seasonEndDate, targetRemainingPct: planning.targetRemainingPct,
+    firstDropUplift: planning.firstDropUplift, secondDropUplift: planning.secondDropUplift,
+    maxSecondDropSharePct: planning.maxSecondDropSharePct, createdBy: row.created_by || "",
     data: parseJson(row.data, {}), createdAt: row.created_at || "", updatedAt: row.updated_at || "",
     refreshedAt: row.refreshed_at || ""
   };
@@ -10036,7 +10066,8 @@ function saleSeasonReviewOptions() {
   const range = db.prepare(`SELECT MIN(start_date) min_start_date, MAX(end_date) max_end_date
     FROM report_periods WHERE report_type='bestsellers' AND status='ready'`).get();
   return { seasons, savedRange: { startDate: range?.min_start_date || "", endDate: range?.max_end_date || "" },
-    defaults: { recentWeeks: 4, minLiveDays: 28, minGaViews: 30 } };
+    defaults: { recentWeeks: 4, minLiveDays: 28, minGaViews: 30, targetRemainingPct: 10,
+      firstDropUplift: 2, secondDropUplift: 3, maxSecondDropSharePct: 25 } };
 }
 
 function readSaleSeasonReviews(selectedId = "") {
@@ -10117,8 +10148,26 @@ async function handleSaleSeasonReviewBuild(req, res) {
   const db = openOrderSqliteDb();
   const existingReview = saleSeasonReviewFromRow(db.prepare("SELECT * FROM sale_season_reviews WHERE id = ?").get(reviewId));
   const existingItems = new Map(readSaleSeasonReviewItems(reviewId).map(item => [item.productKey, item]));
-  const secondDropDate = body.secondDropDate ? dateOnlyFromIso(body.secondDropDate) : existingReview?.secondDropDate || "";
-  if (body.secondDropDate && !secondDropDate) throw new Error("Choose a valid second drop date.");
+  for (const [value, label] of [[body.firstDropDate, "first drop"], [body.secondDropDate, "second drop"], [body.seasonEndDate, "season end"]]) {
+    if (value && !dateOnlyFromIso(value)) throw new Error(`Choose a valid ${label} date.`);
+  }
+  const firstDropDate = dateOnlyFromIso(body.firstDropDate || existingReview?.firstDropDate || range.endDate);
+  const secondDropDate = dateOnlyFromIso(body.secondDropDate || existingReview?.secondDropDate
+    || seasonalSaleReview.forecastOptions({ firstDropDate }).secondDropDate);
+  const seasonEndDate = dateOnlyFromIso(body.seasonEndDate || existingReview?.seasonEndDate
+    || seasonalSaleReview.forecastOptions({ firstDropDate, secondDropDate }).seasonEndDate);
+  if (secondDropDate < firstDropDate) throw new Error("Second Drop must be on or after First Drop.");
+  if (seasonEndDate < secondDropDate) throw new Error("Season end must be on or after Second Drop.");
+  const bounded = (value, fallback, min, max) => {
+    const parsed = Number(value);
+    return Math.min(max, Math.max(min, Number.isFinite(parsed) ? parsed : fallback));
+  };
+  const targetRemainingPct = bounded(body.targetRemainingPct, existingReview?.targetRemainingPct ?? 10, 0, 100);
+  const firstDropUplift = bounded(body.firstDropUplift, existingReview?.firstDropUplift ?? 2, 1, 10);
+  const secondDropUplift = bounded(body.secondDropUplift, existingReview?.secondDropUplift ?? 3, 1, 10);
+  const maxSecondDropSharePct = bounded(body.maxSecondDropSharePct, existingReview?.maxSecondDropSharePct ?? 25, 0, 100);
+  const forecastPlan = { firstDropDate, secondDropDate, seasonEndDate, recentWeeks,
+    targetRemainingPct, firstDropUplift, secondDropUplift, maxSecondDropSharePct };
 
   const fullResult = await fetchShopifyBestsellersProducts(range);
   if (!fullResult.configured) throw new Error(fullResult.message || "Shopify is not configured.");
@@ -10147,7 +10196,7 @@ async function handleSaleSeasonReviewBuild(req, res) {
       gaViews: Number(recent.gaViews || 0), gaPurchases: Number(recent.gaPurchases || 0)
     };
     const recommendation = seasonalSaleReview.reviewRecommendation(decisionProduct, {
-      minLiveDays, minGaViews: 30, asOf: new Date()
+      minLiveDays, minGaViews: 30, asOf: new Date(), ...forecastPlan
     });
     if (activeRefs.length && ["first_drop", "second_drop"].includes(recommendation.suggestedDecision)) {
       recommendation.suggestedDecision = "hold";
@@ -10185,12 +10234,15 @@ async function handleSaleSeasonReviewBuild(req, res) {
       metrics: {
         fullRange: range, recentRange, targetPrice: recommendation.markdown.targetPrice,
         discountPercent: recommendation.markdown.discountPercent, markdownRationale: recommendation.markdown.rationale,
-        gaSignalAvailable: recommendation.gaSignalAvailable
+        gaSignalAvailable: recommendation.gaSignalAvailable, forecast: recommendation.forecast
       },
       data: { product: decisionProduct, activePlanRefs: activeRefs, liveDate: trackedLive, sourceType: "season_review" },
       salePlanId: previous?.salePlanId || "", salePlanItemId: previous?.salePlanItemId || "", sentAt: previous?.sentAt || ""
     });
   }
+
+  const allocatedRows = seasonalSaleReview.allocateDropPortfolio(rows, forecastPlan);
+  rows.splice(0, rows.length, ...allocatedRows);
 
   const name = String(body.name || existingReview?.name || `${seasons.join(" + ")} sale review`).trim().slice(0, 160);
   const reviewData = {
@@ -10198,7 +10250,8 @@ async function handleSaleSeasonReviewBuild(req, res) {
     recentGaAvailable: Boolean(recentResult.gaAvailable), recentGaMessage: recentResult.gaMessage || "",
     fullDataQuality: fullResult.dataQuality || {}, recentDataQuality: recentResult.dataQuality || {},
     missingSeasonProducts: (fullResult.products || []).filter(product => !String(product.season || "").trim()).length,
-    productSnapshotAt: new Date().toISOString()
+    productSnapshotAt: new Date().toISOString(), forecastPlan,
+    suggestedAllocation: seasonalSaleReview.reviewSummary(rows).suggestedAllocation
   };
   const upsertItem = db.prepare(`
     INSERT INTO sale_season_review_items (
@@ -10239,15 +10292,22 @@ async function handleSaleSeasonReviewBuild(req, res) {
     db.prepare(`
       INSERT INTO sale_season_reviews (
         id, name, status, seasons_json, start_date, end_date, recent_start_date, recent_end_date,
-        recent_weeks, min_live_days, second_drop_date, created_by, data, created_at, updated_at, refreshed_at
-      ) VALUES (?, ?, 'Draft', ?, ?, ?, ?, ?, ?, ?, NULLIF(?,''), ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        recent_weeks, min_live_days, first_drop_date, second_drop_date, season_end_date,
+        target_remaining_pct, first_drop_uplift, second_drop_uplift, max_second_drop_share_pct,
+        created_by, data, created_at, updated_at, refreshed_at
+      ) VALUES (?, ?, 'Draft', ?, ?, ?, ?, ?, ?, ?, NULLIF(?,''), NULLIF(?,''), NULLIF(?,''), ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET name=excluded.name, seasons_json=excluded.seasons_json,
         start_date=excluded.start_date, end_date=excluded.end_date, recent_start_date=excluded.recent_start_date,
         recent_end_date=excluded.recent_end_date, recent_weeks=excluded.recent_weeks,
-        min_live_days=excluded.min_live_days, second_drop_date=excluded.second_drop_date,
+        min_live_days=excluded.min_live_days, first_drop_date=excluded.first_drop_date,
+        second_drop_date=excluded.second_drop_date, season_end_date=excluded.season_end_date,
+        target_remaining_pct=excluded.target_remaining_pct, first_drop_uplift=excluded.first_drop_uplift,
+        second_drop_uplift=excluded.second_drop_uplift, max_second_drop_share_pct=excluded.max_second_drop_share_pct,
         data=excluded.data, updated_at=CURRENT_TIMESTAMP, refreshed_at=CURRENT_TIMESTAMP
     `).run(reviewId, name, JSON.stringify(seasons), range.startDate, range.endDate, recentRange.startDate,
-      recentRange.endDate, recentWeeks, minLiveDays, secondDropDate, actorName(req), JSON.stringify(reviewData));
+      recentRange.endDate, recentWeeks, minLiveDays, firstDropDate, secondDropDate, seasonEndDate,
+      targetRemainingPct, firstDropUplift, secondDropUplift, maxSecondDropSharePct,
+      actorName(req), JSON.stringify(reviewData));
     for (const row of rows) upsertItem.run({
       ...row, protectedRecentLaunch: row.protectedRecentLaunch ? 1 : 0,
       warningsJson: JSON.stringify(row.warnings), reasonsJson: JSON.stringify(row.reasons),
@@ -10265,7 +10325,11 @@ async function handleSaleSeasonReviewBuild(req, res) {
 function refreshSaleSeasonItemRecommendation(item, review, liveAt) {
   const product = { ...(item.data?.product || {}), liveAt };
   const recommendation = seasonalSaleReview.reviewRecommendation(product, {
-    minLiveDays: review.minLiveDays, minGaViews: 30, asOf: new Date()
+    minLiveDays: review.minLiveDays, minGaViews: 30, asOf: new Date(),
+    firstDropDate: review.firstDropDate, secondDropDate: review.secondDropDate,
+    seasonEndDate: review.seasonEndDate, recentWeeks: review.recentWeeks,
+    targetRemainingPct: review.targetRemainingPct, firstDropUplift: review.firstDropUplift,
+    secondDropUplift: review.secondDropUplift, maxSecondDropSharePct: review.maxSecondDropSharePct
   });
   if ((item.data?.activePlanRefs || []).length && ["first_drop", "second_drop"].includes(recommendation.suggestedDecision)) {
     recommendation.suggestedDecision = "hold";
@@ -10312,7 +10376,11 @@ async function handleSaleSeasonReviewItemsUpdate(req, res) {
         suggestedDecision: recalculated.recommendation.suggestedDecision,
         protectedRecentLaunch: recalculated.recommendation.protectedRecentLaunch ? 1 : 0,
         warningsJson: JSON.stringify([...new Set(warnings)]), reasonsJson: JSON.stringify(recalculated.recommendation.reasons),
-        metricsJson: JSON.stringify({ ...(current.metrics || {}), gaSignalAvailable: recalculated.recommendation.gaSignalAvailable }),
+        metricsJson: JSON.stringify({ ...(current.metrics || {}), gaSignalAvailable: recalculated.recommendation.gaSignalAvailable,
+          targetPrice: recalculated.recommendation.markdown.targetPrice,
+          discountPercent: recalculated.recommendation.markdown.discountPercent,
+          markdownRationale: recalculated.recommendation.markdown.rationale,
+          forecast: recalculated.recommendation.forecast }),
         dataJson: JSON.stringify({ ...(current.data || {}), product: recalculated.product,
           decisionBy: actorName(req), decisionAt: new Date().toISOString() })
       });

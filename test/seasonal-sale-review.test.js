@@ -3,6 +3,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  allocateDropPortfolio,
+  clearanceForecast,
   gaConversion,
   normalizeDecision,
   reviewRecommendation,
@@ -46,7 +48,7 @@ test("protects recent live products from automatic sale selection", () => {
   assert.match(result.reasons[0], /recent launch/i);
 });
 
-test("uses first and second drop bands after live-date protection", () => {
+test("uses forecasted first and second drops after live-date protection", () => {
   const first = reviewRecommendation(product(), { asOf: "2026-07-20T12:00:00Z" });
   assert.equal(first.suggestedDecision, "first_drop");
 
@@ -54,6 +56,55 @@ test("uses first and second drop bands after live-date protection", () => {
     asOf: "2026-07-20T12:00:00Z"
   });
   assert.equal(second.suggestedDecision, "second_drop");
+});
+
+test("forecasts drops from season-end clearance rather than fixed score bands", () => {
+  const options = {
+    asOf: "2026-07-20T12:00:00Z",
+    firstDropDate: "2026-07-27",
+    secondDropDate: "2026-08-10",
+    seasonEndDate: "2026-09-30",
+    recentWeeks: 4,
+    targetRemainingPct: 10,
+    firstDropUplift: 2,
+    secondDropUplift: 3
+  };
+  const zeroSeller = reviewRecommendation(product({ stock: 20, units: 0, gaViews: 10 }), options);
+  assert.equal(zeroSeller.suggestedDecision, "first_drop");
+  assert.equal(zeroSeller.forecast.noRecentSales, true);
+  assert.equal(zeroSeller.forecast.firstDropProjectedEndStock, 20);
+
+  const safeToWait = reviewRecommendation(product({ stock: 20, units: 4, gaViews: 10 }), options);
+  assert.equal(safeToWait.suggestedDecision, "second_drop");
+  assert.equal(safeToWait.forecast.canWaitForSecondDrop, true);
+
+  const clearsAtFullPrice = reviewRecommendation(product({ stock: 5, units: 8, gaViews: 10 }), options);
+  assert.equal(clearsAtFullPrice.suggestedDecision, "hold");
+  assert.equal(clearsAtFullPrice.forecast.canClearAtFullPrice, true);
+});
+
+test("portfolio allocation caps second drop stock value and promotes the least safe rows", () => {
+  const baseForecast = { targetEndStock: 2, secondDropProjectedEndStock: 1 };
+  const rows = [
+    { id: "first", suggestedDecision: "first_drop", stock: 10, stockRetailValue: 600, reasons: [], metrics: { forecast: baseForecast } },
+    { id: "safe", suggestedDecision: "second_drop", stock: 5, stockRetailValue: 200, candidateScore: 10, reasons: [], metrics: { forecast: { targetEndStock: 2, secondDropProjectedEndStock: 0 } } },
+    { id: "borderline", suggestedDecision: "second_drop", stock: 5, stockRetailValue: 200, candidateScore: 30, reasons: [], metrics: { forecast: { targetEndStock: 2, secondDropProjectedEndStock: 1.9 } } }
+  ];
+  const allocated = allocateDropPortfolio(rows, { maxSecondDropSharePct: 25 });
+  assert.equal(allocated.find(row => row.id === "safe").suggestedDecision, "second_drop");
+  assert.equal(allocated.find(row => row.id === "borderline").suggestedDecision, "first_drop");
+  assert.equal(allocated.find(row => row.id === "borderline").metrics.forecast.promotedByPortfolio, true);
+});
+
+test("clearance forecast exposes run rate, scenarios, and target stock", () => {
+  const forecast = clearanceForecast(product({ stock: 40, units: 4 }), {
+    firstDropDate: "2026-07-27", secondDropDate: "2026-08-10", seasonEndDate: "2026-09-07",
+    recentWeeks: 4, targetRemainingPct: 10, firstDropUplift: 2, secondDropUplift: 3
+  });
+  assert.equal(forecast.weeklyRunRate, 1);
+  assert.equal(forecast.targetEndStock, 4);
+  assert.ok(forecast.firstDropProjectedEndStock < forecast.secondDropProjectedEndStock);
+  assert.ok(forecast.secondDropProjectedEndStock < forecast.fullPriceProjectedEndStock);
 });
 
 test("strong GA CVR protects price while low GA CVR increases candidate urgency", () => {

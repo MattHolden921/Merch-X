@@ -317,7 +317,7 @@
       sections: [
         ["Scope and sources", [
           ["Full period", "Shopify sales and GA4 item metrics across the complete selected seasonal review range."],
-          ["Recent window", "The latest selected number of weeks; this demand rate drives cover and the markdown recommendation."],
+          ["Recent window", "The latest selected number of weeks; net units divided by these weeks is the baseline weekly run rate for clearance forecasts and markdown guidance."],
           ["Current stock", "Live Shopify variant inventory at the time the review is rebuilt, not opening-season stock."],
           ["Live date", "The earliest tracked Shopify published date, a manual correction, or first-seen-active date when Shopify has no publication timestamp."]
         ]],
@@ -325,7 +325,16 @@
           ["GA CVR", "GA4 item purchases divided by GA4 item views. Fewer than 30 views is labelled low signal rather than treated as failed conversion.", "GA CVR = GA purchases ÷ GA item views"],
           ["Period sell-through proxy", "Selected-period net units divided by those units plus current stock; receipts and transfers are not available, so this is not true opening-stock sell-through."],
           ["Recent-launch protection", "Products live for fewer than the review's minimum live days are suggested to Hold, even when stock or cover is high."],
-          ["Suggestion", "An explainable first drop, second drop, hold, exclude or needs-data prompt. It never replaces the buyer decision."]
+          ["Suggestion", "An explainable forecast-led First Drop, Second Drop, Hold, Exclude or Needs Data prompt. It never replaces the buyer decision."]
+        ]],
+        ["Clearance forecast", [
+          ["Planning dates", "First Drop starts the initial uplift period, Second Drop starts the later/deeper uplift period, and Season end is the point where remaining stock is compared with the target."],
+          ["Run rate", "Recent net units divided by recent weeks. A stocked product with no recent sales has a zero run rate and cannot be cleared by multiplying demand; it becomes an early-action risk.", "weekly run rate = recent net units ÷ recent weeks"],
+          ["Target stock left", "The acceptable share of current stock remaining at season end; 10% means planning to clear 90% of today's units."],
+          ["Uplift assumptions", "Editable multipliers applied to baseline run rate after each drop. They are scenarios, not guaranteed demand."],
+          ["Drop allocation", "Hold when full-price run rate reaches target; Second Drop only when waiting still reaches target; otherwise First Drop. Rows that still miss target after First Drop are explicitly flagged."],
+          ["Second Drop cap", "Keeps only the safest later candidates within the configured share of planned stock at RRP; excess candidates move to First Drop. The default cap is 25%."],
+          ["Forecast outcome filter", "Filters the visible table to products that meet target, miss target, or recorded no recent sales. It does not change saved decisions."]
         ]],
         ["Drops and handoff", [
           ["Row selection", "The box beside a product image selects that row for the bulk decision buttons; selection alone does not change its buyer decision."],
