@@ -104,7 +104,7 @@
     "merchandising.html": { existing: true },
     "new-in-performance.html": {
       title: "New In performance key",
-      intro: "A read-only launch and image-refresh view combining Shopify trading data with GA4 engagement when available.",
+      intro: "A launch and image-refresh view combining Shopify trading data with GA4 engagement, plus a controlled New Arrivals cleanup for Admin users.",
       sections: [
         ["Cohorts", [
           ["New launch", "Uses Shopify published date, falling back to created date only for active products without a publish timestamp."],
@@ -122,7 +122,10 @@
           ["Push / Needs exposure", "Advisory opportunities to feature a product or increase its visibility. GA-derived exposure calls require usable GA4 data."],
           ["Image test / Content check", "Signals that imagery or product-page content may need review."],
           ["Stock watch / Sold out", "Availability risk that can limit the value of additional exposure."],
-          ["Watch", "No stronger advisory action currently applies; no external change is made automatically."]
+          ["Watch", "No stronger advisory action currently applies; no external change is made automatically."],
+          ["New Arrivals cleanup", "Opens from the top action bar and previews products carrying the exact Collection: New Arrivals tag whose Shopify live date is before the chosen cutoff. Drafts and missing live dates are excluded."],
+          ["Remove tag", "Admin-only. Removes only the exact New Arrivals tag; products stay live and every other tag is preserved. Type REMOVE N in the inline confirmation field; an incorrect value shows an error and makes no Shopify change."],
+          ["Progress and verification", "The cleanup reports each Shopify batch, then verifies the exact tag is absent from every selected product. Progress, errors and verified completion are recorded in the audit history."]
         ]]
       ]
     },

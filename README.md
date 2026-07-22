@@ -63,6 +63,8 @@ Order handoff emails are sent immediately. Weekly Action handoffs, owner changes
 
 The Email Merchandiser uses the existing Shopify and GA4 connections. To create Klaviyo drafts, configure `KLAVIYO_PRIVATE_API_KEY`, `KLAVIYO_DEFAULT_AUDIENCE_ID`, and `STOREFRONT_URL`. Optionally set `KLAVIYO_BASE_TEMPLATE_ID` or `KLAVIYO_BASE_TEMPLATE_PATH`; custom templates must include `{{MERCH_X_PRODUCTS}}`. Merch X creates drafts only and never schedules or sends campaigns.
 
+New In performance can preview ageing products carrying the exact `Collection: New Arrivals` tag and remove only that tag so Shopify drops them from the collection. Products stay live and all other tags are preserved. The preview uses the `new-arrivals` collection handle by default; set `NEW_ARRIVALS_COLLECTION_HANDLE` or the exact `NEW_ARRIVALS_COLLECTION_ID` when the store uses a different collection.
+
 ## P&L marketing spend sync
 
 The P&L planner can sync Google Ads and Meta Ads spend from Windsor.ai. Configure:

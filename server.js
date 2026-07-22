@@ -23,6 +23,7 @@ const seasonalSaleReview = require("./lib/seasonal-sale-review");
 const windsorMarketing = require("./lib/windsor-marketing");
 const bestsellers = require("./lib/bestsellers");
 const shopifyProductSync = require("./lib/shopify-product-sync");
+const newArrivalsCleanup = require("./lib/new-arrivals-cleanup");
 
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
@@ -4669,6 +4670,28 @@ function openOrderSqliteDb() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS new_arrivals_cleanup_audit (
+      id TEXT PRIMARY KEY,
+      collection_gid TEXT NOT NULL,
+      collection_title TEXT NOT NULL,
+      collection_handle TEXT,
+      cutoff_date TEXT NOT NULL,
+      older_than_days INTEGER NOT NULL,
+      total_candidates INTEGER NOT NULL DEFAULT 0,
+      removed_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL,
+      actor_name TEXT,
+      actor_user_id TEXT,
+      actor_email TEXT,
+      preview_hash TEXT,
+      product_ids_json TEXT,
+      products_json TEXT,
+      error TEXT,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS report_sources (
       id TEXT PRIMARY KEY,
       report_type TEXT NOT NULL,
@@ -5233,6 +5256,7 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at);
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_audit_applied ON collection_reorder_audit(applied_at);
     CREATE INDEX IF NOT EXISTS idx_collection_reorder_jobs_status ON collection_reorder_jobs(status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_new_arrivals_cleanup_started ON new_arrivals_cleanup_audit(started_at);
     CREATE INDEX IF NOT EXISTS idx_issued_skus_issued_at ON issued_skus(issued_at);
     CREATE INDEX IF NOT EXISTS idx_order_events_order_created ON order_events(order_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_order_invoices_order ON order_invoices(order_id, updated_at);
@@ -5425,6 +5449,13 @@ function openOrderSqliteDb() {
     INSERT OR IGNORE INTO app_settings (key, value, updated_at)
     VALUES ('salePlannerCollections', ?, CURRENT_TIMESTAMP)
   `).run(JSON.stringify({ rootSaleCollectionId: "", childCollectionByType: {} }));
+  orderSqliteDb.prepare(`
+    UPDATE new_arrivals_cleanup_audit
+    SET status = 'error',
+        error = CASE WHEN COALESCE(error, '') = '' THEN 'The server restarted before this cleanup finished.' ELSE error END,
+        finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP)
+    WHERE status IN ('queued', 'running', 'verifying')
+  `).run();
   syncAllBatchPaymentStatusesFromInvoices();
   return orderSqliteDb;
 }
@@ -12509,6 +12540,151 @@ async function submitCollectionRemoveProducts(collectionId, productIds) {
   return payload.job || null;
 }
 
+async function resolveNewArrivalsCollectionId() {
+  const configuredId = String(process.env.NEW_ARRIVALS_COLLECTION_ID || "").trim();
+  if (configuredId) return configuredId;
+  const handle = String(process.env.NEW_ARRIVALS_COLLECTION_HANDLE || "new-arrivals").trim();
+  const title = String(process.env.NEW_ARRIVALS_COLLECTION_TITLE || "New Arrivals").trim();
+  if (handle) {
+    const data = await shopifyGraphql(`
+      query NewArrivalsCollectionByHandle($handle: String!) {
+        collectionByHandle(handle: $handle) { id title handle }
+      }
+    `, { handle });
+    if (data.collectionByHandle?.id) return data.collectionByHandle.id;
+  }
+  const data = await shopifyGraphql(`
+    query NewArrivalsCollectionSearch($query: String!) {
+      collections(first: 25, query: $query) { nodes { id title handle } }
+    }
+  `, { query: `title:'${title.replace(/'/g, "\\'")}'` });
+  const exact = (data.collections?.nodes || []).find(collection => String(collection.title || "").trim().toLowerCase() === title.toLowerCase());
+  return exact?.id || "";
+}
+
+async function fetchNewArrivalsCollectionProducts() {
+  const collectionId = await resolveNewArrivalsCollectionId();
+  if (!collectionId) {
+    throw new Error("The New Arrivals collection was not found. Set NEW_ARRIVALS_COLLECTION_ID or NEW_ARRIVALS_COLLECTION_HANDLE if its Shopify handle is not new-arrivals.");
+  }
+  const query = `
+    query NewArrivalsCleanupCollection($id: ID!, $cursor: String) {
+      collection(id: $id) {
+        id
+        title
+        handle
+        updatedAt
+        productsCount { count precision }
+        products(first: 250, after: $cursor) {
+          nodes {
+            id
+            title
+            handle
+            status
+            tags
+            createdAt
+            publishedAt
+            featuredImage { url altText }
+            variants(first: 100) { nodes { sku } }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  `;
+  let collection = null;
+  let cursor = null;
+  let hasNextPage = true;
+  const products = [];
+  while (hasNextPage) {
+    const data = await shopifyGraphql(query, { id: collectionId, cursor });
+    if (!data.collection) throw new Error("The configured New Arrivals collection no longer exists in Shopify.");
+    collection = data.collection;
+    products.push(...(data.collection.products?.nodes || []).map(product => ({
+      id: product.id,
+      title: product.title || "Untitled product",
+      handle: product.handle || "",
+      status: product.status || "",
+      tags: product.tags || [],
+      createdAt: product.createdAt || "",
+      publishedAt: product.publishedAt || "",
+      imageUrl: product.featuredImage?.url || "",
+      imageAlt: product.featuredImage?.altText || product.title || "",
+      skus: (product.variants?.nodes || []).map(variant => variant.sku).filter(Boolean)
+    })));
+    hasNextPage = Boolean(data.collection.products?.pageInfo?.hasNextPage);
+    cursor = data.collection.products?.pageInfo?.endCursor || null;
+  }
+  return {
+    collection: {
+      id: collection.id,
+      title: collection.title || "New Arrivals",
+      handle: collection.handle || "",
+      updatedAt: collection.updatedAt || "",
+      productsCount: Number(collection.productsCount?.count || products.length),
+      productsCountPrecision: collection.productsCount?.precision || ""
+    },
+    products
+  };
+}
+
+async function submitProductTagRemoval(productIds, tag, onProgress) {
+  const ids = uniqueIds(productIds);
+  for (let index = 0; index < ids.length; index += 25) {
+    const batch = ids.slice(index, index + 25);
+    const idVariables = batch.map((id, batchIndex) => `$id${batchIndex}: ID!`).join(", ");
+    const fields = batch.map((id, batchIndex) => `
+      remove${batchIndex}: tagsRemove(id: $id${batchIndex}, tags: $tags) {
+        node { id }
+        userErrors { field message }
+      }
+    `).join("\n");
+    const variables = { tags: [tag] };
+    batch.forEach((id, batchIndex) => { variables[`id${batchIndex}`] = id; });
+    const data = await shopifyGraphql(`
+      mutation NewArrivalsTagRemoval($tags: [String!]!, ${idVariables}) {
+        ${fields}
+      }
+    `, variables);
+    const errors = [];
+    batch.forEach((id, batchIndex) => {
+      const payload = data[`remove${batchIndex}`];
+      if (!payload) {
+        errors.push(`Shopify did not return a tag-removal result for ${id}.`);
+        return;
+      }
+      for (const error of payload.userErrors || []) errors.push(error.message || `Could not remove the tag from ${id}.`);
+    });
+    if (errors.length) throw new Error(errors.join("; "));
+    if (onProgress) {
+      await onProgress({
+        processedItems: index + batch.length,
+        totalItems: ids.length,
+        batchSize: batch.length,
+        batchesCompleted: Math.floor(index / 25) + 1,
+        totalBatches: Math.ceil(ids.length / 25)
+      });
+    }
+  }
+}
+
+async function fetchProductTagsByIds(productIds) {
+  const result = new Map();
+  const ids = uniqueIds(productIds);
+  for (let index = 0; index < ids.length; index += 250) {
+    const batch = ids.slice(index, index + 250);
+    const data = await shopifyGraphql(`
+      query NewArrivalsTagVerification($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on Product { id tags }
+        }
+      }
+    `, { ids: batch });
+    for (const product of data.nodes || []) if (product?.id) result.set(product.id, product.tags || []);
+  }
+  return result;
+}
+
 async function submitProductStatusMetafield(productId, value) {
   if (!productId) return null;
   const data = await shopifyGraphql(`
@@ -15164,6 +15340,194 @@ async function fetchNewInPerformance(req, res) {
   }
 }
 
+function newArrivalsCleanupDays(value) {
+  const parsed = Number(value || 60);
+  return Number.isFinite(parsed) ? Math.max(7, Math.min(365, Math.floor(parsed))) : 60;
+}
+
+function publicNewArrivalsCleanupProduct(product) {
+  return {
+    id: product.id,
+    title: product.title || "Untitled product",
+    handle: product.handle || "",
+    status: product.status || "",
+    liveDate: product.liveDate || "",
+    publishedAt: product.publishedAt || "",
+    createdAt: product.createdAt || "",
+    imageUrl: product.imageUrl || "",
+    imageAlt: product.imageAlt || product.title || "",
+    skus: product.skus || []
+  };
+}
+
+async function fetchNewArrivalsCleanup(req, res) {
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  if (!shop || !clientId || !clientSecret) {
+    sendJson(res, 200, { configured: false, message: "Set Shopify credentials to preview New Arrivals cleanup." });
+    return;
+  }
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const olderThanDays = newArrivalsCleanupDays(url.searchParams.get("olderThanDays"));
+  const cutoffDate = newArrivalsCleanup.cutoffDate(olderThanDays);
+  const snapshot = await fetchNewArrivalsCollectionProducts();
+  const tag = orderLineLiveNewArrivalsTag;
+  const taggedProducts = snapshot.products.filter(product => newArrivalsCleanup.hasExactTag(product.tags, tag));
+  const candidates = newArrivalsCleanup.cleanupCandidates(taggedProducts, cutoffDate, tag);
+  sendJson(res, 200, {
+    configured: true,
+    syncedAt: new Date().toISOString(),
+    collection: snapshot.collection,
+    olderThanDays,
+    cutoffDate,
+    tag,
+    taggedCount: taggedProducts.length,
+    candidates: candidates.map(publicNewArrivalsCleanupProduct),
+    candidateCount: candidates.length,
+    excludedWithoutLiveDate: taggedProducts.filter(product => !newArrivalsCleanup.liveDate(product)).length,
+    previewHash: newArrivalsCleanup.previewHash(snapshot.collection.id, cutoffDate, candidates),
+    canRemove: userHasRole(req.currentUser, ["Admin"])
+  });
+}
+
+function publicNewArrivalsCleanupJob(row) {
+  if (!row) return null;
+  const productIds = parseJson(row.product_ids_json, []);
+  const totalItems = Array.isArray(productIds) ? productIds.length : 0;
+  const processedItems = Math.min(totalItems, Math.max(0, Number(row.removed_count || 0)));
+  const status = String(row.status || "error");
+  let message = "Preparing the cleanup...";
+  if (status === "running") message = `Removing the tag from ${processedItems.toLocaleString("en-GB")} of ${totalItems.toLocaleString("en-GB")} products...`;
+  if (status === "verifying") message = `Tag removal finished. Verifying all ${totalItems.toLocaleString("en-GB")} selected products in Shopify...`;
+  if (status === "verified") message = `Removed and verified the tag on ${totalItems.toLocaleString("en-GB")} product${totalItems === 1 ? "" : "s"}.`;
+  if (status === "error") message = row.error || "The New Arrivals cleanup failed.";
+  return {
+    id: row.id,
+    status,
+    message,
+    processedItems,
+    totalItems,
+    progressPercent: totalItems ? Math.round((processedItems / totalItems) * 100) : 0,
+    cutoffDate: row.cutoff_date,
+    olderThanDays: Number(row.older_than_days || 0),
+    collectionTitle: row.collection_title || "New Arrivals",
+    tag: orderLineLiveNewArrivalsTag,
+    startedAt: row.started_at || "",
+    finishedAt: row.finished_at || "",
+    error: row.error || ""
+  };
+}
+
+function readNewArrivalsCleanupJob(id) {
+  if (!id) return null;
+  return openOrderSqliteDb().prepare("SELECT * FROM new_arrivals_cleanup_audit WHERE id = ?").get(id);
+}
+
+async function fetchNewArrivalsCleanupJob(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const job = publicNewArrivalsCleanupJob(readNewArrivalsCleanupJob(String(url.searchParams.get("id") || "").trim()));
+  if (!job) {
+    sendJson(res, 404, { message: "New Arrivals cleanup job not found." });
+    return;
+  }
+  sendJson(res, 200, { ok: true, job });
+}
+
+async function runNewArrivalsCleanupJob({ auditId, selectedProductIds, tag }) {
+  const db = openOrderSqliteDb();
+  try {
+    db.prepare("UPDATE new_arrivals_cleanup_audit SET status = 'running', removed_count = 0 WHERE id = ?").run(auditId);
+    await submitProductTagRemoval(selectedProductIds, tag, ({ processedItems }) => {
+      db.prepare("UPDATE new_arrivals_cleanup_audit SET removed_count = ? WHERE id = ?").run(processedItems, auditId);
+    });
+    db.prepare("UPDATE new_arrivals_cleanup_audit SET status = 'verifying' WHERE id = ?").run(auditId);
+    const verifiedTags = await fetchProductTagsByIds(selectedProductIds);
+    const missingProducts = selectedProductIds.filter(id => !verifiedTags.has(id));
+    if (missingProducts.length) throw new Error(`Shopify did not return ${missingProducts.length} selected product${missingProducts.length === 1 ? "" : "s"} during verification.`);
+    const notRemoved = selectedProductIds.filter(id => newArrivalsCleanup.hasExactTag(verifiedTags.get(id), tag));
+    if (notRemoved.length) throw new Error(`Shopify still reports the ${tag} tag on ${notRemoved.length} selected product${notRemoved.length === 1 ? "" : "s"} after the cleanup.`);
+    db.prepare(`
+      UPDATE new_arrivals_cleanup_audit
+      SET status = 'verified', removed_count = ?, finished_at = ?, error = ''
+      WHERE id = ?
+    `).run(selectedProductIds.length, new Date().toISOString(), auditId);
+  } catch (error) {
+    db.prepare(`
+      UPDATE new_arrivals_cleanup_audit
+      SET status = 'error', error = ?, finished_at = ?
+      WHERE id = ?
+    `).run(error.message || "New Arrivals cleanup failed.", new Date().toISOString(), auditId);
+  } finally {
+    collectionPlannerCache.collections = null;
+    collectionPlannerCache.collectionsAt = 0;
+  }
+}
+
+async function removeNewArrivalsCleanupProducts(req, res) {
+  const body = await readJsonBody(req);
+  const olderThanDays = newArrivalsCleanupDays(body.olderThanDays);
+  const selectedProductIds = uniqueIds((Array.isArray(body.productIds) ? body.productIds : []).map(String).filter(Boolean));
+  if (!selectedProductIds.length) {
+    sendJson(res, 400, { message: "Choose at least one older product whose New Arrivals tag should be removed." });
+    return;
+  }
+  if (String(body.confirmText || "").trim().toUpperCase() !== `REMOVE ${selectedProductIds.length}`) {
+    sendJson(res, 400, { message: `Type REMOVE ${selectedProductIds.length} to confirm this cleanup.` });
+    return;
+  }
+  const cutoffDate = newArrivalsCleanup.cutoffDate(olderThanDays);
+  const snapshot = await fetchNewArrivalsCollectionProducts();
+  const tag = orderLineLiveNewArrivalsTag;
+  const candidates = newArrivalsCleanup.cleanupCandidates(snapshot.products, cutoffDate, tag);
+  const currentHash = newArrivalsCleanup.previewHash(snapshot.collection.id, cutoffDate, candidates);
+  if (!body.previewHash || String(body.previewHash) !== currentHash) {
+    sendJson(res, 409, { message: "The live New Arrivals cleanup preview changed. Preview again before removing products." });
+    return;
+  }
+  const candidatesById = new Map(candidates.map(product => [product.id, product]));
+  const invalidIds = selectedProductIds.filter(id => !candidatesById.has(id));
+  if (invalidIds.length) {
+    sendJson(res, 409, { message: "One or more selected products are no longer eligible. Preview again before removing products." });
+    return;
+  }
+
+  const auditId = crypto.randomUUID();
+  const selectedProducts = selectedProductIds.map(id => candidatesById.get(id));
+  const db = openOrderSqliteDb();
+  const actor = actorData(req);
+  db.prepare(`
+    INSERT INTO new_arrivals_cleanup_audit (
+      id, collection_gid, collection_title, collection_handle, cutoff_date, older_than_days,
+      total_candidates, removed_count, status, actor_name, actor_user_id, actor_email,
+      preview_hash, product_ids_json, products_json, started_at
+    ) VALUES (
+      @id, @collectionId, @collectionTitle, @collectionHandle, @cutoffDate, @olderThanDays,
+      @totalCandidates, 0, 'queued', @actorName, @actorUserId, @actorEmail,
+      @previewHash, @productIdsJson, @productsJson, @startedAt
+    )
+  `).run({
+    id: auditId,
+    collectionId: snapshot.collection.id,
+    collectionTitle: snapshot.collection.title,
+    collectionHandle: snapshot.collection.handle,
+    cutoffDate,
+    olderThanDays,
+    totalCandidates: candidates.length,
+    actorName: actorName(req),
+    actorUserId: actor.actorUserId || null,
+    actorEmail: actor.actorEmail || null,
+    previewHash: currentHash,
+    productIdsJson: JSON.stringify(selectedProductIds),
+    productsJson: JSON.stringify(selectedProducts.map(publicNewArrivalsCleanupProduct)),
+    startedAt: new Date().toISOString()
+  });
+
+  const job = publicNewArrivalsCleanupJob(readNewArrivalsCleanupJob(auditId));
+  sendJson(res, 202, { ok: true, job });
+  setImmediate(() => {
+    runNewArrivalsCleanupJob({ auditId, selectedProductIds, tag }).catch(() => {});
+  });
+}
+
 const emailCampaignService = createEmailCampaignService({
   openDb: openOrderSqliteDb,
   requestJson,
@@ -17746,6 +18110,29 @@ const server = http.createServer(async (req, res) => {
   const requestPath = new URL(req.url, `http://${req.headers.host}`).pathname;
   if (requestPath === "/sku-register.html" && !requireRoles(req, res, skuRegisterRoles(), "You do not have access to the SKU register.")) return;
   if (requestPath === "/pnl.html" && !requireRoles(req, res, pnlViewRoles, "You do not have access to the P&L planner.")) return;
+
+  if (req.method === "GET" && requestPath === "/api/new-arrivals-cleanup/status") {
+    if (!requireRoles(req, res, ["Admin"], "Only an Admin can view New Arrivals cleanup progress.")) return;
+    fetchNewArrivalsCleanupJob(req, res).catch((error) => {
+      sendJson(res, 500, { message: error.message || "Could not load New Arrivals cleanup progress." });
+    });
+    return;
+  }
+
+  if (req.method === "GET" && requestPath === "/api/new-arrivals-cleanup") {
+    fetchNewArrivalsCleanup(req, res).catch((error) => {
+      sendJson(res, 500, { message: error.message || "Could not preview New Arrivals cleanup." });
+    });
+    return;
+  }
+
+  if (req.method === "POST" && req.url.startsWith("/api/new-arrivals-cleanup/remove")) {
+    if (!requireRoles(req, res, ["Admin"], "Only an Admin can remove the New Arrivals tag.")) return;
+    removeNewArrivalsCleanupProducts(req, res).catch((error) => {
+      sendJson(res, 500, { message: error.message || "Could not remove the New Arrivals tag." });
+    });
+    return;
+  }
 
   if (req.url.startsWith("/api/new-in-performance")) {
     fetchNewInPerformance(req, res).catch((error) => {

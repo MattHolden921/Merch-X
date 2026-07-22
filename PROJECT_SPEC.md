@@ -46,7 +46,7 @@ The app favours simple operational tools over a large framework:
 - `public/sku-register.html`: local SKU register and safe deletion of unused issued SKUs.
 - `public/products.html`: product and supplier master-data workspace, local SKU enrichment, readiness review, and Shopify draft push workflow.
 - `public/merchandising.html`: Shopify product merchandising view using product, order, and optional GA4 metrics.
-- `public/new-in-performance.html`: launch and image-refresh performance report for recent New In products, draft pipeline rows, image-change impact comparisons, marketing actions, share links, and CSV export.
+- `public/new-in-performance.html`: launch and image-refresh performance report for recent New In products, draft pipeline rows, image-change impact comparisons, marketing actions, share links, CSV export, and an Admin-only workflow that removes the exact New Arrivals product tag from ageing products.
 - `public/collection-planner.html`: Shopify collection reorder planning and apply-to-Shopify workflow.
 - `public/seasonal-sale-review.html`: persisted whole-season sale-candidate review using current Shopify state, full/recent trading windows, tracked live dates, GA4 CVR, and first/second-drop handoff into Sale Planner.
 - `public/sale-planner.html`: markdown and sale planning workspace for importing products, reviewing markdown prices, mapping Sale collections, applying Shopify sale state, and removing sale state.
@@ -82,7 +82,7 @@ Primary table groups:
 - Buying/order form: `suppliers`, `products`, `issued_skus`, `orders`.
 - Product/supplier master data: extended `suppliers` and `products` rows plus `product_sync_events`.
 - Order management: `order_workflows`, `order_events`, `order_invoices`, supplier batches, batch-line receipt actuals in `order_receipt_lines`, discrepancy/credit resolution rows in `order_discrepancies`, PAH carrier defaults in `app_settings`, and immutable `order_label_jobs` report snapshots.
-- Collection reorder: completed apply history in `collection_reorder_audit` and durable job state in `collection_reorder_jobs`. Audit rows retain the actor plus baseline and final order hashes.
+- Collection reorder and New Arrivals maintenance: completed apply history in `collection_reorder_audit`, durable reorder job state in `collection_reorder_jobs`, and verified New Arrivals tag-removal attempts in `new_arrivals_cleanup_audit`. Audit rows retain the actor and the approved Shopify state used by the action.
 - Reporting: `report_sources`, `report_periods`, `report_product_metrics`, `report_stock_snapshots`, `report_sync_jobs`, `report_snapshots`.
 - Weekly actions: `weekly_actions`, `weekly_action_events`.
 - Seasonal sale review and Sale Planner: `product_live_dates` tracks the best-known product live timestamp and its source; `sale_season_reviews` and `sale_season_review_items` persist seasonal scope, frozen metrics, buyer decisions, first/second-drop assignments, notes, and handoff links. Operational sale state remains in `sale_plans`, `sale_plan_items`, `sale_plan_events`, the variant restoration ledger in `sale_state_ledger`, markdown outcomes/actions, durable `sale_planner_jobs` and `sale_planner_job_items`, plus Sale collection mapping stored in `app_settings.salePlannerCollections`.
@@ -112,6 +112,7 @@ Configuration:
 - `SHOPIFY_CLIENT_ID`.
 - `SHOPIFY_CLIENT_SECRET`.
 - `SHOPIFY_API_VERSION`, defaulting to `2026-07`.
+- `NEW_ARRIVALS_COLLECTION_ID` can pin the New Arrivals collection used for cleanup preview. Otherwise cleanup uses `NEW_ARRIVALS_COLLECTION_HANDLE`, defaulting to `new-arrivals`, then an exact `NEW_ARRIVALS_COLLECTION_TITLE`, defaulting to `New Arrivals`, as a fallback lookup.
 - `COLLECTION_PLANNER_CACHE_MINUTES`, defaulting to 5 minutes for collection, Shopify order-metric, and GA4 metric reads used by the collection planner.
 
 Used for:
@@ -120,6 +121,7 @@ Used for:
 - Read-only order-line checks by SKU for Shopify `ACTIVE`/local Live state and the exact `Collection: New Arrivals` tag.
 - Draft product creation from local product master records.
 - Product merchandising sync.
+- Admin-only removal of the exact `Collection: New Arrivals` product tag from previewed older products. The tag drives collection inclusion; removing it preserves every other product tag and does not unpublish or delete products.
 - Collection planner product and collection sync.
 - Collection reorder apply jobs.
 - Sale planner price, compare-at price, and Sale collection apply/remove jobs.
@@ -257,6 +259,9 @@ Shopify and Google:
 
 - `GET /api/shopify-merchandising`
 - `GET /api/new-in-performance`
+- `GET /api/new-arrivals-cleanup`
+- `GET /api/new-arrivals-cleanup/status`
+- `POST /api/new-arrivals-cleanup/remove`
 - `GET /api/shopify-collection-planner`
 - `POST /api/shopify-collection-reorder/start`
 - `GET /api/shopify-collection-reorder/status`
@@ -434,6 +439,7 @@ Report concepts:
 - ShopifyQL `FROM sales` grouped by product title and variant SKU is the primary product-sales source for Bestsellers and New In, matching P&L's dated ledger treatment of discounts and sales reversals. New In image-impact daily windows use the same ledger grouped by day. The order API remains a guarded fallback; if neither source can be read, a Bestsellers sync fails closed so an incomplete fetch cannot replace a valid saved week.
 - Duplicate sync requests for the same range reuse the active job. Jobs left queued/running by a restart are marked interrupted on startup; completed result payloads are cleared after 14 days and completed/error jobs are removed after 90 days.
 - Shopify product connections currently read up to 100 variants. Products beyond that limit remain visible but are flagged through report data-quality metadata because their stock/current-cost values may be incomplete.
+- Product Merchandising can filter the board to On sale or Not on sale using Shopify `custom.product_status`. An exact `S` value, ignoring case and surrounding spaces, is on sale; `N`, blank, and any other value are not on sale. The filter affects the visible product cards and all summary metrics.
 
 Shopify financial semantics:
 
@@ -565,7 +571,7 @@ Guardrails:
 
 ### New In Performance
 
-The New In Performance report is a read-only Marketing/Merchandising handoff view for products that are newly live, recently re-shot/re-imaged, or still in the draft pipeline.
+The New In Performance report is a Marketing/Merchandising handoff view for products that are newly live, recently re-shot/re-imaged, or still in the draft pipeline. Its performance report is read-only; its separate New Arrivals cleanup panel can remove one exact Shopify product tag for Admin users.
 
 Key principles:
 
@@ -578,6 +584,9 @@ Key principles:
 - GA4 daily item metrics are merged into image impact when available, so pre/post CVR can be compared; Shopify order metrics remain the sales source when GA4 is unavailable.
 - Marketing actions are advisory labels derived from stock, sales velocity, GA4 views/CVR, and cohort state: Push, Needs exposure, Image test, Content check, Stock watch, Sold out, Draft pipeline, or Watch.
 - CSV export is browser-side from the current filtered view and includes product URLs, image URLs, SKU, cohort, action, launch/image dates, sales, stock, GP, GA4 metrics, and pre/post image-impact fields.
+- New Arrivals cleanup loads the complete configured collection separately from the performance cohort and then requires the exact `Collection: New Arrivals` tag. The default threshold is 60 days and the user can choose 30, 45, 60, 90, 120, or 180 days. Eligibility uses Shopify `publishedAt`, falling back to `createdAt` only for active products; products are candidates only when their live date is strictly before the cutoff. Drafts, products without a reliable live date, and collection rows without the exact tag are excluded.
+- The cleanup opens from the page's top action bar in a modal so it does not occupy report space until needed. It previews all candidates with every row initially selected so exceptions can be unticked. Only Admin users can remove the tag. Confirmation must exactly match `REMOVE N`, where N is the selected count; an incorrect value produces an inline error and no Shopify request.
+- The server reloads Shopify, recomputes candidates, compares the preview hash, and rejects stale or ineligible selections. Accepted cleanup requests create an auditable background job and return immediately. The page polls `GET /api/new-arrivals-cleanup/status`, showing processed products after each Shopify batch and a separate verification phase. The job uses Shopify `tagsRemove` in batches of up to 25 products to remove only `Collection: New Arrivals`, then reloads every selected product's tags and verifies that the exact tag is absent. Products stay live, every other tag is preserved, and progress, errors, and verified outcomes are recorded in `new_arrivals_cleanup_audit`. Jobs interrupted by a server restart are marked as errors and must be previewed again before retrying.
 
 ### Email Merchandiser
 
@@ -620,7 +629,7 @@ Marketing, Merchandising, and Admin users can build campaigns, create Klaviyo dr
 - Do not commit `.env`, SQLite databases, uploads, or secrets.
 - File upload paths must remain inside `UPLOADS_DIR`.
 - Keep upload size limits in place unless storage/backups have been reconsidered.
-- Be careful with endpoints that write `.env`, apply Shopify reorder changes, delete orders, delete invoices, or delete issued SKUs.
+- Be careful with endpoints that write `.env`, apply Shopify reorder or New Arrivals tag changes, delete orders, delete invoices, or delete issued SKUs.
 - API JSON responses should avoid exposing server filesystem paths or secrets.
 
 ## Change Rules For Future Work
