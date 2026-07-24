@@ -101,6 +101,33 @@
         ]]
       ]
     },
+    "cashflow.html": {
+      title: "Cashflow planner key",
+      intro: "A weekly planning estimate that shifts Despatch into expected receipts and combines it with dated supplier, operating and manual cash movements. It is not a bank or accounting ledger.",
+      sections: [
+        ["Sales and receipts", [
+          ["Despatch budget", "The Finance-entered weekly sales budget including VAT. Completed days use ShopifyQL Despatch actuals; the remaining budget is spread evenly over the future days in that week."],
+          ["Meta + PPC budget", "The combined weekly paid-media forecast entered beside Despatch budget. It creates one marketing cash outflow on the Sunday ending that week and is not written to the historical P&L."],
+          ["Estimated receipt", "Each day's actual or budget Despatch is moved forward by the configured number of business days, defaulting to three. Weekends are skipped.", "estimated receipt date = Despatch date + 3 business days"],
+          ["Boundary", "The estimate does not read Shopify payout or bank records, so reserves, payout failures, schedule changes, chargebacks and bank-clearing delays are not reconciled."]
+        ]],
+        ["Cash outflows", [
+          ["Supplier payments", "Paid and planned payment-ledger transactions use their saved dates. Remaining invoices use invoice due dates; uninvoiced order balances use the workflow payment date and clearly flagged fallbacks where needed."],
+          ["P&L rule use", "Each active P&L rule has its cash treatment in the same row: charge it in each incurred week or pay it monthly in arrears from a chosen first payment date."],
+          ["Monthly recurrence", "The first payment date is an anchor. A date on the 15th repeats on the 15th of every following month inside the horizon; a 29th, 30th or 31st uses the final day when a month is shorter."],
+          ["Monthly amount", "Monthly costs are paid one calendar month in arrears. A November payment calculates its amount from October's Despatch, orders or units, then places that amount on the recurring November payment date."],
+          ["Marketing boundary", "Historical P&L marketing is backward-looking and is not used as a forecast. The weekly combined Meta + PPC budget is entered only in Cashflow; other one-off items can use a manual movement."],
+          ["Double-count safeguard", "A P&L rule is either weekly or monthly, never both. A direct monthly rule also supersedes an older linked forecast for that rule. Product COGS is excluded because purchase-order payments represent stock cash separately."],
+          ["Manual movements", "Finance can add dated inflows or outflows for items outside Orders and the P&L, such as VAT, payroll, funding, tax, loans or capex."]
+        ]],
+        ["Roll-forward and safeguards", [
+          ["Opening / closing cash", "Opening cash is applied to the first displayed Monday. Each week's closing cash becomes the next week's opening cash.", "closing cash = opening cash + inflows - outflows"],
+          ["Expanded week", "Click a week to see one Money in row with seven Mon–Sun tiles. Each tile totals all receipts and other inflows landing that day; dated supplier, marketing, P&L and manual outflows remain itemised as cost cards below."],
+          ["Legacy payments", "Older paid invoices can have only an order-level paid date. Those movements are labelled as estimates and should be reviewed when they fall inside the forecast."],
+          ["Access", "Finance and Admin can edit weekly Despatch and Meta + PPC budgets, settings, P&L rule use, manual movements and supplier transactions. Buying Director has read-only access."]
+        ]]
+      ]
+    },
     "merchandising.html": { existing: true },
     "new-in-performance.html": {
       title: "New In performance key",
@@ -143,7 +170,8 @@
           ["Generated period", "A saved completed Monday–Sunday Bestsellers week. Action metrics are snapshots, not continuously live."],
           ["Preview / Generate", "Preview shows the intended refresh/create result without writing; Generate creates a capped prioritised shortlist."],
           ["Forecast buy", "Uses the Weekly Actions eight-week horizon and can differ from the Bestsellers main table’s season-end buy."],
-          ["Owner and due date", "Team accountability fields; changing them updates the board, not product or order data."],
+          ["Grouped board", "Grouped and Table views both collapse actions into Reorder, Markdown, Feature and Watch sections. Open a section to review all matching actions of that type; Table keeps inline editing and selection controls."],
+          ["Team, owner and due date", "Team is the responsible function; Owner assigns an active Merch X user. Owner handoffs create activity and notify the new owner. These fields update the board, not product or order data."],
           ["Status", "Tracks follow-up from open work through completion or dismissal."],
           ["Notes and events", "A dated audit trail of updates made to the action."]
         ]]
@@ -180,6 +208,7 @@
         ["Workflow", [
           ["Approval", "Buying Director approval is tracked independently from Finance payment and Merchandising intake."],
           ["Payment", "Tracks deposit, balance or payment progress; invoice matching uses ordered supplier cost without a VAT uplift."],
+          ["Payment ledger", "Finance records dated Planned or Paid supplier transactions against an invoice or the whole order. EUR payments lock the order FX rate into a GBP cashflow value; only planned transactions can be deleted."],
           ["Product gate", "Every line needs a SKU connected to a recognised Shopify product/state before batches and receipts can be booked."],
           ["Batch vs order Received", "A batch Received is a factual delivery state; the order reaches Received only after all batches and discrepancy review."],
           ["Composite status", "A derived order status based on the current approval, payment, intake and archive state."]

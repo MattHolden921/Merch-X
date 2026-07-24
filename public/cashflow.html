@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cashflow Planner</title>
+<link rel="stylesheet" href="design-system.css">
+<script src="page-key.js" defer></script>
+<style>
+.wrap{max-width:1720px}.toolbar{display:grid;grid-template-columns:160px 130px auto minmax(220px,1fr);gap:10px;align-items:end}.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px;margin:14px 0}.metric{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);padding:13px}.metric label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);margin-bottom:8px}.metric strong{display:block;font-size:21px;font-variant-numeric:tabular-nums}.metric small{display:block;color:var(--ds-text-soft);margin-top:4px}.settings-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px}.table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}table{width:100%;border-collapse:collapse;font-size:12px;min-width:1450px}th{background:var(--ds-bg-muted);color:var(--ds-text-soft);font-size:10px;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:8px;border-bottom:1px solid var(--ds-line);white-space:nowrap}td{padding:8px;border-bottom:1px solid var(--ds-line);color:var(--ds-text-muted);vertical-align:middle}tfoot td{background:var(--ds-bg-muted);font-weight:650;color:var(--ds-text)}.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.budget-input{width:108px;min-height:30px;padding:4px 7px;text-align:right}.good{color:var(--ds-good)!important}.bad{color:var(--ds-bad)!important}.warn{color:var(--ds-warn)!important}.week-link{border:0;background:transparent;color:var(--ds-action);font:inherit;font-weight:650;cursor:pointer;padding:0}.detail-row[hidden]{display:none}.detail-row td{background:var(--ds-bg-page);padding:10px 16px}.week-detail{display:grid;gap:12px}.detail-section-title{margin:0 0 6px;color:var(--ds-text);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}.money-in-grid{display:grid;grid-template-columns:repeat(7,minmax(140px,1fr));gap:7px}.money-in-tile{display:grid;gap:4px;min-height:70px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);padding:8px}.money-in-tile .day{color:var(--ds-text);font-size:12px;font-weight:700}.money-in-tile strong{font-size:16px;font-variant-numeric:tabular-nums}.money-in-tile small{color:var(--ds-text-soft);font-size:10px;line-height:1.3}.movement-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:7px}.movement{display:grid;grid-template-columns:1fr auto;gap:4px 10px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);padding:8px}.movement strong{font-size:12px;color:var(--ds-text)}.movement span{font-size:11px;color:var(--ds-text-soft)}.movement .amount{grid-row:1/3;grid-column:2;text-align:right;font-variant-numeric:tabular-nums;color:var(--ds-text)}.chart-wrap{height:230px;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);padding:10px;margin-bottom:14px}.chart-wrap svg{width:100%;height:100%;overflow:visible}.chart-label{font-size:9px;fill:var(--ds-text-soft)}.chart-line{fill:none;stroke:var(--ds-action);stroke-width:2.5}.chart-area{fill:var(--ds-action-soft)}.chart-zero{stroke:var(--ds-bad);stroke-width:1;stroke-dasharray:4 4}.notice-list{display:grid;gap:7px;margin-bottom:14px}.notice{border:1px solid rgba(180,83,9,.35);border-radius:var(--ds-radius);background:rgba(180,83,9,.08);padding:9px 11px;color:var(--ds-text-muted);font-size:12px}.timing-list{border:1px solid var(--ds-line);border-radius:var(--ds-radius);overflow:hidden}.timing-row{display:grid;grid-template-columns:72px minmax(220px,1fr) minmax(150px,.45fr) minmax(330px,.85fr);gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--ds-line)}.timing-row:last-child{border-bottom:0}.timing-row.head{background:var(--ds-bg-muted);color:var(--ds-text-soft);font-size:10px;font-weight:650;text-transform:uppercase;letter-spacing:.05em}.timing-name strong,.timing-name span{display:block}.timing-name span,.timing-basis{font-size:11px;color:var(--ds-text-soft)}.timing-check{display:flex;align-items:center;gap:7px}.timing-check input{width:16px;height:16px}.timing-treatment{display:grid;grid-template-columns:minmax(170px,1fr) 150px;gap:8px}.timing-date[hidden]{display:none}.movement-layout{display:grid;grid-template-columns:minmax(360px,.8fr) minmax(0,1.2fr);gap:14px}.movement-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.manual-list{display:grid;gap:7px}.manual-row{display:grid;grid-template-columns:90px 1fr 110px auto;gap:8px;align-items:center;border:1px solid var(--ds-line);border-radius:var(--ds-radius);padding:8px}.manual-row strong{font-size:12px}.manual-row span{font-size:11px;color:var(--ds-text-soft)}.status{margin:0}.source-note{margin:8px 0 0;font-size:11px;color:var(--ds-text-soft)}@media(max-width:1100px){.settings-grid{grid-template-columns:repeat(3,1fr)}.movement-layout{grid-template-columns:1fr}.timing-row{grid-template-columns:64px minmax(200px,1fr) minmax(280px,.8fr)}.timing-basis{display:none}}@media(max-width:720px){body{padding:18px 10px 36px}.toolbar,.settings-grid,.movement-form{grid-template-columns:1fr}.actions{justify-content:flex-start}.manual-row{grid-template-columns:1fr auto}.manual-row>*:nth-child(3){grid-column:1}.chart-wrap{height:190px}.timing-row{grid-template-columns:56px minmax(130px,1fr)}.timing-row.head>*:nth-child(4){display:none}.timing-treatment{grid-column:2;grid-template-columns:1fr}.timing-row .select{grid-column:auto}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <a class="home" href="/">Home</a>
+  <section class="head">
+    <div><h1>Cashflow planner</h1><p class="sub">A 13-week view of estimated Shopify receipts, supplier commitments, P&amp;L operating costs and manual cash movements.</p></div>
+    <div class="actions" data-page-key-actions><button class="btn" id="save-budgets-btn" type="button">Save budgets</button><button class="btn primary" id="load-btn" type="button">Load forecast</button></div>
+  </section>
+
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label>First week</label><input id="start-date" type="date"></div>
+      <div class="field"><label>Horizon</label><select id="weeks" class="select"><option value="8">8 weeks</option><option value="13" selected>13 weeks</option><option value="18">18 weeks</option><option value="26">26 weeks</option></select></div>
+      <div class="field"><label>&nbsp;</label><button class="btn" id="current-week-btn" type="button">Current week</button></div>
+      <p class="status" id="status">Ready.</p>
+    </div>
+    <p class="source-note" id="source-note">Receipts are estimates, not bank-reconciled payouts.</p>
+  </section>
+
+  <section class="metric-grid" id="metrics"></section>
+  <section class="notice-list" id="warnings"></section>
+  <section class="chart-wrap" id="chart"><p class="empty-state">Load a forecast to see the closing-cash path.</p></section>
+
+  <section class="panel">
+    <div class="section-head"><div><p class="section-title">Weekly cash roll-forward</p><p class="sub" style="margin-top:3px">Click a week to see Mon–Sun money in and itemised costs. Enter weekly Despatch including VAT and combined Meta + PPC spend; marketing is paid on the week-ending Sunday.</p></div><span class="pill" id="range-pill">Not loaded</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Week</th><th>Coverage</th><th class="num">Despatch budget</th><th class="num">Meta + PPC budget</th><th class="num">Actual Despatch</th><th class="num">Forecast Despatch</th><th class="num">Est. receipts</th><th class="num">Supplier</th><th class="num">Marketing</th><th class="num">Variable</th><th class="num">Fixed</th><th class="num">Other</th><th class="num">Net cash</th><th class="num">Closing cash</th></tr></thead>
+      <tbody id="forecast-body"><tr><td colspan="14" class="empty-state">Load a forecast.</td></tr></tbody>
+      <tfoot id="forecast-foot"></tfoot>
+    </table></div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head"><div><p class="section-title">Forecast settings</p><p class="sub" style="margin-top:3px">AOV and items/order use recent Shopify actuals when left at zero.</p></div><button class="btn primary" id="save-settings-btn" type="button">Save settings</button></div>
+    <div class="settings-grid">
+      <div class="field"><label>Opening cash</label><input id="opening-balance" type="number" step="0.01"></div>
+      <div class="field"><label>Receipt lag (business days)</label><input id="receipt-lag" type="number" min="0" max="15" step="1" value="3"></div>
+      <div class="field"><label>Default horizon</label><input id="horizon-weeks" type="number" min="4" max="26" step="1" value="13"></div>
+      <div class="field"><label>Forecast AOV override</label><input id="forecast-aov" type="number" min="0" step="0.01" value="0"></div>
+      <div class="field"><label>Items/order override</label><input id="forecast-items" type="number" min="0" step="0.01" value="0"></div>
+      <div class="field"><label>Low-cash threshold</label><input id="low-threshold" type="number" step="0.01" value="0"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head"><div><p class="section-title">P&amp;L driver rules</p><p class="sub" style="margin-top:3px">Choose each rule's cash treatment here. Weekly costs follow trading; monthly costs are paid in arrears from the first payment date in the same row.</p></div><div class="actions"><a class="btn" href="pnl.html">View P&amp;L rules</a><button class="btn primary" id="save-timing-btn" type="button">Save rule use</button></div></div>
+    <div class="timing-list" id="pnl-timing-list"><p class="empty-state">Load a forecast to configure P&amp;L cash timing.</p></div>
+    <p class="source-note">Monthly rules are paid one calendar month in arrears: a payment in November uses October activity. The payment day repeats each month; dates such as the 31st use the last day of shorter months. A blank first date creates no cash movement.</p>
+  </section>
+
+  <section class="panel">
+    <div class="section-head"><div><p class="section-title">Manual cash movements</p><p class="sub" style="margin-top:3px">Use for VAT, payroll, funding, tax, loans, capex or another dated item not represented in Orders or the P&amp;L.</p></div></div>
+    <div class="movement-layout">
+      <div>
+        <div class="movement-form">
+          <div class="field"><label>Date</label><input id="movement-date" type="date"></div>
+          <div class="field"><label>Direction</label><select id="movement-direction" class="select"><option value="outflow">Outflow</option><option value="inflow">Inflow</option></select></div>
+          <div class="field"><label>Category</label><input id="movement-category" value="Other"></div>
+          <div class="field"><label>Amount</label><input id="movement-amount" type="number" min="0" step="0.01"></div>
+          <div class="field"><label>Name</label><input id="movement-name"></div>
+          <div class="field"><label>Notes</label><input id="movement-notes"></div>
+        </div>
+        <div class="actions" style="justify-content:flex-start;margin-top:9px"><button class="btn primary" id="save-movement-btn" type="button">Add movement</button></div>
+      </div>
+      <div class="manual-list" id="manual-list"><p class="empty-state">No manual movements in the selected range.</p></div>
+    </div>
+  </section>
+</main>
+<script>
+const el=id=>document.getElementById(id);
+const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
+const exactMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",minimumFractionDigits:2,maximumFractionDigits:2});
+const state={data:null,canWrite:false};
+function escapeHtml(value){return String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
+function attr(value){return escapeHtml(value)}
+function iso(date){return date.toISOString().slice(0,10)}
+function addIsoDays(value,days){const date=new Date(`${value}T00:00:00Z`);date.setUTCDate(date.getUTCDate()+days);return iso(date)}
+function monday(value=new Date()){const date=new Date(value instanceof Date?value:`${value}T00:00:00Z`);const day=date.getUTCDay();date.setUTCDate(date.getUTCDate()-(day===0?6:day-1));return iso(date)}
+function formatDate(value){if(!value)return"-";return new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:"numeric"}).format(new Date(`${value}T00:00:00Z`))}
+function setStatus(message,type=""){el("status").textContent=message;el("status").className=`status ${type}`}
+async function api(url,options){const response=await fetch(url,options);const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||"Request failed");return data}
+function coverageLabel(week){if(week.despatchActual>0&&week.despatchForecast>0)return'<span class="badge warn">Mixed</span>';if(week.despatchActual>0)return'<span class="badge good">Actual</span>';return'<span class="badge">Budget</span>'}
+function signed(value){const n=Number(value||0);return `${n>=0?"+":"-"}${money.format(Math.abs(n))}`}
+function renderMetrics(){const data=state.data;if(!data){el("metrics").innerHTML="";return}const t=data.forecast.totals;const lowClass=t.lowestCash<Number(data.settings.lowCashThreshold||0)?"bad":"";el("metrics").innerHTML=[
+  ["Opening cash",money.format(data.forecast.openingBalance),"First displayed Monday",""],
+  ["Estimated receipts",money.format(t.receipts),`${data.forecast.receiptLagBusinessDays} business-day lag`,""],
+  ["Supplier payments",money.format(t.supplierPayments),"Paid, planned and outstanding",""],
+  ["Operating outflows",money.format(t.marketingSpend+t.variableCosts+t.fixedCosts),"Marketing, variable and fixed",""],
+  ["Lowest closing cash",money.format(t.lowestCash),formatDate(t.lowestCashWeek),lowClass],
+  ["Closing cash",money.format(t.closingCash),signed(t.netCash)+" across horizon",t.closingCash<0?"bad":""]
+].map(([label,value,note,cls])=>`<div class="metric"><label>${label}</label><strong class="${cls}">${value}</strong><small>${note}</small></div>`).join("")}
+function renderWarnings(){const warnings=state.data?.warnings||[];el("warnings").innerHTML=warnings.map(message=>`<div class="notice">${escapeHtml(message)}</div>`).join("")}
+function movementHtml(movement){const sign=movement.direction==="inflow"?1:-1;return `<div class="movement"><strong>${escapeHtml(movement.name)}</strong><span>${formatDate(movement.date)} · ${escapeHtml(movement.category)} · ${escapeHtml(movement.source)}</span><strong class="amount ${sign>0?"good":"bad"}">${signed(sign*movement.amount)}</strong></div>`}
+function moneyInTileHtml(date,index,movements){const total=movements.reduce((sum,row)=>sum+Number(row.amount||0),0);const labels=[...new Set(movements.map(row=>row.category==="Shopify receipts"?`${row.source==="actual"?"Actual":"Forecast"} receipts`:row.category).filter(Boolean))];const note=labels.length?labels.join(" + "):"No money in";return `<div class="money-in-tile" aria-label="${["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"][index]} money in"><span class="day">${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][index]}</span><strong class="${total>0?"good":""}">${total>0?signed(total):money.format(0)}</strong><small>${escapeHtml(note)}</small></div>`}
+function weekDetailHtml(week){const inflows=week.movements.filter(row=>row.direction==="inflow");const outflows=week.movements.filter(row=>row.direction!=="inflow");const moneyIn=Array.from({length:7},(_,index)=>{const date=addIsoDays(week.startDate,index);return moneyInTileHtml(date,index,inflows.filter(row=>row.date===date))}).join("");const costs=outflows.length?outflows.map(movementHtml).join(""):'<p class="empty-state">No costs in this week.</p>';return `<div class="week-detail"><div><p class="detail-section-title">Money in</p><div class="money-in-grid">${moneyIn}</div></div><div><p class="detail-section-title">Costs</p><div class="movement-grid">${costs}</div></div></div>`}
+function toggleWeek(index){const row=el(`detail-${index}`);if(row)row.hidden=!row.hidden}
+function renderForecast(){const data=state.data;if(!data)return;const weeks=data.forecast.weeks;el("range-pill").textContent=`${formatDate(data.forecast.range.startDate)} – ${formatDate(data.forecast.range.endDate)}`;el("forecast-body").innerHTML=weeks.map((week,index)=>`<tr>
+  <td><button class="week-link" type="button" onclick="toggleWeek(${index})">${formatDate(week.startDate)}</button></td><td>${coverageLabel(week)}</td>
+  <td class="num"><input class="budget-input" type="number" min="0" step="100" data-budget-week="${week.startDate}" value="${Number(week.budget||0).toFixed(2)}" ${state.canWrite?"":"disabled"}></td>
+  <td class="num"><input class="budget-input marketing-budget-input" type="number" min="0" step="100" data-marketing-budget-week="${week.startDate}" value="${Number(week.marketingBudget||0).toFixed(2)}" ${state.canWrite?"":"disabled"}></td>
+  <td class="num">${money.format(week.despatchActual)}</td><td class="num">${money.format(week.despatchForecast)}</td><td class="num">${money.format(week.receiptsActual+week.receiptsForecast)}</td>
+  <td class="num">${money.format(week.supplierPayments)}</td><td class="num">${money.format(week.marketingSpend)}</td><td class="num">${money.format(week.variableCosts)}</td><td class="num">${money.format(week.fixedCosts)}</td>
+  <td class="num">${money.format(week.otherOutflows-week.otherInflows)}</td><td class="num ${week.netCash<0?"bad":"good"}">${signed(week.netCash)}</td><td class="num ${week.closingCash<0?"bad":""}"><strong>${money.format(week.closingCash)}</strong></td></tr>
+  <tr class="detail-row" id="detail-${index}" hidden><td colspan="14">${weekDetailHtml(week)}</td></tr>`).join("");
+  const t=data.forecast.totals;el("forecast-foot").innerHTML=`<tr><td colspan="2">Horizon total</td><td class="num">${money.format(t.budget)}</td><td class="num">${money.format(t.marketingBudget)}</td><td class="num">${money.format(t.despatchActual)}</td><td class="num">${money.format(t.despatchForecast)}</td><td class="num">${money.format(t.receipts)}</td><td class="num">${money.format(t.supplierPayments)}</td><td class="num">${money.format(t.marketingSpend)}</td><td class="num">${money.format(t.variableCosts)}</td><td class="num">${money.format(t.fixedCosts)}</td><td class="num">${money.format(t.otherOutflows-t.otherInflows)}</td><td class="num">${signed(t.netCash)}</td><td class="num">${money.format(t.closingCash)}</td></tr>`;
+}
+function renderChart(){const weeks=state.data?.forecast?.weeks||[];if(!weeks.length){el("chart").innerHTML='<p class="empty-state">No forecast data.</p>';return}const values=weeks.map(row=>Number(row.closingCash||0));const min=Math.min(0,...values),max=Math.max(0,...values);const span=Math.max(1,max-min);const w=1000,h=190,pad=28;const x=i=>pad+i*((w-pad*2)/Math.max(1,weeks.length-1));const y=v=>pad+(max-v)*((h-pad*2)/span);const points=values.map((v,i)=>`${x(i)},${y(v)}`).join(" ");const area=`${x(0)},${h-pad} ${points} ${x(values.length-1)},${h-pad}`;const labels=weeks.map((week,i)=>i%2===0||weeks.length<=8?`<text class="chart-label" x="${x(i)}" y="${h-5}" text-anchor="middle">${week.startDate.slice(5)}</text>`:"").join("");el("chart").innerHTML=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Projected weekly closing cash"><line class="chart-zero" x1="${pad}" x2="${w-pad}" y1="${y(0)}" y2="${y(0)}"></line><polygon class="chart-area" points="${area}"></polygon><polyline class="chart-line" points="${points}"></polyline>${values.map((v,i)=>`<circle cx="${x(i)}" cy="${y(v)}" r="3.5" fill="var(--ds-action)"><title>${formatDate(weeks[i].startDate)}: ${exactMoney.format(v)}</title></circle>`).join("")}${labels}</svg>`}
+function renderSettings(){const s=state.data?.settings||{};el("opening-balance").value=s.openingBalance??0;el("receipt-lag").value=s.receiptLagBusinessDays??3;el("horizon-weeks").value=s.horizonWeeks??13;el("forecast-aov").value=s.forecastAov??0;el("forecast-items").value=s.forecastItemsPerOrder??0;el("low-threshold").value=s.lowCashThreshold??0;["save-settings-btn","save-timing-btn","save-budgets-btn","save-movement-btn"].forEach(id=>el(id).disabled=!state.canWrite)}
+function costBasisLabel(type){return ({fixed_monthly:"Fixed monthly",per_order:"Per order",per_item:"Per item",pick_pack:"Pick and pack",percent_revenue:"% of Despatch",percent_revenue_plus_per_order:"% of Despatch + per order"})[type]||type||"P&L rule"}
+function timingControls(rule,disabled){const scheduled=rule.paymentTiming==="scheduled";return `<div class="timing-treatment"><select class="select timing-payment" ${disabled?"disabled":""} onchange="timingTreatmentChanged(this)"><option value="weekly" ${scheduled?"":"selected"}>Paid in incurred week</option><option value="scheduled" ${scheduled?"selected":""}>Pay monthly in arrears</option></select><input class="timing-date" type="date" aria-label="${attr(rule.name)} first monthly payment date" title="First monthly payment date" value="${attr(rule.paymentDate||"")}" ${scheduled?"":"hidden"} ${disabled?"disabled":""}></div>`}
+function timingTreatmentChanged(select){const date=select.parentElement.querySelector(".timing-date");if(date)date.hidden=select.value!=="scheduled"}
+function renderPnlTiming(){const timing=state.data?.pnlCashTiming;if(!timing){el("pnl-timing-list").innerHTML='<p class="empty-state">No P&L timing data is available.</p>';return}const disabled=!state.canWrite;const rows=(timing.costRules||[]).map(rule=>`<div class="timing-row" data-cost-id="${attr(rule.id)}"><label class="timing-check"><input class="timing-enabled" type="checkbox" ${rule.enabled?"checked":""} ${disabled?"disabled":""}> Include</label><div class="timing-name"><strong>${escapeHtml(rule.name)}</strong><span>${escapeHtml(rule.category||"Uncategorised")}</span></div><div class="timing-basis">${escapeHtml(costBasisLabel(rule.costType))}</div>${timingControls(rule,disabled)}</div>`);el("pnl-timing-list").innerHTML=`<div class="timing-row head"><span>Cashflow</span><span>P&amp;L rule</span><span>Calculation</span><span>Cash treatment and first payment</span></div>${rows.join("")}`}
+function renderManual(){const rows=state.data?.manualMovements||[];el("manual-list").innerHTML=rows.length?rows.map(row=>`<div class="manual-row"><span>${formatDate(row.date)}</span><div><strong>${escapeHtml(row.name)}</strong><span>${escapeHtml(row.category)} · ${escapeHtml(row.notes||"")}</span></div><strong class="num ${row.direction==="inflow"?"good":"bad"}">${signed((row.direction==="inflow"?1:-1)*row.amount)}</strong>${state.canWrite?`<button class="mini-btn danger" type="button" onclick="deleteMovement('${attr(row.id)}')">Delete</button>`:""}</div>`).join(""):'<p class="empty-state">No manual movements in the selected range.</p>'}
+function renderAll(){renderMetrics();renderWarnings();renderForecast();renderChart();renderSettings();renderPnlTiming();renderManual()}
+async function loadForecast(){setStatus("Loading forecast…");try{const query=new URLSearchParams({startDate:el("start-date").value,weeks:el("weeks").value});state.data=await api(`/api/cashflow?${query}`);state.canWrite=Boolean(state.data.canWrite);el("source-note").textContent=`${state.data.source.type==="shopifyql_daily_despatch"?`${state.data.source.actualDayCount} ShopifyQL actual days loaded. `:""}Receipts use a ${state.data.source.receiptMethod} and are not bank-reconciled.`;renderAll();setStatus("Forecast loaded.","good")}catch(error){setStatus(error.message,"bad")}}
+async function saveSettings(){try{const pnlCostTiming={};document.querySelectorAll("[data-cost-id]").forEach(row=>{pnlCostTiming[row.dataset.costId]={enabled:row.querySelector(".timing-enabled").checked,paymentTiming:row.querySelector(".timing-payment").value,paymentDate:row.querySelector(".timing-date").value}});await api("/api/cashflow/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({settings:{openingBalance:el("opening-balance").value,receiptLagBusinessDays:el("receipt-lag").value,horizonWeeks:el("horizon-weeks").value,forecastAov:el("forecast-aov").value,forecastItemsPerOrder:el("forecast-items").value,lowCashThreshold:el("low-threshold").value,pnlCostTiming}})});el("weeks").value=el("horizon-weeks").value;await loadForecast()}catch(error){setStatus(error.message,"bad")}}
+async function saveBudgets(){try{const budgets=[...document.querySelectorAll("[data-budget-week]")].map(input=>({weekStart:input.dataset.budgetWeek,amount:input.value,marketingAmount:input.closest("tr")?.querySelector(".marketing-budget-input")?.value||0}));await api("/api/cashflow/budgets",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({budgets})});await loadForecast()}catch(error){setStatus(error.message,"bad")}}
+async function saveMovement(){try{await api("/api/cashflow/movements/upsert",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({movement:{date:el("movement-date").value,direction:el("movement-direction").value,category:el("movement-category").value,name:el("movement-name").value,amount:el("movement-amount").value,notes:el("movement-notes").value}})});el("movement-name").value="";el("movement-amount").value="";el("movement-notes").value="";await loadForecast()}catch(error){setStatus(error.message,"bad")}}
+async function deleteMovement(id){if(!confirm("Delete this manual cash movement?"))return;try{await api("/api/cashflow/movements/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id})});await loadForecast()}catch(error){setStatus(error.message,"bad")}}
+el("start-date").value=monday();el("movement-date").value=iso(new Date());el("load-btn").addEventListener("click",loadForecast);el("save-settings-btn").addEventListener("click",saveSettings);el("save-timing-btn").addEventListener("click",saveSettings);el("save-budgets-btn").addEventListener("click",saveBudgets);el("save-movement-btn").addEventListener("click",saveMovement);el("current-week-btn").addEventListener("click",()=>{el("start-date").value=monday();loadForecast()});loadForecast();
+</script>
+</body>
+</html>

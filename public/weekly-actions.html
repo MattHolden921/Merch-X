@@ -11,7 +11,7 @@
 [hidden]{display:none!important}
 .metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
 .generate-bar{display:grid;grid-template-columns:minmax(360px,2fr) 160px 150px 150px minmax(220px,1fr);gap:10px;align-items:end}
-.toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 150px 150px 140px 140px 150px;gap:10px;align-items:end}
+.toolbar{display:grid;grid-template-columns:minmax(210px,1fr) 130px 130px 160px 130px 120px 130px;gap:10px;align-items:end}
 .toolbar .field,.generate-bar .field{margin-bottom:0}
 #period-select{min-width:0}
 .viewbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;flex-wrap:wrap}
@@ -23,13 +23,23 @@
 .table-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}
 .presetbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
 .presetbar .btn.on{background:var(--ds-action-soft);border-color:var(--ds-action);color:var(--ds-action)}
-.bulk-tools{display:grid;grid-template-columns:110px 120px 100px 120px 120px minmax(180px,1fr) auto;gap:8px;align-items:end;width:100%;margin-top:10px}
+.bulk-tools{display:grid;grid-template-columns:105px 110px 150px 95px 115px 110px minmax(170px,1fr) auto;gap:8px;align-items:end;width:100%;margin-top:10px}
 .bulk-tools .field{margin-bottom:0}
 .sort-btn{display:inline-flex;align-items:center;gap:3px;border:0;background:transparent;color:inherit;font:inherit;text-transform:inherit;letter-spacing:inherit;padding:0;cursor:pointer}
 .age.overdue{color:var(--ds-bad);font-weight:700}
 .age.snoozed{color:var(--ds-info);font-weight:700}
-.table-wrap{overflow:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface)}
-.action-table{width:100%;min-width:1260px;border-collapse:collapse;table-layout:fixed}
+.table-wrap{overflow:visible}
+.table-groups{display:flex;flex-direction:column;gap:8px}
+.table-type-group{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);overflow:hidden}
+.table-type-group[open]{border-color:var(--ds-line-strong)}
+.table-type-group summary{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px 12px;cursor:pointer;background:var(--ds-bg-muted);list-style:none}
+.table-type-group summary::-webkit-details-marker{display:none}
+.table-type-group summary::after{content:"+";font-size:18px;line-height:1;color:var(--ds-text-soft)}
+.table-type-group[open] summary::after{content:"−"}
+.table-type-group summary strong{display:block;font-size:13px;color:var(--ds-text)}
+.table-type-group summary span{display:block;font-size:11px;color:var(--ds-text-muted);margin-top:2px}
+.table-scroll{overflow:auto;border-top:1px solid var(--ds-line)}
+.action-table{width:100%;min-width:1160px;border-collapse:collapse;table-layout:fixed}
 .action-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);white-space:nowrap}
 .action-table td{font-size:11px;color:var(--ds-text-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
 .action-table tr:last-child td{border-bottom:0}
@@ -42,6 +52,15 @@
 .row-open{min-height:28px;padding:0 8px;font-size:11px}
 .layout{display:grid;grid-template-columns:430px minmax(0,1fr);gap:14px;align-items:start}
 .action-list{display:flex;flex-direction:column;gap:8px;max-height:calc(100vh - 340px);overflow:auto;padding-right:2px}
+.action-type-group{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);overflow:hidden}
+.action-type-group[open]{border-color:var(--ds-line-strong)}
+.action-type-group summary{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px 12px;cursor:pointer;background:var(--ds-bg-muted);list-style:none}
+.action-type-group summary::-webkit-details-marker{display:none}
+.action-type-group summary::after{content:"+";font-size:18px;line-height:1;color:var(--ds-text-soft)}
+.action-type-group[open] summary::after{content:"−"}
+.action-type-group summary strong{display:block;font-size:13px;color:var(--ds-text)}
+.action-type-group summary span{display:block;font-size:11px;color:var(--ds-text-muted);margin-top:2px}
+.action-group-rows{display:flex;flex-direction:column;gap:7px;padding:8px}
 .action-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;width:100%;border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);padding:10px;text-align:left;cursor:pointer}
 .action-row:hover,.action-row.active{border-color:var(--ds-action);background:var(--ds-bg-muted)}
 .action-main strong{display:block;font-size:13px;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -104,7 +123,8 @@
     <div class="toolbar">
       <div class="field"><label>Search</label><input id="search" placeholder="Product, SKU, rationale"></div>
       <div class="field"><label>Type</label><select class="select" id="type-filter"></select></div>
-      <div class="field"><label>Owner</label><select class="select" id="owner-filter"></select></div>
+      <div class="field"><label>Team</label><select class="select" id="owner-filter"></select></div>
+      <div class="field"><label>Owner</label><select class="select" id="assignee-filter"></select></div>
       <div class="field"><label>Status</label><select class="select" id="status-filter"></select></div>
       <div class="field"><label>Priority</label><select class="select" id="priority-filter"></select></div>
       <div class="field"><label>Season</label><select class="select" id="season-filter"></select></div>
@@ -118,7 +138,7 @@
     </div>
     <div class="viewbar">
       <div class="seg" aria-label="View mode">
-        <button type="button" id="list-view-btn">List</button>
+        <button type="button" id="list-view-btn">Grouped</button>
         <button type="button" id="table-view-btn">Table</button>
       </div>
       <div class="actions">
@@ -136,7 +156,7 @@
     <div class="table-tools">
       <div>
         <p class="section-title">Action table</p>
-        <p class="status" id="table-note">Use checkboxes for export, or update status, owner, and priority inline.</p>
+        <p class="status" id="table-note">Use checkboxes for export, or update status, team, owner, and priority inline.</p>
       </div>
       <div class="actions">
         <button class="btn" type="button" id="select-all-btn">Select all filtered</button>
@@ -144,7 +164,8 @@
       </div>
       <div class="bulk-tools">
         <div class="field"><label>Status</label><select class="select" id="bulk-status"></select></div>
-        <div class="field"><label>Owner</label><select class="select" id="bulk-owner"></select></div>
+        <div class="field"><label>Team</label><select class="select" id="bulk-owner"></select></div>
+        <div class="field"><label>Owner</label><select class="select" id="bulk-assignee"></select></div>
         <div class="field"><label>Priority</label><select class="select" id="bulk-priority"></select></div>
         <div class="field"><label>Due date</label><input id="bulk-due" type="date"></div>
         <div class="field"><label>Snooze</label><select class="select" id="bulk-snooze"><option value="">No snooze</option><option value="14">2 weeks</option><option value="28">4 weeks</option><option value="56">8 weeks</option><option value="84">12 weeks</option></select></div>
@@ -158,7 +179,7 @@
   <section class="layout" id="list-section">
     <aside class="panel">
       <div class="section-head">
-        <p class="section-title">Action list</p>
+        <p class="section-title">Actions by type</p>
         <span class="pill" id="action-count">0 actions</span>
       </div>
       <div class="action-list" id="action-list"></div>
@@ -177,8 +198,10 @@ const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maxim
 const numberFmt=new Intl.NumberFormat("en-GB",{maximumFractionDigits:1});
 const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",year:"numeric"});
 const typeLabels={reorder:"Reorder risk",markdown:"Markdown risk",feature:"Feature winner",watch:"Watch item"};
-let state={actions:[],selected:null,metrics:null,filters:{statuses:[],owners:[],priorities:[],types:[],seasons:[]},periods:[],users:[],selectedId:new URLSearchParams(location.search).get("id")||"",view:localStorage.getItem("weeklyActionsView")||"list",sortKey:localStorage.getItem("weeklyActionsSortKey")||"priority",sortDir:Number(localStorage.getItem("weeklyActionsSortDir")||1)};
+const VIEW_STORAGE_KEY="weeklyActionsViewGroupedV2";
+let state={actions:[],selected:null,metrics:null,filters:{statuses:[],owners:[],priorities:[],types:[],seasons:[]},periods:[],users:[],selectedId:new URLSearchParams(location.search).get("id")||"",view:localStorage.getItem(VIEW_STORAGE_KEY)==="table"?"table":"grouped",sortKey:localStorage.getItem("weeklyActionsSortKey")||"priority",sortDir:Number(localStorage.getItem("weeklyActionsSortDir")||1)};
 let selectedRows=new Set();
+let expandedTypes=new Set();
 
 const el=id=>document.getElementById(id);
 const val=id=>el(id)?.value?.trim()||"";
@@ -221,6 +244,15 @@ function userOptions(value,blank="Unassigned"){
   return `${blank?`<option value="">${escapeHtml(blank)}</option>`:""}${(state.users||[]).map(user=>`<option value="${attr(user.id)}"${user.id===value?" selected":""}>${escapeHtml(user.displayName||user.email)}</option>`).join("")}`;
 }
 
+function assignedUser(action){
+  return (state.users||[]).find(user=>user.id===action?.assigneeUserId)||null;
+}
+
+function ownerLabel(action){
+  const user=assignedUser(action);
+  return user?.displayName||user?.email||"Unassigned";
+}
+
 function formatDate(value){
   if(!value)return "";
   const date=new Date(`${value}T00:00:00`);
@@ -252,12 +284,14 @@ function renderMetrics(){
 function renderFilters(){
   const f=state.filters||{};
   el("type-filter").innerHTML=options(f.types||[],val("type-filter"),"All types",typeLabels);
-  el("owner-filter").innerHTML=options(f.owners||[],val("owner-filter"),"All owners");
+  el("owner-filter").innerHTML=options(f.owners||[],val("owner-filter"),"All teams");
+  el("assignee-filter").innerHTML=userOptions(val("assignee-filter"),"All owners");
   el("status-filter").innerHTML=options(f.statuses||[],val("status-filter"),"All statuses");
   el("priority-filter").innerHTML=options(f.priorities||[],val("priority-filter"),"All priorities");
   el("season-filter").innerHTML=options(f.seasons||[],val("season-filter"),"All seasons");
   el("bulk-status").innerHTML=options(f.statuses||[],val("bulk-status"),"Leave");
   el("bulk-owner").innerHTML=options(f.owners||[],val("bulk-owner"),"Leave");
+  el("bulk-assignee").innerHTML=userOptions(val("bulk-assignee"),"Leave");
   el("bulk-priority").innerHTML=options(f.priorities||[],val("bulk-priority"),"Leave");
 }
 
@@ -274,19 +308,40 @@ function renderPeriods(){
 function renderActions(){
   const actions=state.actions||[];
   el("action-count").textContent=`${actions.length} action${actions.length===1?"":"s"}`;
-  el("action-list").innerHTML=actions.length?actions.map(action=>`
+  if(!actions.length){
+    el("action-list").innerHTML=`<p class="empty-state">No actions match the current filters.</p>`;
+    return;
+  }
+  const groups=(state.filters.types||Object.keys(typeLabels))
+    .map(type=>({type,actions:actions.filter(action=>action.actionType===type)}))
+    .filter(group=>group.actions.length);
+  el("action-list").innerHTML=groups.map(group=>{
+    const openCount=group.actions.filter(action=>action.status!=="Done").length;
+    return `<details class="action-type-group" ${expandedTypes.has(group.type)?"open":""} ontoggle="toggleActionGroup('${attr(group.type)}',this.open)">
+      <summary>
+        <span><strong>${escapeHtml(typeLabels[group.type]||group.type)}</strong><span>${group.actions.length} action${group.actions.length===1?"":"s"} · ${openCount} open</span></span>
+      </summary>
+      <div class="action-group-rows">${group.actions.map(action=>`
     <button type="button" class="action-row ${action.id===state.selectedId?"active":""}" onclick="selectAction('${attr(action.id)}')">
       <span class="action-main">
         <strong>${escapeHtml(action.title)}</strong>
         <span>${escapeHtml(action.productTitle)}${action.sku?` - ${escapeHtml(action.sku)}`:""}</span>
-        <span>${escapeHtml(action.owner)} - ${escapeHtml(action.rationale)}</span>
+        <span>${escapeHtml(ownerLabel(action))} · ${escapeHtml(action.owner)} team</span>
+        <span>${escapeHtml(action.rationale)}</span>
       </span>
       <span class="action-side">
         <span class="badge ${badgeClass(action)}">${escapeHtml(action.priority)}</span>
-        <span>${escapeHtml(typeLabels[action.actionType]||action.actionType)}</span>
+        <span>${escapeHtml(action.status)}</span>
         <span>${formatDate(action.dueDate)||"No due date"}</span>
       </span>
-    </button>`).join(""):`<p class="empty-state">No actions match the current filters.</p>`;
+    </button>`).join("")}</div>
+    </details>`;
+  }).join("");
+}
+
+function toggleActionGroup(type,open){
+  if(open)expandedTypes.add(type);
+  else expandedTypes.delete(type);
 }
 
 function daysBetweenIso(left,right){
@@ -330,6 +385,7 @@ function sortValue(action,key){
   if(key==="priority")return {High:0,Medium:1,Low:2}[action.priority]??9;
   if(key==="status")return {Open:0,"In progress":1,Blocked:2,Snoozed:3,Done:4}[action.status]??9;
   if(key==="owner")return action.owner||"";
+  if(key==="assignee")return ownerLabel(action);
   if(key==="product")return action.productTitle||"";
   if(key==="sku")return action.sku||"";
   if(key==="season")return action.season||"";
@@ -387,14 +443,23 @@ function renderTable(){
   const statuses=state.filters.statuses||[];
   const owners=state.filters.owners||[];
   const priorities=state.filters.priorities||[];
-  el("table-wrap").innerHTML=`<table class="action-table">
+  const groups=(state.filters.types||Object.keys(typeLabels))
+    .map(type=>({type,rows:rows.filter(action=>action.actionType===type)}))
+    .filter(group=>group.rows.length);
+  el("table-wrap").innerHTML=`<div class="table-groups">${groups.map(group=>{
+    const openCount=group.rows.filter(action=>action.status!=="Done").length;
+    return `<details class="table-type-group" ${expandedTypes.has(group.type)?"open":""} ontoggle="toggleActionGroup('${attr(group.type)}',this.open)">
+      <summary>
+        <span><strong>${escapeHtml(typeLabels[group.type]||group.type)}</strong><span>${group.rows.length} action${group.rows.length===1?"":"s"} · ${openCount} open</span></span>
+      </summary>
+      <div class="table-scroll"><table class="action-table">
     <thead><tr>
-      <th style="width:34px"><input type="checkbox" aria-label="Select all visible" ${rows.every(action=>selectedRows.has(action.id))?"checked":""} onchange="setAllVisible(this.checked)"></th>
-      <th style="width:108px">${sortHeader("type","Type")}</th>
+      <th style="width:34px"><input type="checkbox" aria-label="Select all ${attr(typeLabels[group.type]||group.type)} actions" ${group.rows.every(action=>selectedRows.has(action.id))?"checked":""} onchange="setGroupVisible('${attr(group.type)}',this.checked)"></th>
       <th style="width:78px">${sortHeader("priority","Priority")}</th>
       <th style="width:78px">${sortHeader("status","Status")}</th>
-      <th style="width:100px">${sortHeader("owner","Owner")}</th>
-      <th style="width:330px">${sortHeader("product","Product")}</th>
+      <th style="width:95px">${sortHeader("owner","Team")}</th>
+      <th style="width:150px">${sortHeader("assignee","Owner")}</th>
+      <th style="width:300px">${sortHeader("product","Product")}</th>
       <th style="width:62px">${sortHeader("sku","SKU")}</th>
       <th style="width:60px">${sortHeader("season","Season")}</th>
       <th style="width:92px">${sortHeader("category","Category")}</th>
@@ -407,18 +472,20 @@ function renderTable(){
       <th style="width:88px">${sortHeader("due","Due")}</th>
       <th style="width:58px">Open</th>
     </tr></thead>
-    <tbody>${rows.map(action=>tableRow(action,statuses,owners,priorities)).join("")}</tbody>
-  </table>`;
+    <tbody>${group.rows.map(action=>tableRow(action,statuses,owners,priorities)).join("")}</tbody>
+  </table></div>
+    </details>`;
+  }).join("")}</div>`;
 }
 
 function tableRow(action,statuses,owners,priorities){
   const m=action.metrics||{};
   return `<tr>
     <td><input type="checkbox" aria-label="Select ${attr(action.productTitle)}" ${selectedRows.has(action.id)?"checked":""} onchange="toggleRow('${attr(action.id)}',this.checked)"></td>
-    <td><span class="badge ${badgeClass(action)}">${escapeHtml(typeLabels[action.actionType]||action.actionType)}</span></td>
     <td><select class="table-select" onchange="quickUpdateAction('${attr(action.id)}','priority',this.value)">${options(priorities,action.priority)}</select></td>
     <td><select class="table-select" onchange="quickUpdateAction('${attr(action.id)}','status',this.value)">${options(statuses,action.status)}</select></td>
     <td><select class="table-select" onchange="quickUpdateAction('${attr(action.id)}','owner',this.value)">${options(owners,action.owner)}</select></td>
+    <td><select class="table-select" onchange="quickUpdateAction('${attr(action.id)}','assigneeUserId',this.value)">${userOptions(action.assigneeUserId)}</select></td>
     <td><strong title="${attr(action.productTitle)}">${escapeHtml(action.productTitle)}</strong><small title="${attr(action.rationale)}">${escapeHtml(action.rationale)}</small></td>
     <td title="${attr(action.sku)}">${escapeHtml(action.sku||"-")}</td>
     <td>${escapeHtml(action.season||"-")}</td>
@@ -505,8 +572,8 @@ function renderDetail(){
       <div class="workflow-grid">
         ${input("detail-actor","Updated by",localStorage.getItem("weeklyActionsActorName")||val("actor-name"))}
         ${select("detail-status","Status",state.filters.statuses||[],action.status)}
-        ${select("detail-owner","Owner",state.filters.owners||[],action.owner)}
-        <div class="field"><label>Assignee</label><select class="select" id="detail-assignee">${userOptions(action.assigneeUserId)}</select></div>
+        ${select("detail-owner","Team",state.filters.owners||[],action.owner)}
+        <div class="field"><label>Owner</label><select class="select" id="detail-assignee">${userOptions(action.assigneeUserId)}</select></div>
         ${select("detail-priority","Priority",state.filters.priorities||[],action.priority)}
         ${input("detail-due","Due date",action.dueDate,"date")}
         <div class="field"><label>Snooze</label><select class="select" id="detail-snooze" onchange="applyDetailSnooze(this.value)"><option value="">No preset</option><option value="14">2 weeks</option><option value="28">4 weeks</option><option value="56">8 weeks</option><option value="84">12 weeks</option></select></div>
@@ -528,6 +595,7 @@ function queryString(){
   if(val("search"))params.set("search",val("search"));
   if(val("type-filter"))params.set("type",val("type-filter"));
   if(val("owner-filter"))params.set("owner",val("owner-filter"));
+  if(val("assignee-filter"))params.set("assignee",val("assignee-filter"));
   if(val("status-filter"))params.set("status",val("status-filter"));
   if(val("priority-filter"))params.set("priority",val("priority-filter"));
   if(val("season-filter"))params.set("season",val("season-filter"));
@@ -564,6 +632,8 @@ async function loadActions(){
 }
 
 async function selectAction(id){
+  const action=state.actions.find(item=>item.id===id);
+  if(action)expandedTypes.add(action.actionType);
   state.selectedId=id;
   await loadActions();
 }
@@ -649,8 +719,8 @@ function applyDetailSnooze(days){
 }
 
 function setView(view){
-  state.view=view==="table"?"table":"list";
-  localStorage.setItem("weeklyActionsView",state.view);
+  state.view=view==="table"?"table":"grouped";
+  localStorage.setItem(VIEW_STORAGE_KEY,state.view);
   renderView();
 }
 
@@ -668,7 +738,7 @@ function setSort(key){
 function applyPreset(name){
   const set=(id,value)=>{el(id).value=value||"";};
   if(name==="clear"){
-    ["search","type-filter","owner-filter","status-filter","priority-filter","season-filter"].forEach(id=>set(id,""));
+    ["search","type-filter","owner-filter","assignee-filter","status-filter","priority-filter","season-filter"].forEach(id=>set(id,""));
     selectedRows.clear();
     loadActions();
     return;
@@ -676,6 +746,7 @@ function applyPreset(name){
   if(name==="markdown"){
     set("type-filter","markdown");
     set("owner-filter","");
+    set("assignee-filter","");
     set("status-filter","Open");
     set("priority-filter","");
     set("season-filter","");
@@ -684,6 +755,7 @@ function applyPreset(name){
   }else if(name==="reorders"){
     set("type-filter","reorder");
     set("owner-filter","Buyer");
+    set("assignee-filter","");
     set("status-filter","Open");
     set("priority-filter","");
     set("season-filter","");
@@ -692,6 +764,7 @@ function applyPreset(name){
   }else if(name==="high"){
     set("type-filter","");
     set("owner-filter","");
+    set("assignee-filter","");
     set("status-filter","Open");
     set("priority-filter","High");
     set("season-filter","");
@@ -700,13 +773,14 @@ function applyPreset(name){
   }else if(name==="snoozed"){
     set("type-filter","");
     set("owner-filter","");
+    set("assignee-filter","");
     set("status-filter","Snoozed");
     set("priority-filter","");
     set("season-filter","");
     set("search","");
     state.view="table";
   }
-  localStorage.setItem("weeklyActionsView",state.view);
+  localStorage.setItem(VIEW_STORAGE_KEY,state.view);
   selectedRows.clear();
   loadActions();
 }
@@ -725,9 +799,17 @@ function setAllVisible(checked){
   renderTable();
 }
 
+function setGroupVisible(type,checked){
+  for(const action of actionRows().filter(item=>item.actionType===type)){
+    if(checked)selectedRows.add(action.id);
+    else selectedRows.delete(action.id);
+  }
+  renderTable();
+}
+
 function openFromTable(id){
-  state.view="list";
-  localStorage.setItem("weeklyActionsView","list");
+  state.view="grouped";
+  localStorage.setItem(VIEW_STORAGE_KEY,"grouped");
   selectAction(id);
 }
 
@@ -763,6 +845,7 @@ async function applyBulkUpdate(){
   const patch={};
   if(val("bulk-status"))patch.status=val("bulk-status");
   if(val("bulk-owner"))patch.owner=val("bulk-owner");
+  if(val("bulk-assignee"))patch.assigneeUserId=val("bulk-assignee");
   if(val("bulk-priority"))patch.priority=val("bulk-priority");
   if(val("bulk-due"))patch.dueDate=val("bulk-due");
   if(val("bulk-snooze")){
@@ -772,7 +855,7 @@ async function applyBulkUpdate(){
   const note=val("bulk-note");
   if(!Object.keys(patch).length&&!note){
     el("status-note").className="status warn";
-    el("status-note").textContent="Choose a status, owner, priority, due date, snooze, or note to apply.";
+    el("status-note").textContent="Choose a status, team, owner, priority, due date, snooze, or note to apply.";
     return;
   }
   const actor=val("actor-name")||localStorage.getItem("weeklyActionsActorName")||"";
@@ -792,6 +875,7 @@ async function applyBulkUpdate(){
     if(latest)applyData(latest);
     el("bulk-status").value="";
     el("bulk-owner").value="";
+    el("bulk-assignee").value="";
     el("bulk-priority").value="";
     el("bulk-due").value="";
     el("bulk-snooze").value="";
@@ -814,7 +898,7 @@ function csvCell(value){
 
 function actionExportRows(actions){
   const headers=[
-    "Action type","Priority","Status","Owner","Product","SKU","Season","Category","Stock","Units sold",
+    "Action type","Priority","Status","Team","Owner","Product","SKU","Season","Category","Stock","Units sold",
     "Cover weeks","Forecast buy","Stock value","Revenue","GP %","Already marked down","Price","Compare at price",
     "Due date","Source report","Rationale"
   ];
@@ -825,6 +909,7 @@ function actionExportRows(actions){
       action.priority,
       action.status,
       action.owner,
+      ownerLabel(action),
       action.productTitle,
       action.sku,
       action.season,
@@ -877,11 +962,11 @@ function exportMarkdownActions(){
     el("status-note").textContent="No markdown actions match the current filters.";
     return;
   }
-  const headers=["Product","SKU","Season","Category","Status","Priority","Owner","Stock","Units sold","Cover weeks","Stock value","Already marked down","Price","Compare at price","Due date","Rationale"];
+  const headers=["Product","SKU","Season","Category","Status","Priority","Team","Owner","Stock","Units sold","Cover weeks","Stock value","Already marked down","Price","Compare at price","Due date","Rationale"];
   const rows=actions.map(action=>{
     const m=action.metrics||{};
     return [
-      action.productTitle,action.sku,action.season,action.category,action.status,action.priority,action.owner,
+      action.productTitle,action.sku,action.season,action.category,action.status,action.priority,action.owner,ownerLabel(action),
       m.stock==null?"":Number(m.stock||0),Number(m.units||0),m.coverWks==null?"":Number(m.coverWks||0).toFixed(1),
       Number(m.stockValue||0).toFixed(2),m.isMarkedDown?"Yes":"No",
       m.price==null?"":Number(m.price||0).toFixed(2),m.compareAtPrice==null?"":Number(m.compareAtPrice||0).toFixed(2),
@@ -964,7 +1049,7 @@ async function sendSelectedToSalePlanner(){
   }
 }
 
-["search","type-filter","owner-filter","status-filter","priority-filter","season-filter"].forEach(id=>{
+["search","type-filter","owner-filter","assignee-filter","status-filter","priority-filter","season-filter"].forEach(id=>{
   el(id).addEventListener("input",()=>{state.selectedId="";loadActions();});
 });
 el("refresh-btn").addEventListener("click",loadActions);

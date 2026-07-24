@@ -17,6 +17,7 @@ const { buildLabelJobSnapshot, normalizeDoubleBarcodeSnapshot } = require("./lib
 const orderActuals = require("./lib/order-actuals");
 const { DEFAULT_PAH_SETTINGS, buildPahReport, safeSettings: safePahSettings } = require("./lib/pah-report");
 const pnl = require("./lib/pnl");
+const cashflow = require("./lib/cashflow");
 const finance = require("./lib/commerce-finance");
 const salePlanner = require("./lib/sale-planner");
 const seasonalSaleReview = require("./lib/seasonal-sale-review");
@@ -5199,6 +5200,64 @@ function openOrderSqliteDb() {
       synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS cashflow_weekly_budgets (
+      id TEXT PRIMARY KEY,
+      week_start TEXT NOT NULL UNIQUE,
+      amount REAL NOT NULL DEFAULT 0,
+      marketing_amount REAL NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS cashflow_manual_movements (
+      id TEXT PRIMARY KEY,
+      movement_date TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'Other',
+      name TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS cashflow_cost_forecasts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      cost_class TEXT NOT NULL DEFAULT 'other',
+      calculation_type TEXT NOT NULL DEFAULT 'fixed',
+      pnl_rule_id TEXT,
+      service_start_date TEXT,
+      service_end_date TEXT,
+      due_date TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      reference TEXT,
+      notes TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS order_payment_transactions (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      invoice_id TEXT,
+      payment_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Planned',
+      amount REAL NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'GBP',
+      fx_rate REAL DEFAULT 0,
+      amount_gbp REAL NOT NULL DEFAULT 0,
+      reference TEXT,
+      notes TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS email_campaigns (
       id TEXT PRIMARY KEY,
       campaign_code TEXT NOT NULL UNIQUE,
@@ -5303,12 +5362,22 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_pnl_marketing_spend_dates ON pnl_marketing_spend(start_date, end_date, channel);
     CREATE INDEX IF NOT EXISTS idx_pnl_marketing_actuals_dates ON pnl_marketing_spend_actuals(source, connector, spend_date);
     CREATE INDEX IF NOT EXISTS idx_pnl_windsor_sync_runs_lookup ON pnl_windsor_sync_runs(connector, status, start_date, end_date, synced_at);
+    CREATE INDEX IF NOT EXISTS idx_cashflow_budgets_week ON cashflow_weekly_budgets(week_start);
+    CREATE INDEX IF NOT EXISTS idx_cashflow_manual_date ON cashflow_manual_movements(movement_date, direction);
+    CREATE INDEX IF NOT EXISTS idx_cashflow_cost_due ON cashflow_cost_forecasts(due_date, cost_class);
+    CREATE INDEX IF NOT EXISTS idx_cashflow_cost_rule ON cashflow_cost_forecasts(pnl_rule_id, due_date);
+    CREATE INDEX IF NOT EXISTS idx_order_payments_order ON order_payment_transactions(order_id, payment_date, status);
+    CREATE INDEX IF NOT EXISTS idx_order_payments_invoice ON order_payment_transactions(invoice_id, payment_date, status);
     CREATE INDEX IF NOT EXISTS idx_email_campaigns_status ON email_campaigns(status, sent_at, created_at);
     CREATE INDEX IF NOT EXISTS idx_email_campaign_products_campaign ON email_campaign_products(campaign_id, position);
     CREATE INDEX IF NOT EXISTS idx_email_campaign_products_key ON email_campaign_products(product_key, campaign_id);
     CREATE INDEX IF NOT EXISTS idx_email_campaign_metrics_campaign ON email_campaign_metric_snapshots(campaign_id, fetched_at);
   `);
   bestsellers.recoverReportSyncJobs(orderSqliteDb);
+  const cashflowBudgetColumns = orderSqliteDb.prepare("PRAGMA table_info(cashflow_weekly_budgets)").all().map(column => column.name);
+  if (!cashflowBudgetColumns.includes("marketing_amount")) {
+    orderSqliteDb.prepare("ALTER TABLE cashflow_weekly_budgets ADD COLUMN marketing_amount REAL NOT NULL DEFAULT 0").run();
+  }
   const orderColumns = orderSqliteDb.prepare("PRAGMA table_info(orders)").all().map(column => column.name);
   if (!orderColumns.includes("archived_at")) {
     orderSqliteDb.prepare("ALTER TABLE orders ADD COLUMN archived_at TEXT").run();
@@ -7481,6 +7550,7 @@ function deleteStoredOrder(orderId, actorName = "") {
   const db = openOrderSqliteDb();
   const invoiceFiles = db.prepare("SELECT file_path FROM order_invoices WHERE order_id = ?").all(String(orderId));
   const remove = db.transaction(() => {
+    db.prepare("DELETE FROM order_payment_transactions WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_invoices WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_discrepancies WHERE order_id = ?").run(String(orderId));
     db.prepare("DELETE FROM order_receipt_lines WHERE order_id = ?").run(String(orderId));
@@ -7981,6 +8051,37 @@ function readOrderInvoices(orderId, includeFiles = true) {
   `).all(String(orderId)).map(row => invoiceFromRow(row, includeFiles));
 }
 
+function orderPaymentFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    invoiceId: row.invoice_id || "",
+    paymentDate: row.payment_date || "",
+    status: row.status || "Planned",
+    amount: Number(row.amount || 0),
+    currency: row.currency || "GBP",
+    fxRate: Number(row.fx_rate || 0),
+    amountGbp: Number(row.amount_gbp || 0),
+    reference: row.reference || "",
+    notes: row.notes || "",
+    createdBy: row.created_by || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readOrderPayments(orderId = "") {
+  const cleanOrderId = String(orderId || "").trim();
+  const where = cleanOrderId ? "WHERE order_id = ?" : "";
+  return openOrderSqliteDb().prepare(`
+    SELECT *
+    FROM order_payment_transactions
+    ${where}
+    ORDER BY date(payment_date) DESC, updated_at DESC
+  `).all(...(cleanOrderId ? [cleanOrderId] : [])).map(orderPaymentFromRow);
+}
+
 function orderTotalGbp(order) {
   const lines = order?.lines || order?.order?.lines || [];
   const lineTotal = lines.reduce((total, line) => total + reportLineValueGbp(line), 0);
@@ -8023,6 +8124,7 @@ function invoiceSummary(orderOrId) {
   const order = resolveOrderForInvoiceSummary(orderOrId);
   const orderId = String(order?.id || orderOrId || "");
   const invoices = readOrderInvoices(orderId, false);
+  const payments = readOrderPayments(orderId).filter(payment => payment.status === "Paid");
   const regularInvoices = invoices.filter(invoice => invoice.documentKind !== "credit_note");
   const creditNotes = invoices.filter(invoice => invoice.documentKind === "credit_note");
   const unpaidActionable = regularInvoices.filter(invoice => invoice.status !== "Paid" && (invoice.sentToFd || invoice.isReceived));
@@ -8038,12 +8140,19 @@ function invoiceSummary(orderOrId) {
     .reduce((total, invoice) => total + amountToEur(invoice.amount, invoice.currency, order), 0);
   const totalDue = grossInvoiceDue - creditNoteTotal;
   const totalDueEur = grossInvoiceDueEur - creditNoteTotalEur;
-  const totalPaid = regularInvoices
-    .filter(invoice => invoice.status === "Paid")
-    .reduce((total, invoice) => total + amountToGbp(invoice.amount, invoice.currency, order), 0);
-  const totalPaidEur = regularInvoices
-    .filter(invoice => invoice.status === "Paid")
-    .reduce((total, invoice) => total + amountToEur(invoice.amount, invoice.currency, order), 0);
+  const paidByInvoice = new Map();
+  let unlinkedPaid = 0;
+  for (const payment of payments) {
+    if (payment.invoiceId) paidByInvoice.set(payment.invoiceId, Number(paidByInvoice.get(payment.invoiceId) || 0) + Number(payment.amountGbp || 0));
+    else unlinkedPaid += Number(payment.amountGbp || 0);
+  }
+  const totalPaid = regularInvoices.reduce((total, invoice) => {
+    const invoiceGbp = amountToGbp(invoice.amount, invoice.currency, order);
+    const ledgerPaid = Number(paidByInvoice.get(invoice.id) || 0);
+    if (ledgerPaid > 0) return total + Math.min(invoiceGbp, ledgerPaid);
+    return total + (invoice.status === "Paid" ? invoiceGbp : 0);
+  }, 0) + unlinkedPaid;
+  const totalPaidEur = amountToEur(totalPaid, "GBP", order);
   const orderTotal = orderTotalGbp(order);
   const orderTotalEur = amountToEur(orderTotal, "GBP", order);
   const toleranceGbp = invoiceBalanceToleranceGbp;
@@ -8052,8 +8161,10 @@ function invoiceSummary(orderOrId) {
   const varianceIgnored = Boolean(workflowData.invoiceVarianceIgnored);
   const outstandingInvoiced = Math.max(0, totalDue - totalPaid);
   const outstandingInvoicedEur = Math.max(0, totalDueEur - totalPaidEur);
-  const uninvoicedBalance = varianceIgnored ? 0 : balanceAfterTolerance(Math.max(0, orderTotal - totalDue), toleranceGbp);
-  const uninvoicedBalanceEur = varianceIgnored ? 0 : balanceAfterTolerance(Math.max(0, orderTotalEur - totalDueEur), toleranceEur);
+  const paidBeyondInvoices = Math.max(0, totalPaid - totalDue);
+  const paidBeyondInvoicesEur = Math.max(0, totalPaidEur - totalDueEur);
+  const uninvoicedBalance = varianceIgnored ? 0 : balanceAfterTolerance(Math.max(0, orderTotal - totalDue - paidBeyondInvoices), toleranceGbp);
+  const uninvoicedBalanceEur = varianceIgnored ? 0 : balanceAfterTolerance(Math.max(0, orderTotalEur - totalDueEur - paidBeyondInvoicesEur), toleranceEur);
   const outstanding = outstandingInvoiced + uninvoicedBalance;
   const outstandingEur = outstandingInvoicedEur + uninvoicedBalanceEur;
   const invoiceVariance = totalDue - orderTotal;
@@ -8715,6 +8826,8 @@ function deleteOrderInvoice(order, body) {
   const db = openOrderSqliteDb();
   const invoice = db.prepare("SELECT * FROM order_invoices WHERE id = ? AND order_id = ?").get(invoiceId, String(order.id));
   if (!invoice) throw new Error("Invoice not found");
+  const linkedPayments = db.prepare("SELECT COUNT(*) count FROM order_payment_transactions WHERE invoice_id = ? AND order_id = ?").get(invoiceId, String(order.id));
+  if (Number(linkedPayments?.count || 0) > 0) throw new Error("Remove or reassign the invoice's supplier payment transactions before deleting it.");
   db.prepare("DELETE FROM order_invoices WHERE id = ? AND order_id = ?").run(invoiceId, String(order.id));
   if (invoice.linked_discrepancy_id) {
     db.prepare(`
@@ -9326,8 +9439,12 @@ function userPermissions(user) {
     permissions.add("orders:payment");
     permissions.add("orders:invoice");
     permissions.add("pnl:write");
+    permissions.add("cashflow:write");
   }
-  if (userHasRole(user, ["Finance", "Buying Director"])) permissions.add("pnl:view");
+  if (userHasRole(user, ["Finance", "Buying Director"])) {
+    permissions.add("pnl:view");
+    permissions.add("cashflow:view");
+  }
   if (userHasRole(user, ["Merchandising"])) {
     permissions.add("orders:intake");
     permissions.add("orders:archive");
@@ -9788,11 +9905,14 @@ function readWeeklyActions(url) {
   const params = {
     status: String(url.searchParams.get("status") || "").trim(),
     owner: String(url.searchParams.get("owner") || "").trim(),
+    assigneeUserId: String(url.searchParams.get("assignee") || "").trim(),
     priority: String(url.searchParams.get("priority") || "").trim(),
     type: String(url.searchParams.get("type") || "").trim(),
     season: String(url.searchParams.get("season") || "").trim(),
     search: String(url.searchParams.get("search") || "").trim().toLowerCase()
   };
+  const users = publicAssignableUsers();
+  const usersById = new Map(users.map(user => [user.id, user]));
   const rows = db.prepare(`
     SELECT *
     FROM weekly_actions
@@ -9804,9 +9924,20 @@ function readWeeklyActions(url) {
   `).all();
   let actions = rows.map(row => weeklyActionFromRow(row));
   actions = actions.filter(action => {
-    const haystack = [action.title, action.productTitle, action.sku, action.season, action.category, action.rationale].join(" ").toLowerCase();
+    const assignee = usersById.get(action.assigneeUserId);
+    const haystack = [
+      action.title,
+      action.productTitle,
+      action.sku,
+      action.season,
+      action.category,
+      action.rationale,
+      assignee?.displayName,
+      assignee?.email
+    ].join(" ").toLowerCase();
     return (!params.status || action.status === params.status)
       && (!params.owner || action.owner === params.owner)
+      && (!params.assigneeUserId || action.assigneeUserId === params.assigneeUserId)
       && (!params.priority || action.priority === params.priority)
       && (!params.type || action.actionType === params.type)
       && (!params.season || action.season === params.season)
@@ -9827,7 +9958,7 @@ function readWeeklyActions(url) {
       types: ["reorder", "markdown", "feature", "watch"],
       seasons: [...new Set(rows.map(row => row.season).filter(Boolean))].sort().reverse()
     },
-    users: publicAssignableUsers(),
+    users,
     periods: readBestsellersPeriods().filter(period => period.sourceType === "shopify_api" && period.canonicalWeek)
   };
 }
@@ -15745,6 +15876,8 @@ function upsertPnlCostRule(input, req) {
 function deletePnlCostRule(id) {
   const clean = String(id || "").trim();
   if (!clean) throw new Error("Missing cost rule id.");
+  const linkedForecasts = openOrderSqliteDb().prepare("SELECT COUNT(*) count FROM cashflow_cost_forecasts WHERE pnl_rule_id = ?").get(clean)?.count || 0;
+  if (linkedForecasts) throw new Error("Delete or relink the cashflow forecast costs using this P&L rule first.");
   return Boolean(openOrderSqliteDb().prepare("DELETE FROM pnl_cost_rules WHERE id = ?").run(clean).changes);
 }
 
@@ -16622,8 +16755,801 @@ async function handlePnlScenario(req, res) {
   });
 }
 
+const cashflowViewRoles = ["Admin", "Finance", "Buying Director"];
+const cashflowWriteRoles = ["Admin", "Finance"];
+
+function cashflowDefaultSettings() {
+  return {
+    openingBalance: 0,
+    receiptLagBusinessDays: 3,
+    horizonWeeks: 13,
+    forecastAov: 0,
+    forecastItemsPerOrder: 0,
+    lowCashThreshold: 0,
+    pnlCostTiming: {}
+  };
+}
+
+function cashflowTimingSetting(value = {}, fallbackPaymentTiming = "weekly") {
+  const setting = value && typeof value === "object" ? value : {};
+  const configured = setting.paymentTiming === "month_end" ? "scheduled" : setting.paymentTiming;
+  const paymentTiming = configured === "scheduled" ? "scheduled" : configured === "weekly" ? "weekly" : fallbackPaymentTiming;
+  const paymentDate = validReportDate(setting.paymentDate) ? setting.paymentDate : "";
+  return { enabled: setting.enabled !== false, paymentTiming, paymentDate };
+}
+
+function defaultCashflowCostPaymentTiming(rule = {}) {
+  const label = `${rule.name || ""} ${rule.category || ""}`;
+  return /(warehouse|storage|courier|shipping|delivery|pick\s*(?:and|&)\s*pack|packaging|intake|return|marketing)/i.test(label) ? "scheduled" : "weekly";
+}
+
+function effectiveCashflowPnlTiming(settings, costRules) {
+  const savedRules = settings.pnlCostTiming || {};
+  return {
+    costRules: costRules.filter(rule => rule.status === "Active").map(rule => ({
+      id: rule.id,
+      name: rule.name,
+      category: rule.category,
+      costType: rule.costType,
+      ...cashflowTimingSetting(savedRules[rule.id], defaultCashflowCostPaymentTiming(rule))
+    }))
+  };
+}
+
+function readCashflowSettings() {
+  const saved = readAppSettingJson("cashflowConfig", {});
+  const defaults = cashflowDefaultSettings();
+  const savedCostTiming = saved.pnlCostTiming && typeof saved.pnlCostTiming === "object" && !Array.isArray(saved.pnlCostTiming) ? saved.pnlCostTiming : {};
+  return {
+    openingBalance: Number(saved.openingBalance || defaults.openingBalance),
+    receiptLagBusinessDays: Math.max(0, Math.min(15, Math.trunc(Number(saved.receiptLagBusinessDays ?? defaults.receiptLagBusinessDays)))),
+    horizonWeeks: Math.max(4, Math.min(26, Math.trunc(Number(saved.horizonWeeks || defaults.horizonWeeks)))),
+    forecastAov: Math.max(0, Number(saved.forecastAov || defaults.forecastAov)),
+    forecastItemsPerOrder: Math.max(0, Number(saved.forecastItemsPerOrder || defaults.forecastItemsPerOrder)),
+    lowCashThreshold: Number(saved.lowCashThreshold || defaults.lowCashThreshold),
+    pnlCostTiming: Object.fromEntries(Object.entries(savedCostTiming).slice(0, 250).map(([id, timing]) => [String(id), cashflowTimingSetting(timing)]))
+  };
+}
+
+function writeCashflowSettings(input = {}) {
+  const current = readCashflowSettings();
+  const rawCostTiming = input.pnlCostTiming && typeof input.pnlCostTiming === "object" && !Array.isArray(input.pnlCostTiming) ? input.pnlCostTiming : current.pnlCostTiming;
+  const next = {
+    openingBalance: Number.isFinite(Number(input.openingBalance)) ? Number(input.openingBalance) : current.openingBalance,
+    receiptLagBusinessDays: Math.max(0, Math.min(15, Math.trunc(Number(input.receiptLagBusinessDays ?? current.receiptLagBusinessDays)))),
+    horizonWeeks: Math.max(4, Math.min(26, Math.trunc(Number(input.horizonWeeks || current.horizonWeeks)))),
+    forecastAov: Math.max(0, Number(input.forecastAov ?? current.forecastAov)),
+    forecastItemsPerOrder: Math.max(0, Number(input.forecastItemsPerOrder ?? current.forecastItemsPerOrder)),
+    lowCashThreshold: Number.isFinite(Number(input.lowCashThreshold)) ? Number(input.lowCashThreshold) : current.lowCashThreshold,
+    pnlCostTiming: Object.fromEntries(Object.entries(rawCostTiming).slice(0, 250).map(([id, timing]) => [String(id), cashflowTimingSetting(timing)]))
+  };
+  return writeAppSettingJson("cashflowConfig", next);
+}
+
+function cashflowBudgetFromRow(row) {
+  return {
+    id: row.id,
+    weekStart: row.week_start,
+    amount: Number(row.amount || 0),
+    marketingAmount: Number(row.marketing_amount || 0),
+    notes: row.notes || "",
+    createdBy: row.created_by || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readCashflowBudgets(startDate = "", endDate = "") {
+  const where = startDate && endDate ? "WHERE week_start >= ? AND week_start <= ?" : "";
+  return openOrderSqliteDb().prepare(`
+    SELECT * FROM cashflow_weekly_budgets
+    ${where}
+    ORDER BY date(week_start)
+  `).all(...(where ? [startDate, endDate] : [])).map(cashflowBudgetFromRow);
+}
+
+function upsertCashflowBudgets(input = [], req) {
+  const rows = Array.isArray(input) ? input : [];
+  const db = openOrderSqliteDb();
+  const statement = db.prepare(`
+    INSERT INTO cashflow_weekly_budgets (id, week_start, amount, marketing_amount, notes, created_by, created_at, updated_at)
+    VALUES (@id, @weekStart, @amount, @marketingAmount, @notes, @createdBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(week_start) DO UPDATE SET
+      amount = excluded.amount,
+      marketing_amount = excluded.marketing_amount,
+      notes = excluded.notes,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  db.transaction(() => {
+    for (const row of rows) {
+      const weekStart = cashflow.mondayOf(row.weekStart || row.week_start);
+      if (!weekStart) throw new Error("Each cashflow budget needs a valid week.");
+      statement.run({
+        id: String(row.id || crypto.randomUUID()),
+        weekStart,
+        amount: Math.max(0, Number(row.amount || 0)),
+        marketingAmount: Math.max(0, Number(row.marketingAmount || row.marketing_amount || 0)),
+        notes: String(row.notes || "").trim().slice(0, 500),
+        createdBy: actorName(req)
+      });
+    }
+  })();
+  return rows.length;
+}
+
+function cashflowManualMovementFromRow(row) {
+  return {
+    id: row.id,
+    date: row.movement_date,
+    direction: row.direction,
+    category: row.category || "Other",
+    name: row.name,
+    amount: Number(row.amount || 0),
+    notes: row.notes || "",
+    source: "manual",
+    createdBy: row.created_by || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readCashflowManualMovements(startDate = "", endDate = "") {
+  const where = startDate && endDate ? "WHERE movement_date >= ? AND movement_date <= ?" : "";
+  return openOrderSqliteDb().prepare(`
+    SELECT * FROM cashflow_manual_movements
+    ${where}
+    ORDER BY date(movement_date), name COLLATE NOCASE
+  `).all(...(where ? [startDate, endDate] : [])).map(cashflowManualMovementFromRow);
+}
+
+function upsertCashflowManualMovement(input = {}, req) {
+  const movement = input.movement || input;
+  const id = String(movement.id || crypto.randomUUID());
+  const movementDate = String(movement.date || movement.movementDate || "").trim();
+  const direction = String(movement.direction || "outflow").trim().toLowerCase();
+  const name = String(movement.name || "").trim();
+  if (!validReportDate(movementDate)) throw new Error("Choose a valid cash movement date.");
+  if (!["inflow", "outflow"].includes(direction)) throw new Error("Choose inflow or outflow.");
+  if (!name) throw new Error("Add a cash movement name.");
+  const amount = Math.max(0, Number(movement.amount || 0));
+  if (!amount) throw new Error("Cash movement amount must be greater than zero.");
+  openOrderSqliteDb().prepare(`
+    INSERT INTO cashflow_manual_movements (
+      id, movement_date, direction, category, name, amount, notes, created_by, created_at, updated_at
+    ) VALUES (
+      @id, @movementDate, @direction, @category, @name, @amount, @notes, @createdBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      movement_date = excluded.movement_date,
+      direction = excluded.direction,
+      category = excluded.category,
+      name = excluded.name,
+      amount = excluded.amount,
+      notes = excluded.notes,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    id,
+    movementDate,
+    direction,
+    category: String(movement.category || "Other").trim().slice(0, 80) || "Other",
+    name: name.slice(0, 160),
+    amount,
+    notes: String(movement.notes || "").trim().slice(0, 600),
+    createdBy: actorName(req)
+  });
+  return cashflowManualMovementFromRow(openOrderSqliteDb().prepare("SELECT * FROM cashflow_manual_movements WHERE id = ?").get(id));
+}
+
+function deleteCashflowManualMovement(id) {
+  const clean = String(id || "").trim();
+  if (!clean) throw new Error("Missing cash movement id.");
+  return Boolean(openOrderSqliteDb().prepare("DELETE FROM cashflow_manual_movements WHERE id = ?").run(clean).changes);
+}
+
+const cashflowCostClasses = new Set(["marketing", "variable", "fixed", "other"]);
+
+function cashflowCostForecastFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    costClass: row.cost_class || "other",
+    calculationType: row.calculation_type || "fixed",
+    pnlRuleId: row.pnl_rule_id || "",
+    serviceStartDate: row.service_start_date || "",
+    serviceEndDate: row.service_end_date || "",
+    paymentDate: row.due_date || "",
+    dueDate: row.due_date || "",
+    amount: Number(row.amount || 0),
+    reference: row.reference || "",
+    notes: row.notes || "",
+    createdBy: row.created_by || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readCashflowCostForecasts(startDate = "", endDate = "") {
+  const where = startDate && endDate ? "WHERE due_date >= ? AND due_date <= ?" : "";
+  return openOrderSqliteDb().prepare(`
+    SELECT * FROM cashflow_cost_forecasts
+    ${where}
+    ORDER BY date(due_date), name COLLATE NOCASE
+  `).all(...(where ? [startDate, endDate] : [])).map(cashflowCostForecastFromRow);
+}
+
+function upsertCashflowCostForecast(input = {}, req) {
+  const forecast = input.forecast || input;
+  const id = String(forecast.id || crypto.randomUUID());
+  const name = String(forecast.name || "").trim();
+  const paymentDate = String(forecast.paymentDate || forecast.dueDate || "").trim();
+  const calculationType = forecast.calculationType === "pnl_rule" ? "pnl_rule" : "fixed";
+  const costClass = cashflowCostClasses.has(String(forecast.costClass || "").trim()) ? String(forecast.costClass).trim() : "other";
+  if (!name) throw new Error("Add a forecast cost name.");
+  if (!validReportDate(paymentDate)) throw new Error("Choose a valid payment date.");
+  let pnlRuleId = "";
+  let serviceStartDate = "";
+  let serviceEndDate = "";
+  let amount = Math.max(0, Number(forecast.amount || 0));
+  if (calculationType === "fixed") {
+    if (!amount) throw new Error("Forecast cost amount must be greater than zero.");
+  } else {
+    pnlRuleId = String(forecast.pnlRuleId || "").trim();
+    const rule = readPnlCostRules().find(row => row.id === pnlRuleId && row.status === "Active");
+    if (!rule) throw new Error("Choose an active P&L calculation rule.");
+    serviceStartDate = String(forecast.serviceStartDate || "").trim();
+    serviceEndDate = String(forecast.serviceEndDate || "").trim();
+    pnl.validateRange({ startDate: serviceStartDate, endDate: serviceEndDate });
+    if (serviceEndDate > paymentDate) throw new Error("The payment date must be on or after the forecast service period.");
+    amount = 0;
+  }
+  openOrderSqliteDb().prepare(`
+    INSERT INTO cashflow_cost_forecasts (
+      id, name, cost_class, calculation_type, pnl_rule_id, service_start_date, service_end_date,
+      due_date, amount, reference, notes, created_by, created_at, updated_at
+    ) VALUES (
+      @id, @name, @costClass, @calculationType, NULLIF(@pnlRuleId, ''), NULLIF(@serviceStartDate, ''), NULLIF(@serviceEndDate, ''),
+      @paymentDate, @amount, @reference, @notes, @createdBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      cost_class = excluded.cost_class,
+      calculation_type = excluded.calculation_type,
+      pnl_rule_id = excluded.pnl_rule_id,
+      service_start_date = excluded.service_start_date,
+      service_end_date = excluded.service_end_date,
+      due_date = excluded.due_date,
+      amount = excluded.amount,
+      reference = excluded.reference,
+      notes = excluded.notes,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    id,
+    name: name.slice(0, 160),
+    costClass,
+    calculationType,
+    pnlRuleId,
+    serviceStartDate,
+    serviceEndDate,
+    paymentDate,
+    amount,
+    reference: String(forecast.reference || "").trim().slice(0, 160),
+    notes: String(forecast.notes || "").trim().slice(0, 600),
+    createdBy: actorName(req)
+  });
+  if (pnlRuleId) {
+    const settings = readCashflowSettings();
+    settings.pnlCostTiming = {
+      ...(settings.pnlCostTiming || {}),
+      [pnlRuleId]: { enabled: true, paymentTiming: "scheduled" }
+    };
+    writeCashflowSettings(settings);
+  }
+  return cashflowCostForecastFromRow(openOrderSqliteDb().prepare("SELECT * FROM cashflow_cost_forecasts WHERE id = ?").get(id));
+}
+
+function deleteCashflowCostForecast(id) {
+  const clean = String(id || "").trim();
+  if (!clean) throw new Error("Missing forecast cost id.");
+  return Boolean(openOrderSqliteDb().prepare("DELETE FROM cashflow_cost_forecasts WHERE id = ?").run(clean).changes);
+}
+
+function saveOrderPayment(order, input = {}, req) {
+  const payment = input.payment || input;
+  const id = String(payment.id || crypto.randomUUID());
+  const existing = readOrderPayments(order.id).find(row => row.id === id);
+  if (!existing) {
+    const paymentWithSameId = readOrderPayments().find(row => row.id === id);
+    if (paymentWithSameId) throw new Error("This payment transaction belongs to another order.");
+  }
+  const paymentDate = String(payment.paymentDate || payment.date || "").trim();
+  const status = String(payment.status || "Planned").trim();
+  if (!validReportDate(paymentDate)) throw new Error("Choose a valid payment date.");
+  if (!["Planned", "Paid"].includes(status)) throw new Error("Choose Planned or Paid.");
+  if (existing?.status === "Paid" && status !== "Paid") throw new Error("A paid transaction cannot be changed back to Planned.");
+  const amount = Math.max(0, Number(payment.amount || 0));
+  if (!amount) throw new Error("Payment amount must be greater than zero.");
+  const invoiceId = String(payment.invoiceId || "").trim();
+  const invoice = invoiceId ? readOrderInvoices(order.id, false).find(row => row.id === invoiceId) : null;
+  if (invoiceId && !invoice) throw new Error("The selected invoice does not belong to this order.");
+  if (invoice?.documentKind === "credit_note") throw new Error("Supplier payments cannot be linked to a credit note.");
+  const currency = String(payment.currency || invoice?.currency || order.terms?.currency || "GBP").trim().toUpperCase();
+  if (!["GBP", "EUR"].includes(currency)) throw new Error("Cashflow supplier payments currently support GBP and EUR.");
+  const fxRate = currency === "EUR" ? Number(payment.fxRate || orderFxRate(order) || 0) : 1;
+  if (currency === "EUR" && !(fxRate > 0)) throw new Error("Add the order EUR-to-GBP FX rate before recording this payment.");
+  const amountGbp = currency === "EUR" ? amount * fxRate : amount;
+  openOrderSqliteDb().prepare(`
+    INSERT INTO order_payment_transactions (
+      id, order_id, invoice_id, payment_date, status, amount, currency, fx_rate, amount_gbp,
+      reference, notes, created_by, created_at, updated_at
+    ) VALUES (
+      @id, @orderId, NULLIF(@invoiceId, ''), @paymentDate, @status, @amount, @currency, @fxRate, @amountGbp,
+      @reference, @notes, @createdBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      invoice_id = excluded.invoice_id,
+      payment_date = excluded.payment_date,
+      status = excluded.status,
+      amount = excluded.amount,
+      currency = excluded.currency,
+      fx_rate = excluded.fx_rate,
+      amount_gbp = excluded.amount_gbp,
+      reference = excluded.reference,
+      notes = excluded.notes,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    id,
+    orderId: String(order.id),
+    invoiceId,
+    paymentDate,
+    status,
+    amount,
+    currency,
+    fxRate,
+    amountGbp: cashflow.money(amountGbp),
+    reference: String(payment.reference || "").trim().slice(0, 160),
+    notes: String(payment.notes || "").trim().slice(0, 600),
+    createdBy: actorName(req)
+  });
+
+  const affectedInvoiceIds = [...new Set([existing?.invoiceId, invoice?.id].filter(Boolean))];
+  for (const affectedInvoiceId of affectedInvoiceIds) {
+    const affectedInvoice = readOrderInvoices(order.id, false).find(row => row.id === affectedInvoiceId);
+    if (!affectedInvoice || affectedInvoice.documentKind === "credit_note") continue;
+    const hasPaidLedger = readOrderPayments(order.id).some(row => row.invoiceId === affectedInvoiceId && row.status === "Paid");
+    const hadPaidLedgerBefore = existing?.status === "Paid" && existing.invoiceId === affectedInvoiceId;
+    if (!hasPaidLedger && !hadPaidLedgerBefore) continue;
+    const paidGbp = readOrderPayments(order.id)
+      .filter(row => row.invoiceId === affectedInvoiceId && row.status === "Paid")
+      .reduce((sum, row) => sum + Number(row.amountGbp || 0), 0);
+    const invoicePaid = paidGbp + invoiceBalanceToleranceGbp >= amountToGbp(affectedInvoice.amount, affectedInvoice.currency, order);
+    openOrderSqliteDb().prepare(`
+      UPDATE order_invoices
+      SET status = @status,
+          is_received = CASE WHEN @invoicePaid = 1 THEN 1 ELSE is_received END,
+          sent_to_fd = CASE WHEN @invoicePaid = 1 THEN 1 ELSE sent_to_fd END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = @invoiceId AND order_id = @orderId
+    `).run({
+      status: invoicePaid ? "Paid" : (affectedInvoice.sentToFd ? "Sent to FD" : "Awaiting FD"),
+      invoicePaid: invoicePaid ? 1 : 0,
+      invoiceId: affectedInvoiceId,
+      orderId: String(order.id)
+    });
+  }
+  if (status === "Paid") {
+    syncPaymentWorkflowFromInvoices(order, actorName(req));
+    const summary = invoiceSummary(order);
+    if (summary.orderTotal > 0 && summary.totalPaid > 0 && summary.outstanding <= 0) {
+      writeOrderWorkflow(order, {
+        paymentStatus: "Paid",
+        paymentAmount: summary.orderTotal || summary.totalDue,
+        paymentPaidDate: paymentDate,
+        nextActionOwner: "Merchandising",
+        nextAction: "Track intake date"
+      }, actorName(req), "payment");
+      updateStoredOrderStatus(order.id, "Paid");
+    } else if (summary.totalPaid > 0 && summary.outstanding > 0) {
+      writeOrderWorkflow(order, {
+        paymentStatus: "Part paid",
+        paymentAmount: summary.orderTotal || summary.totalDue,
+        paymentPaidDate: paymentDate,
+        nextActionOwner: "FD / Finance",
+        nextAction: "Pay remaining supplier balance"
+      }, actorName(req), "payment");
+      updateStoredOrderStatus(order.id, "Payment pending");
+    }
+  }
+  recordOrderEvent(order.id, "payment", actorName(req), `${status} supplier payment ${currency} ${amount.toFixed(2)}`, { paymentId: id, invoiceId, paymentDate, amount, currency, amountGbp });
+  return orderPaymentFromRow(openOrderSqliteDb().prepare("SELECT * FROM order_payment_transactions WHERE id = ?").get(id));
+}
+
+function deletePlannedOrderPayment(order, id, req) {
+  const payment = readOrderPayments(order.id).find(row => row.id === String(id || ""));
+  if (!payment) throw new Error("Payment not found.");
+  if (payment.status !== "Planned") throw new Error("Paid transactions are audit records and cannot be deleted; edit them if a correction is required.");
+  openOrderSqliteDb().prepare("DELETE FROM order_payment_transactions WHERE id = ? AND order_id = ?").run(payment.id, String(order.id));
+  recordOrderEvent(order.id, "payment", actorName(req), "Planned supplier payment deleted", { paymentId: payment.id });
+  return true;
+}
+
+async function fetchShopifyCashflowDailyActuals(range) {
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  if (!shop || !clientId || !clientSecret) {
+    return { configured: false, rows: [], message: "Shopify is not configured, so Despatch actuals are unavailable." };
+  }
+  const query = `
+    query CashflowDailySales($query: String!) {
+      shopifyqlQuery(query: $query) {
+        parseErrors
+        tableData { rows }
+      }
+    }
+  `;
+  const reportQuery = `
+    FROM sales
+    SHOW day, total_sales, orders, quantity_ordered
+    GROUP BY day
+    SINCE ${range.startDate}
+    UNTIL ${range.endDate}
+    ORDER BY day ASC
+  `.replace(/\s+/g, " ").trim();
+  const data = await shopifyGraphql(query, { query: reportQuery });
+  const response = data.shopifyqlQuery || {};
+  const parseErrors = response.parseErrors || [];
+  if (parseErrors.length) throw new Error(`ShopifyQL cashflow query failed: ${parseErrors.join("; ")}`);
+  const rows = (response.tableData?.rows || []).map(row => ({
+    date: String(row.day || "").slice(0, 10),
+    despatch: Number(row.total_sales || 0),
+    orders: Number(row.orders || 0),
+    units: Math.max(0, Number(row.quantity_ordered || 0))
+  })).filter(row => validReportDate(row.date));
+  return { configured: true, rows, reportQuery, fetchedAt: new Date().toISOString() };
+}
+
+function cashflowFallbackDate(order, workflow, startDate) {
+  const date = [workflow?.paymentDueDate, workflow?.intakeEtaDate, order?.delivery?.requiredDate, order?.requiredDate, startDate]
+    .map(value => String(value || "").slice(0, 10))
+    .find(validReportDate) || startDate;
+  return date < startDate ? startDate : date;
+}
+
+function cashflowSupplierMovements(startDate) {
+  const orders = readOrderDb().orders;
+  const workflows = readOrderWorkflowMap();
+  const movements = [];
+  const warnings = [];
+  for (const order of orders) {
+    if (["cancelled", "rejected"].includes(String(order.status || "").toLowerCase())) continue;
+    const orderId = String(order.id);
+    const workflow = workflowFromRow(workflows.get(orderId), order);
+    const invoices = readOrderInvoices(orderId, false);
+    const payments = readOrderPayments(orderId);
+    const orderNumber = order.orderNumber || orderId;
+    const invoiceMap = new Map(invoices.map(invoice => [invoice.id, invoice]));
+    for (const payment of payments) {
+      const invoice = invoiceMap.get(payment.invoiceId);
+      const movementDate = payment.status === "Planned" && payment.paymentDate < startDate ? startDate : payment.paymentDate;
+      if (payment.status === "Planned" && payment.paymentDate < startDate) warnings.push(`${orderNumber} has an overdue planned payment; it is brought into the first forecast week.`);
+      movements.push({
+        id: `payment:${payment.id}`,
+        date: movementDate,
+        direction: "outflow",
+        category: "Supplier payments",
+        name: `${payment.status} payment · ${orderNumber}`,
+        amount: payment.amountGbp,
+        source: "payment_ledger",
+        status: payment.status,
+        orderId,
+        orderNumber,
+        invoiceId: payment.invoiceId,
+        invoiceNumber: invoice?.invoiceNumber || "",
+        notes: payment.reference || payment.notes,
+        estimated: payment.status === "Planned"
+      });
+    }
+
+    for (const invoice of invoices.filter(row => row.documentKind !== "credit_note" && row.status === "Paid")) {
+      const hasLedgerPayment = payments.some(payment => payment.invoiceId === invoice.id && payment.status === "Paid");
+      if (hasLedgerPayment) continue;
+      if (!validReportDate(workflow.paymentPaidDate)) {
+        warnings.push(`${orderNumber} has a legacy paid invoice without an invoice-level paid date.`);
+        continue;
+      }
+      movements.push({
+        id: `legacy-paid:${invoice.id}`,
+        date: workflow.paymentPaidDate,
+        direction: "outflow",
+        category: "Supplier payments",
+        name: `Legacy paid invoice · ${orderNumber}`,
+        amount: amountToGbp(invoice.amount, invoice.currency, order),
+        source: "legacy_estimate",
+        status: "Paid",
+        orderId,
+        orderNumber,
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        estimated: true,
+        notes: "Uses the order-level paid date; Finance should confirm if this falls inside the forecast."
+      });
+    }
+
+    const summary = invoiceSummary(order);
+    const plannedGbp = payments.filter(payment => payment.status === "Planned").reduce((sum, payment) => sum + Number(payment.amountGbp || 0), 0);
+    let remaining = Math.max(0, Number(summary.outstanding || 0) - plannedGbp);
+    if (plannedGbp > Number(summary.outstanding || 0) + invoiceBalanceToleranceGbp) warnings.push(`${orderNumber} has planned payments above its current outstanding balance.`);
+    const plannedByInvoice = new Map();
+    for (const payment of payments.filter(row => row.status === "Planned" && row.invoiceId)) {
+      plannedByInvoice.set(payment.invoiceId, Number(plannedByInvoice.get(payment.invoiceId) || 0) + Number(payment.amountGbp || 0));
+    }
+    const paidByInvoice = new Map();
+    for (const payment of payments.filter(row => row.status === "Paid" && row.invoiceId)) {
+      paidByInvoice.set(payment.invoiceId, Number(paidByInvoice.get(payment.invoiceId) || 0) + Number(payment.amountGbp || 0));
+    }
+    const candidates = invoices
+      .filter(invoice => invoice.documentKind !== "credit_note" && invoice.status !== "Paid")
+      .sort((a, b) => String(a.dueDate || "9999-99-99").localeCompare(String(b.dueDate || "9999-99-99")));
+    for (const invoice of candidates) {
+      if (remaining <= 0) break;
+      const invoiceBalance = Math.max(0,
+        amountToGbp(invoice.amount, invoice.currency, order)
+        - Number(paidByInvoice.get(invoice.id) || 0)
+        - Number(plannedByInvoice.get(invoice.id) || 0)
+      );
+      const amount = Math.min(remaining, invoiceBalance);
+      if (amount <= 0) continue;
+      const rawDueDate = validReportDate(invoice.dueDate) ? invoice.dueDate : cashflowFallbackDate(order, workflow, startDate);
+      const dueDate = rawDueDate < startDate ? startDate : rawDueDate;
+      if (!validReportDate(invoice.dueDate)) warnings.push(`${orderNumber} invoice ${invoice.invoiceNumber || invoice.invoiceType || invoice.id} has no due date; a fallback date is used.`);
+      else if (invoice.dueDate < startDate) warnings.push(`${orderNumber} invoice ${invoice.invoiceNumber || invoice.invoiceType || invoice.id} is overdue and is brought into the first forecast week.`);
+      movements.push({
+        id: `outstanding-invoice:${invoice.id}`,
+        date: dueDate,
+        direction: "outflow",
+        category: "Supplier payments",
+        name: `Outstanding invoice · ${orderNumber}`,
+        amount,
+        source: "outstanding_invoice",
+        status: "Forecast",
+        orderId,
+        orderNumber,
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        estimated: true,
+        notes: validReportDate(invoice.dueDate) ? "Invoice due date" : "Fallback payment date"
+      });
+      remaining -= amount;
+    }
+    if (remaining > 0) {
+      const dueDate = cashflowFallbackDate(order, workflow, startDate);
+      if (!validReportDate(workflow.paymentDueDate)) warnings.push(`${orderNumber} has an uninvoiced balance without a payment due date; a fallback date is used.`);
+      movements.push({
+        id: `outstanding-order:${orderId}`,
+        date: dueDate,
+        direction: "outflow",
+        category: "Supplier payments",
+        name: `Uninvoiced order balance · ${orderNumber}`,
+        amount: remaining,
+        source: "outstanding_order",
+        status: "Forecast",
+        orderId,
+        orderNumber,
+        estimated: true,
+        notes: validReportDate(workflow.paymentDueDate) ? "Order workflow payment due date" : "Fallback payment date"
+      });
+    }
+  }
+  return { movements, warnings: [...new Set(warnings)] };
+}
+
+async function cashflowPayload(url, req) {
+  const settings = readCashflowSettings();
+  const startDate = cashflow.mondayOf(url.searchParams.get("startDate") || todayIsoDate());
+  const weeks = Math.max(4, Math.min(26, Math.trunc(Number(url.searchParams.get("weeks") || settings.horizonWeeks))));
+  const weekRows = cashflow.buildWeeks(startDate, weeks);
+  const endDate = weekRows[weekRows.length - 1].endDate;
+  const costRules = readPnlCostRules();
+  const pnlCashTiming = effectiveCashflowPnlTiming(settings, costRules);
+  const costTiming = Object.fromEntries(pnlCashTiming.costRules.map(rule => [rule.id, { enabled: rule.enabled, paymentTiming: rule.paymentTiming, paymentDate: rule.paymentDate }]));
+  const costForecastRows = readCashflowCostForecasts(startDate, endDate);
+  const directlyDatedRuleIds = new Set(pnlCashTiming.costRules.filter(row => row.enabled && row.paymentTiming === "scheduled" && row.paymentDate).map(row => row.id));
+  const effectiveCostForecastRows = costForecastRows.filter(row => row.calculationType !== "pnl_rule" || !directlyDatedRuleIds.has(row.pnlRuleId));
+  const yesterday = cashflow.addDays(todayIsoDate(), -1);
+  const benchmarkStart = cashflow.addDays(todayIsoDate(), -35);
+  const receiptLookbackStart = cashflow.addDays(startDate, -(settings.receiptLagBusinessDays * 2 + 7));
+  const serviceLookbackStart = effectiveCostForecastRows.filter(row => row.calculationType === "pnl_rule").map(row => row.serviceStartDate).filter(validReportDate).sort()[0] || startDate;
+  const scheduledLookbackStart = pnlCashTiming.costRules.filter(row => row.enabled && row.paymentTiming === "scheduled" && validReportDate(row.paymentDate)).flatMap(row => cashflow.monthlyPaymentDates(row.paymentDate, startDate, endDate).map(paymentDate => cashflow.previousCalendarMonthRange(paymentDate)?.startDate).filter(Boolean)).sort()[0] || startDate;
+  const fetchStart = [benchmarkStart, receiptLookbackStart, serviceLookbackStart, scheduledLookbackStart].sort()[0];
+  const fetchEnd = yesterday < endDate ? yesterday : endDate;
+  let actuals = { configured: false, rows: [], message: "No completed Despatch days fall inside the selected range." };
+  const warnings = [];
+  const missingRulePaymentDates = pnlCashTiming.costRules.filter(row => row.enabled && row.paymentTiming === "scheduled" && !row.paymentDate);
+  if (missingRulePaymentDates.length) warnings.push(`${missingRulePaymentDates.length} P&L cost rule${missingRulePaymentDates.length === 1 ? " uses" : "s use"} monthly cash treatment without a first payment date, so ${missingRulePaymentDates.length === 1 ? "it is" : "they are"} not included yet.`);
+  if (fetchStart <= fetchEnd) {
+    try {
+      actuals = await fetchShopifyCashflowDailyActuals({ startDate: fetchStart, endDate: fetchEnd });
+    } catch (error) {
+      actuals = { configured: true, rows: [], error: error.message || "Could not load ShopifyQL Despatch actuals." };
+      warnings.push(actuals.error);
+    }
+  }
+  if (!actuals.configured && actuals.message) warnings.push(actuals.message);
+  const benchmarkRows = actuals.rows.filter(row => row.date >= benchmarkStart && row.date <= yesterday);
+  const benchmarkDespatch = benchmarkRows.reduce((sum, row) => sum + Number(row.despatch || 0), 0);
+  const benchmarkOrders = benchmarkRows.reduce((sum, row) => sum + Number(row.orders || 0), 0);
+  const benchmarkUnits = benchmarkRows.reduce((sum, row) => sum + Number(row.units || 0), 0);
+  const derivedAov = benchmarkOrders > 0 ? benchmarkDespatch / benchmarkOrders : 0;
+  const derivedItems = benchmarkOrders > 0 ? benchmarkUnits / benchmarkOrders : 0;
+  const effectiveAov = settings.forecastAov || derivedAov || 50;
+  const effectiveItems = settings.forecastItemsPerOrder || derivedItems || 1.5;
+  if (!settings.forecastAov && !derivedAov) warnings.push("No recent Shopify order history was available, so forecast AOV defaults to £50.");
+  if (!settings.forecastItemsPerOrder && !derivedItems) warnings.push("No recent Shopify unit history was available, so forecast items per order defaults to 1.5.");
+  const budgets = readCashflowBudgets(startDate, endDate);
+  const manualMovements = readCashflowManualMovements(startDate, endDate);
+  const suppliers = cashflowSupplierMovements(startDate);
+  warnings.push(...suppliers.warnings);
+  const forecast = cashflow.buildCashflow({
+    startDate,
+    weeks,
+    asOfDate: todayIsoDate(),
+    openingBalance: settings.openingBalance,
+    receiptLagBusinessDays: settings.receiptLagBusinessDays,
+    forecastAov: effectiveAov,
+    forecastItemsPerOrder: effectiveItems,
+    budgets,
+    dailyActuals: actuals.rows,
+    costRules,
+    costTiming,
+    costForecasts: effectiveCostForecastRows,
+    supplierMovements: suppliers.movements,
+    manualMovements
+  });
+  return {
+    configured: actuals.configured,
+    forecast,
+    settings,
+    effectiveDrivers: { forecastAov: cashflow.money(effectiveAov), forecastItemsPerOrder: Math.round(effectiveItems * 100) / 100 },
+    budgets,
+    manualMovements,
+    payments: readOrderPayments(),
+    pnlCashTiming,
+    costForecasts: forecast.costForecasts,
+    warnings: [...new Set(warnings)].slice(0, 100),
+    source: {
+      type: actuals.configured ? "shopifyql_daily_despatch" : "budget_only",
+      fetchedAt: actuals.fetchedAt || "",
+      actualDayCount: actuals.rows.length,
+      receiptMethod: `${settings.receiptLagBusinessDays} business-day estimate`,
+      message: actuals.message || ""
+    },
+    canWrite: userHasRole(req.currentUser, cashflowWriteRoles),
+    generatedAt: new Date().toISOString()
+  };
+}
+
 async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (req.method === "GET" && url.pathname === "/api/cashflow") {
+    if (!requireRoles(req, res, cashflowViewRoles)) return true;
+    try {
+      sendJson(res, 200, await cashflowPayload(url, req));
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not build cashflow forecast." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cashflow/settings") {
+    if (!requireRoles(req, res, cashflowWriteRoles, "Only Finance or Admin users can update cashflow settings.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, { ok: true, settings: writeCashflowSettings(body.settings || body) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save cashflow settings." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cashflow/budgets") {
+    if (!requireRoles(req, res, cashflowWriteRoles, "Only Finance or Admin users can update cashflow budgets.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const saved = upsertCashflowBudgets(body.budgets || [], req);
+      sendJson(res, 200, { ok: true, saved });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save cashflow budgets." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cashflow/movements/upsert") {
+    if (!requireRoles(req, res, cashflowWriteRoles, "Only Finance or Admin users can update cash movements.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, { ok: true, movement: upsertCashflowManualMovement(body, req) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save cash movement." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cashflow/movements/delete") {
+    if (!requireRoles(req, res, cashflowWriteRoles, "Only Finance or Admin users can delete cash movements.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, { ok: true, deleted: deleteCashflowManualMovement(body.id) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not delete cash movement." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cashflow/cost-forecasts/upsert") {
+    if (!requireRoles(req, res, cashflowWriteRoles, "Only Finance or Admin users can update forecast costs.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, { ok: true, forecast: upsertCashflowCostForecast(body, req) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save forecast cost." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cashflow/cost-forecasts/delete") {
+    if (!requireRoles(req, res, cashflowWriteRoles, "Only Finance or Admin users can delete forecast costs.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, { ok: true, deleted: deleteCashflowCostForecast(body.id) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not delete forecast cost." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/payments/upsert") {
+    if (!requireRoles(req, res, cashflowWriteRoles, "Only Finance or Admin users can record supplier payments.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const orderId = String(body.orderId || "");
+      const order = readOrderDb().orders.find(row => String(row.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      const payment = saveOrderPayment(order, body, req);
+      const workflow = readOrderWorkflowMap().get(orderId);
+      sendJson(res, 200, {
+        ok: true,
+        payment,
+        order: publicManagedOrder(syncOrderStatusFromWorkflowRow(order, workflow), workflow),
+        payments: readOrderPayments(orderId),
+        invoices: readOrderInvoices(orderId),
+        events: readOrderEvents(orderId)
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save supplier payment." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/payments/delete") {
+    if (!requireRoles(req, res, cashflowWriteRoles, "Only Finance or Admin users can delete planned supplier payments.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const orderId = String(body.orderId || "");
+      const order = readOrderDb().orders.find(row => String(row.id) === orderId);
+      if (!order) {
+        sendJson(res, 404, { error: "Order not found" });
+        return true;
+      }
+      deletePlannedOrderPayment(order, body.id, req);
+      sendJson(res, 200, { ok: true, payments: readOrderPayments(orderId), events: readOrderEvents(orderId) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not delete supplier payment." });
+    }
+    return true;
+  }
 
   if (req.method === "GET" && url.pathname === "/api/pnl") {
     if (!requireRoles(req, res, pnlViewRoles)) return true;
@@ -17576,6 +18502,7 @@ async function handleApi(req, res) {
       order: publicManagedOrder(syncedOrder, workflow, null, supplierCredits),
       events: readOrderEvents(orderId),
       invoices: readOrderInvoices(orderId),
+      payments: readOrderPayments(orderId),
       batches: readOrderBatches(orderId),
       batchLines: readOrderBatchLines(orderId),
       receiptLines: readOrderReceiptLines(orderId),
@@ -18110,6 +19037,7 @@ const server = http.createServer(async (req, res) => {
   const requestPath = new URL(req.url, `http://${req.headers.host}`).pathname;
   if (requestPath === "/sku-register.html" && !requireRoles(req, res, skuRegisterRoles(), "You do not have access to the SKU register.")) return;
   if (requestPath === "/pnl.html" && !requireRoles(req, res, pnlViewRoles, "You do not have access to the P&L planner.")) return;
+  if (requestPath === "/cashflow.html" && !requireRoles(req, res, cashflowViewRoles, "You do not have access to the cashflow planner.")) return;
 
   if (req.method === "GET" && requestPath === "/api/new-arrivals-cleanup/status") {
     if (!requireRoles(req, res, ["Admin"], "Only an Admin can view New Arrivals cleanup progress.")) return;
