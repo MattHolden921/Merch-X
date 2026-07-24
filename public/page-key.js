@@ -208,6 +208,7 @@
         ["Workflow", [
           ["Approval", "Buying Director approval is tracked independently from Finance payment and Merchandising intake."],
           ["Payment", "Tracks deposit, balance or payment progress; invoice matching uses ordered supplier cost without a VAT uplift."],
+          ["Finance notifications", "Before Buying Director approval, the invoice panel warns that a saved invoice stays with the director and Finance is not notified early. The save confirmation repeats this. After approval, a new invoice or credit note notifies the current Finance assignee, or active Finance users when unassigned. If the save already creates the same Finance handoff, Merch X sends one notification rather than a duplicate."],
           ["Payment ledger", "Finance records dated Planned or Paid supplier transactions against an invoice or the whole order. EUR payments lock the order FX rate into a GBP cashflow value; only planned transactions can be deleted."],
           ["Product gate", "Every line needs a SKU connected to a recognised Shopify product/state before batches and receipts can be booked."],
           ["Batch vs order Received", "A batch Received is a factual delivery state; the order reaches Received only after all batches and discrepancy review."],

@@ -6268,6 +6268,9 @@ function readOrderEvents(orderId, limit = 40) {
 function orderCompositeStatus(order, workflow, productCompletion = null) {
   if (order?.archivedAt) return "Archived";
   if (String(order?.status || "").toLowerCase() === "cancelled") return "Cancelled";
+  if (workflow.approvalStatus === "Pending director approval") return "Awaiting approval";
+  if (workflow.approvalStatus === "Changes requested") return "Changes requested";
+  if (workflow.approvalStatus === "Rejected") return "Rejected";
   if (workflow.intakeStatus === deliveryReviewStatus) return deliveryReviewStatus;
   if (workflow.intakeStatus === "Received") return "Received";
   if (workflow.intakeStatus === "Part received") return "Part received";
@@ -6277,8 +6280,6 @@ function orderCompositeStatus(order, workflow, productCompletion = null) {
   if (workflow.paymentStatus === "Paid") return "Payment complete";
   if (workflow.paymentStatus === "Ready to pay" || workflow.paymentStatus === "Part paid" || workflow.paymentStatus === "Overdue") return "Payment";
   if (workflow.approvalStatus === "Approved") return "Approved";
-  if (workflow.approvalStatus === "Pending director approval") return "Awaiting approval";
-  if (workflow.approvalStatus === "Changes requested") return "Changes requested";
   return order?.status || "Draft";
 }
 
@@ -8357,16 +8358,28 @@ function saveOrderInvoice(order, body, options = {}) {
 function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
   const invoices = readOrderInvoices(order.id, false);
   const current = workflowFromRow(openOrderSqliteDb().prepare("SELECT * FROM order_workflows WHERE order_id = ?").get(String(order.id)), order);
+  const updatePaymentOrderStatus = (status) => current.approvalStatus === "Approved"
+    ? updateStoredOrderStatus(order.id, status)
+    : null;
+  const writePaymentWorkflow = (patch) => {
+    const guardedPatch = { ...patch };
+    if (current.approvalStatus !== "Approved") {
+      delete guardedPatch.nextActionOwner;
+      delete guardedPatch.nextActionUserId;
+      delete guardedPatch.nextAction;
+    }
+    return writeOrderWorkflow(order, guardedPatch, actorName, "invoice");
+  };
   if (!invoices.length) {
     if (["Paid", "Part paid", "Ready to pay", "Overdue"].includes(current.paymentStatus)) {
-      writeOrderWorkflow(order, {
+      writePaymentWorkflow({
         paymentStatus: "Awaiting invoice",
         paymentAmount: orderTotalGbp(order),
         paymentPaidDate: "",
         nextActionOwner: "Buyer",
         nextAction: "Awaiting supplier invoice"
-      }, actorName, "invoice");
-      if (order.status === "Paid" || order.status === "Payment pending") updateStoredOrderStatus(order.id, "Approved");
+      });
+      if (order.status === "Paid" || order.status === "Payment pending") updatePaymentOrderStatus("Approved");
     }
     return;
   }
@@ -8375,12 +8388,12 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
   const paymentInvoices = invoices.filter(invoice => invoice.documentKind !== "credit_note");
   if (!paymentInvoices.length) {
     if (totals.supplierCreditDue > 0) {
-      writeOrderWorkflow(order, {
+      writePaymentWorkflow({
         paymentStatus: current.paymentStatus === "Paid" ? "Paid" : "Awaiting invoice",
         paymentAmount: totals.orderTotal || 0,
         nextActionOwner: "FD / Finance",
         nextAction: "Track supplier credit note"
-      }, actorName, "invoice");
+      });
     }
     return;
   }
@@ -8390,51 +8403,51 @@ function syncPaymentWorkflowFromInvoices(order, actorName = "", options = {}) {
   const anySent = paymentInvoices.some(invoice => invoice.sentToFd);
   const anyReceived = paymentInvoices.some(invoice => invoice.isReceived);
   if (allPaid) {
-    writeOrderWorkflow(order, {
+    writePaymentWorkflow({
       paymentStatus: "Paid",
       paymentAmount: totals.orderTotal || totals.totalDue,
       paymentPaidDate: todayIsoDate(),
       nextActionOwner: "Merchandising",
       nextAction: "Track intake date"
-    }, actorName, "invoice");
-    updateStoredOrderStatus(order.id, "Paid");
+    });
+    updatePaymentOrderStatus("Paid");
   } else if (somePaid && hasUnpaidActionableInvoice) {
-    writeOrderWorkflow(order, {
+    writePaymentWorkflow({
       paymentStatus: "Part paid",
       paymentAmount: totals.orderTotal || totals.totalDue,
       paymentPaidDate: todayIsoDate(),
       nextActionOwner: "FD / Finance",
       nextAction: "Pay current supplier invoice"
-    }, actorName, "invoice");
-    updateStoredOrderStatus(order.id, "Payment pending");
+    });
+    updatePaymentOrderStatus("Payment pending");
   } else if (somePaid) {
     const summary = batchSummary(order);
     const activeIntake = summary.shipped > 0 || summary.received > 0 || summary.delayed > 0 || summary.inProduction > 0 || summary.confirmed > 0;
-    writeOrderWorkflow(order, {
+    writePaymentWorkflow({
       paymentStatus: "Part paid",
       paymentAmount: totals.orderTotal || totals.totalDue,
       paymentPaidDate: todayIsoDate(),
       nextActionOwner: activeIntake ? "Merchandising" : "Buyer",
       nextAction: activeIntake ? "Track open supplier batches" : "Awaiting next supplier invoice"
-    }, actorName, "invoice");
-    updateStoredOrderStatus(order.id, "Payment pending");
+    });
+    updatePaymentOrderStatus("Payment pending");
   } else if (anyReceived || anySent || options.invoiceUploaded) {
-    writeOrderWorkflow(order, {
+    writePaymentWorkflow({
       paymentStatus: "Ready to pay",
       paymentAmount: totals.orderTotal || totals.totalDue,
       nextActionOwner: "FD / Finance",
       nextAction: anySent ? "Pay supplier invoice" : "Review supplier invoice for payment"
-    }, actorName, "invoice");
-    updateStoredOrderStatus(order.id, "Payment pending");
+    });
+    updatePaymentOrderStatus("Payment pending");
   } else if (["Paid", "Part paid", "Ready to pay", "Overdue"].includes(current.paymentStatus)) {
-    writeOrderWorkflow(order, {
+    writePaymentWorkflow({
       paymentStatus: "Awaiting invoice",
       paymentAmount: totals.orderTotal || totals.totalDue,
       paymentPaidDate: "",
       nextActionOwner: "Buyer",
       nextAction: "Send invoice to FD"
-    }, actorName, "invoice");
-    updateStoredOrderStatus(order.id, "Approved");
+    });
+    updatePaymentOrderStatus("Approved");
   }
 }
 
@@ -9346,14 +9359,14 @@ async function recordWorkHandoff(req, handoff) {
 }
 
 async function notifyOrderHandoffIfChanged(req, order, updatedOrder, previousWorkflow, workflow, options = {}) {
-  if (!previousWorkflow || !workflow) return;
+  if (!previousWorkflow || !workflow) return false;
   const ownerChanged = previousWorkflow.nextActionOwner !== workflow.nextActionOwner;
   const assigneeChanged = previousWorkflow.nextActionUserId !== workflow.nextActionUserId;
   const roleActionChanged = options.notifyRoleActionChange
     && !workflow.nextActionUserId
     && previousWorkflow.nextAction !== workflow.nextAction
     && Boolean(roleForOwner(workflow.nextActionOwner));
-  if (!ownerChanged && !assigneeChanged && !roleActionChanged) return;
+  if (!ownerChanged && !assigneeChanged && !roleActionChanged) return false;
   const assignedUser = userById(workflow.nextActionUserId);
   const message = assignedUser
     ? `Handoff to ${assignedUser.displayName} (${workflow.nextActionOwner || "No role"})`
@@ -9376,6 +9389,7 @@ async function notifyOrderHandoffIfChanged(req, order, updatedOrder, previousWor
     message: `${actorName(req)} assigned ${updatedOrder.orderNumber || "an order"}: ${workflow.nextAction || "Next action"}`,
     url: `/orders.html?id=${encodeURIComponent(String(order.id))}`
   });
+  return true;
 }
 
 async function notifyOrderCreatedForApproval(req, order, workflow) {
@@ -9422,6 +9436,32 @@ async function notifyOrderBuyerInvoicePaid(req, order) {
       url: `/orders.html?id=${encodeURIComponent(String(order.id))}`
     });
   }
+}
+
+async function notifyOrderFinanceInvoiceAdded(req, order, invoice, workflow) {
+  if (!invoice) return false;
+  const userIds = resolveNotificationUserIds(workflow?.nextActionUserId, "FD / Finance");
+  if (!userIds.length) return false;
+  const isCreditNote = invoice.documentKind === "credit_note";
+  const documentLabel = isCreditNote ? "credit note" : "invoice";
+  const reference = invoice.invoiceNumber || invoice.invoiceType || invoice.fileName || documentLabel;
+  recordOrderEvent(
+    order.id,
+    "invoice",
+    actorName(req),
+    `Finance notified of new ${documentLabel}`,
+    { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber || "", ...actorData(req) }
+  );
+  for (const userId of userIds) {
+    await notifyUser(userId, {
+      entityType: "order",
+      entityId: String(order.id),
+      title: `Order ${order.orderNumber || ""} new ${documentLabel}`,
+      body: `${actorName(req)} added ${reference} to ${order.orderNumber || "an order"} for Finance review.`,
+      url: `/orders.html?id=${encodeURIComponent(String(order.id))}`
+    });
+  }
+  return true;
 }
 
 function userPermissions(user) {
@@ -18680,11 +18720,22 @@ async function handleApi(req, res) {
         return true;
       }
       const previousWorkflow = workflowFromRow(readOrderWorkflowMap().get(orderId), order);
+      const previousInvoiceIds = new Set(readOrderInvoices(orderId, false).map(invoice => invoice.id));
       const wasFullyPaid = invoiceSummaryIsFullyPaid(invoiceSummary(order));
       const invoices = saveOrderInvoice(order, body, { canManagePayment: userHasRole(req.currentUser, ["Finance", "Admin"]) });
       const refreshedOrder = readOrderDb().orders.find(item => String(item.id) === orderId) || order;
       const workflow = readOrderWorkflowMap().get(orderId);
-      await notifyOrderHandoffIfChanged(req, order, refreshedOrder, previousWorkflow, workflowFromRow(workflow, refreshedOrder), { notifyRoleActionChange: true });
+      const publicWorkflow = workflowFromRow(workflow, refreshedOrder);
+      const handoffNotified = await notifyOrderHandoffIfChanged(req, order, refreshedOrder, previousWorkflow, publicWorkflow, { notifyRoleActionChange: true });
+      const addedInvoice = invoices.find(invoice => !previousInvoiceIds.has(invoice.id));
+      let financeNotificationCreated = Boolean(
+        addedInvoice
+        && handoffNotified
+        && publicWorkflow.nextActionOwner === "FD / Finance"
+      );
+      if (addedInvoice && publicWorkflow.approvalStatus === "Approved" && !handoffNotified) {
+        financeNotificationCreated = await notifyOrderFinanceInvoiceAdded(req, refreshedOrder, addedInvoice, publicWorkflow);
+      }
       if (!wasFullyPaid && invoiceSummaryIsFullyPaid(invoiceSummary(refreshedOrder))) {
         await notifyOrderBuyerInvoicePaid(req, refreshedOrder);
       }
@@ -18692,6 +18743,10 @@ async function handleApi(req, res) {
         ok: true,
         order: publicManagedOrder(refreshedOrder, workflow),
         invoices,
+        invoiceNotification: {
+          financeNotificationCreated,
+          withheldPendingApproval: Boolean(addedInvoice && publicWorkflow.approvalStatus !== "Approved")
+        },
         batches: readOrderBatches(orderId),
         batchLines: readOrderBatchLines(orderId),
         receiptLines: readOrderReceiptLines(orderId),

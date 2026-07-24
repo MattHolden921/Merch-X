@@ -357,8 +357,9 @@ Important principles:
 - Workflow updates should record events.
 - In Google auth mode, workflow actors come from the signed-in user, not browser-supplied free text.
 - Next-action handoff can target a role owner and an optional active user assignee.
-- Handoffs create work handoff records and in-app notifications. Order handoff email is sent immediately when SMTP is configured; Weekly Action email is grouped into a per-user digest after the configured delay.
+- Handoffs create work handoff records and in-app notifications. Order handoff email is sent immediately when SMTP is configured. An invoice uploaded before Buying Director approval can update payment readiness but must not take the next action away from Buying Director or notify Finance early. Once the order is approved, every newly added supplier invoice or credit note notifies the current Finance assignee, or all active Finance users when the order has no explicit assignee; when the invoice save already creates the same Finance handoff, only the handoff notification is sent to avoid duplicates. Weekly Action email is grouped into a per-user digest after the configured delay.
 - Buyers can upload invoice documents and invoice metadata. Finance/Admin retain control of payment-facing invoice state such as sent-to-FD and paid.
+- The invoice panel shows a visible warning while Buying Director approval is outstanding, labels the upload action as saving for approval, and confirms after save that Finance was not notified. Once approved, a newly added invoice confirms whether the Finance notification was created.
 - Invoice changes can update payment workflow.
 - Archiving hides orders from active creation/bootstrap views but preserves history.
 - Completed warehouse intake moves the order-level intake workflow to `Review after delivery`. Merchandising should complete receipt/discrepancy checks there, then move the intake status to `Received`; only `Received`, cancelled, or rejected orders can be archived. Supplier batches still use `Received` to represent the factual delivery booking.

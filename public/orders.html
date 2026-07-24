@@ -1801,6 +1801,12 @@ function renderInvoiceGroup(order){
   const hasVariance=Math.abs(Number(totals.invoiceVarianceGbp||0))>=0.01;
   const varianceLabel=totals.varianceIgnored?"ignored":Math.abs(Number(totals.invoiceVarianceGbp||0))<=toleranceGbp?"within tolerance":Number(totals.invoiceVarianceGbp||0)>0?"over PO":"under PO";
   const varianceButton=canManagePayment&&hasVariance?`<button type="button" class="mini-btn" onclick="markInvoiceVarianceIgnored(${totals.varianceIgnored?"false":"true"})">${totals.varianceIgnored?"Restore variance":"Ignore variance"}</button>`:"";
+  const approvalStatus=order.workflow?.approvalStatus||"Not requested";
+  const approvalPending=approvalStatus!=="Approved";
+  const financeNotice=approvalPending?`<div class="status warn" style="margin-bottom:10px">
+    <strong>FD / Finance will not be notified yet</strong>
+    <span>This order is ${escapeHtml(approvalStatus.toLowerCase())}. Any invoice uploaded now is saved to the order, but it stays with Buying Director until approval. Approval will then create the Finance handoff.</span>
+  </div>`:"";
   return `<div class="invoice-group">
     <div class="work-head"><h3>Invoices</h3><div class="actions"><span class="pill">${invoices.length} invoice${invoices.length===1?"":"s"}</span><button type="button" class="btn" onclick="toggleCreateInvoice()">${editing?"Edit invoice":"Create invoice"}</button></div></div>
     <div class="invoice-totals">
@@ -1816,6 +1822,7 @@ function renderInvoiceGroup(order){
       <div class="invoice-total"><label>Variance</label><strong>${money.format(totals.invoiceVarianceGbp)}</strong><span class="money-sub">${escapeHtml(varianceLabel)} · within ${money.format(toleranceGbp)} ignored</span>${varianceButton}</div>
     </div>
     ${renderSupplierCreditBalance(order)}
+    ${financeNotice}
     ${renderPaymentLedger(order)}
     <div class="invoice-table-wrap">${renderInvoiceTable(order,invoices)}</div>
     <div class="invoice-create ${formOpen?"open":""}" id="invoice-create">
@@ -1833,7 +1840,7 @@ function renderInvoiceGroup(order){
         <div class="field"><label>Checks</label><div class="invoice-checks"><label><input id="invoice-received" type="checkbox" ${formInvoice.id?(formInvoice.isReceived?"checked":""):"checked"}> Received</label><label><input id="invoice-sent" type="checkbox" ${formInvoice.sentToFd?"checked":""} ${canManagePayment?"":"disabled"}> Sent to FD</label><label><input id="invoice-paid" type="checkbox" ${formInvoice.status==="Paid"?"checked":""} ${canManagePayment?"":"disabled"}> Paid</label></div></div>
         ${input("invoice-notes","Invoice notes",formInvoice.notes||"","text")}
       </div>
-      <div class="actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn primary" onclick="saveInvoice()">${editing?"Save invoice":"Upload invoice"}</button>${editing?`<button type="button" class="btn" onclick="cancelInvoiceEdit()">Cancel</button>`:""}</div>
+      <div class="actions" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn primary" onclick="saveInvoice()">${editing?"Save invoice":approvalPending?"Save invoice for approval":"Upload invoice"}</button>${editing?`<button type="button" class="btn" onclick="cancelInvoiceEdit()">Cancel</button>`:""}</div>
     </div>
   </div>`;
 }
@@ -2367,6 +2374,7 @@ async function toggleInvoice(id,key,checked){
 }
 
 async function saveInvoicePayload(invoice){
+  const wasNew=!invoice.id;
   localStorage.setItem("ordersActorName",val("actor-name"));
   const response=await apiFetch("/api/orders/invoices",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({orderId:state.selectedId,actorName:val("actor-name"),invoice})});
   const result=await response.json();
@@ -2387,6 +2395,13 @@ async function saveInvoicePayload(invoice){
   renderMetrics();
   renderOrders();
   renderDetail();
+  if(wasNew&&result.invoiceNotification?.withheldPendingApproval){
+    showStatus("Invoice saved to the order. FD / Finance has not been notified because Buying Director approval is still outstanding.","warn");
+  }else if(wasNew&&result.invoiceNotification?.financeNotificationCreated){
+    showStatus("Invoice saved and the Finance notification was created.","ok");
+  }else{
+    showStatus("Invoice saved.","ok");
+  }
 }
 
 function editOrderPayment(id){state.editingPaymentId=id;renderDetail()}
