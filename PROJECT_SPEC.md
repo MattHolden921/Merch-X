@@ -650,6 +650,7 @@ Marketing, Merchandising, and Admin users can build campaigns, create Klaviyo dr
 
 - Pages are operational tools, not landing pages.
 - Existing pages use static HTML and inline scripts; keep that approach unless there is a deliberate migration.
+- Product Merchandising keeps its displayed metric window tied to the last accepted Shopify/GA4 response. Changing either date invalidates any older in-flight response, so an earlier period cannot overwrite the tiles or be presented under the newly selected dates.
 - Shared styling belongs in `public/design-system.css` when it applies across tools.
 - Every user-facing page exposes a visible Key explaining its important definitions, formulas, data sources, statuses, actions, safeguards, and feature boundaries. Most pages use `public/page-key.js`; Product Merchandising and Email Merchandiser retain their detailed purpose-built Key modals, while Bestsellers also retains its full Methodology view.
 - Key copy is part of the page contract and must be updated whenever the underlying calculation, terminology, permission, integration, workflow state, or high-impact action changes.
