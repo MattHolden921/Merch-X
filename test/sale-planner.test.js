@@ -10,6 +10,7 @@ const {
   markdownActionRecommendation,
   markdownLearningStep,
   markdownOutcome,
+  mergeSaleCollectionConfig,
   lowViewSignal,
   nextMarkdownStep,
   originalPrice,
@@ -101,6 +102,27 @@ test("matches sale root and child collections by title or handle with overrides"
   assert.equal(membership.rootSale.id, "c1");
   assert.equal(membership.childSale.id, "c2");
   assert.deepEqual(membership.missing, []);
+});
+
+test("merges account-wide sale collection mappings without dropping other plan types", () => {
+  const current = {
+    rootSaleCollectionId: "root-1",
+    childCollectionByType: { Tops: "tops-1", Dresses: "dresses-1" }
+  };
+  const updated = mergeSaleCollectionConfig(current, {
+    rootSaleCollectionId: "root-2",
+    childCollectionByType: { Shoes: "shoes-1" }
+  }, ["Shoes"]);
+
+  assert.deepEqual(updated, {
+    rootSaleCollectionId: "root-2",
+    childCollectionByType: { Tops: "tops-1", Dresses: "dresses-1", Shoes: "shoes-1" }
+  });
+
+  const cleared = mergeSaleCollectionConfig(updated, {
+    childCollectionByType: { Dresses: "" }
+  }, ["Dresses"]);
+  assert.deepEqual(cleared.childCollectionByType, { Tops: "tops-1", Shoes: "shoes-1" });
 });
 
 test("remove sale restores compare-at price or warns when none exists", () => {

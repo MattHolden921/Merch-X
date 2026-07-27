@@ -419,6 +419,7 @@
           ["Action queue", "Persistent shortlist of changed follow-ups; accepting an action does not itself update Shopify."]
         ]],
         ["Apply and remove", [
+          ["Account-wide collection mapping", "Admin-saved root and product-type Sale collections are shared by every Sale Plan. Saving retains types from other plans and updates all editable rows across non-archived plans; Applied rows keep their stored removal targets."],
           ["Preflight", "Checks live price, product status, stock, collections, original price and stale plan state before any mutation."],
           ["Apply", "Writes target price and compare-at price, adds mapped Sale collections and sets the sale product-status metadata."],
           ["Remove", "Restores ledger RRP, clears compare-at price, removes stored Sale collections and resets sale metadata."],

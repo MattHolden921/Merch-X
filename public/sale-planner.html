@@ -204,12 +204,12 @@
   <section class="panel" id="mapping-panel">
     <div class="section-head">
       <div>
-        <p class="section-title">Sale collection mapping</p>
-        <p class="status" id="mapping-note">Auto-matched Sale collections can be corrected here by Admin.</p>
+        <p class="section-title">Account-wide Sale collection mapping</p>
+        <p class="status" id="mapping-note">Admin saves this once for every Sale Plan; auto-matched collections can be corrected here.</p>
       </div>
       <div class="actions">
         <button class="btn" type="button" id="refresh-collections-btn">Refresh collections</button>
-        <button class="btn" type="button" id="save-mapping-btn">Save mapping</button>
+        <button class="btn" type="button" id="save-mapping-btn">Save account mapping</button>
       </div>
     </div>
     <div class="map-grid">
@@ -262,7 +262,7 @@ const API_ORIGINS=location.protocol==="file:"?LOCAL_API_ORIGINS.slice(1):/^(loca
 const money=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
 const exactMoney=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",minimumFractionDigits:2,maximumFractionDigits:2});
 const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
-let state={plans:[],plan:null,items:[],events:[],metrics:{},analysis:{summary:{},actionSummary:{},exceptions:{worked:[],watch:[],deepen:[],remove:[]},actions:[]},collections:[],collectionConfig:{rootSaleCollectionId:"",childCollectionByType:{}},recentJobs:[],policies:{minGpPct:0,requireCostAtDiscount:40},canApply:false,shopifyConfigured:false,shopifyMessage:"",collectionCount:0};
+let state={plans:[],plan:null,items:[],events:[],metrics:{},analysis:{summary:{},actionSummary:{},exceptions:{worked:[],watch:[],deepen:[],remove:[]},actions:[]},collections:[],collectionConfig:{rootSaleCollectionId:"",childCollectionByType:{}},collectionProductTypes:[],recentJobs:[],policies:{minGpPct:0,requireCostAtDiscount:40},canApply:false,shopifyConfigured:false,shopifyMessage:"",collectionCount:0};
 let selectedRows=new Set();
 let selectedActions=new Set();
 let pendingJob=null;
@@ -525,12 +525,18 @@ function renderMapping(){
   const root=config.rootSaleCollectionId||autoRootSaleId();
   renderCollectionDatalist();
   el("root-collection").value=collectionLabel(collectionById(root));
-  const types=[...new Set((state.items||[]).map(item=>item.productType).filter(Boolean))].sort();
+  const types=[...new Set([
+    ...(state.collectionProductTypes||[]),
+    ...Object.keys(config.childCollectionByType||{}),
+    ...(state.items||[]).map(item=>item.productType)
+  ].filter(Boolean))].sort();
   el("type-mapping").innerHTML=types.length?types.map(type=>{
     const existing=config.childCollectionByType?.[type]||autoChildSaleId(type);
     return `<div class="field"><label>${escapeHtml(type)}</label><input class="collection-input type-map" data-type="${attr(type)}" data-collection-id="${attr(existing)}" list="sale-collection-options" value="${attr(collectionLabel(collectionById(existing)))}" placeholder="Search Sale collections"></div>`;
-  }).join(""):`<p class="empty-state">Import products to map sale child collections by product type.</p>`;
-  const msg=state.shopifyConfigured?`${state.collections.length.toLocaleString("en-GB")} relevant Sale collections from ${Number(state.collectionCount||state.collections.length).toLocaleString("en-GB")} Shopify collections${state.collectionsCached?" (cached)":""}.`:state.shopifyMessage||"Shopify collections are unavailable.";
+  }).join(""):`<p class="empty-state">Import products to add product types to the account-wide mapping.</p>`;
+  const msg=state.shopifyConfigured
+    ? `${state.collections.length.toLocaleString("en-GB")} relevant Sale collections from ${Number(state.collectionCount||state.collections.length).toLocaleString("en-GB")} Shopify collections${state.collectionsCached?" (cached)":""}. This mapping is shared by every Sale Plan.`
+    : `${state.shopifyMessage||"Shopify collections are unavailable."} The saved mapping is account-wide.`;
   el("mapping-note").className=state.shopifyConfigured?"status ok":"status warn";
   el("mapping-note").textContent=msg;
 }
@@ -750,14 +756,23 @@ function updateItemCollection(itemId,input){
 
 async function saveMapping(){
   const childCollectionByType={};
-  document.querySelectorAll(".type-map").forEach(input=>{const id=collectionIdFromInput(input);if(id)childCollectionByType[input.dataset.type]=id;});
+  const scopeProductTypes=[];
+  document.querySelectorAll(".type-map").forEach(input=>{
+    scopeProductTypes.push(input.dataset.type);
+    const id=collectionIdFromInput(input);
+    if(id)childCollectionByType[input.dataset.type]=id;
+  });
   const rootSaleCollectionId=collectionIdFromInput(el("root-collection"));
   if(!rootSaleCollectionId){el("status-note").className="status warn";el("status-note").textContent="Choose a root Sale collection from the suggestions.";return;}
   try{
-    const data=await apiJson("/api/sale-planner/config",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id||"",applyToPlan:true,config:{rootSaleCollectionId,childCollectionByType}})});
+    const data=await apiJson("/api/sale-planner/config",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id||"",applyToPlan:true,scopeProductTypes,config:{rootSaleCollectionId,childCollectionByType}})});
     state={...state,...data};
     el("status-note").className="status ok";
-    el("status-note").textContent=`Sale collection mapping saved and applied to ${Number(data.propagated||0).toLocaleString("en-GB")} editable row${Number(data.propagated||0)===1?"":"s"}.`;
+    const rows=Number(data.propagated||0);
+    const plans=Number(data.propagatedPlans||0);
+    el("status-note").textContent=rows
+      ? `Sale collection mapping saved account-wide and applied to ${rows.toLocaleString("en-GB")} editable row${rows===1?"":"s"} across ${plans.toLocaleString("en-GB")} plan${plans===1?"":"s"}.`
+      : "Sale collection mapping saved account-wide. All editable plan rows already matched it.";
     render();
   }catch(error){
     el("status-note").className="status err";

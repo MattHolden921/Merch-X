@@ -10693,26 +10693,30 @@ function writeAppSettingJson(key, value) {
 }
 
 function readSalePlannerConfig() {
-  const value = readAppSettingJson("salePlannerCollections", {});
-  return {
-    rootSaleCollectionId: String(value.rootSaleCollectionId || ""),
-    childCollectionByType: value.childCollectionByType && typeof value.childCollectionByType === "object" ? value.childCollectionByType : {}
-  };
+  return salePlanner.normalizeSaleCollectionConfig(readAppSettingJson("salePlannerCollections", {}));
 }
 
-function writeSalePlannerConfig(input = {}) {
+function writeSalePlannerConfig(input = {}, scopedProductTypes = []) {
   const current = readSalePlannerConfig();
-  const mapping = input.childCollectionByType && typeof input.childCollectionByType === "object" ? input.childCollectionByType : current.childCollectionByType;
-  const cleanMapping = {};
-  for (const [key, value] of Object.entries(mapping || {})) {
-    const productType = String(key || "").trim();
-    const collectionId = String(value || "").trim();
-    if (productType && collectionId) cleanMapping[productType] = collectionId;
-  }
-  return writeAppSettingJson("salePlannerCollections", {
-    rootSaleCollectionId: String((input.rootSaleCollectionId ?? current.rootSaleCollectionId) || "").trim(),
-    childCollectionByType: cleanMapping
-  });
+  return writeAppSettingJson(
+    "salePlannerCollections",
+    salePlanner.mergeSaleCollectionConfig(current, input, scopedProductTypes)
+  );
+}
+
+function salePlannerCollectionProductTypes(config = {}) {
+  const rows = openOrderSqliteDb().prepare(`
+    SELECT DISTINCT i.product_type
+    FROM sale_plan_items i
+    JOIN sale_plans p ON p.id = i.plan_id
+    WHERE p.status <> 'Archived'
+      AND i.status IN ('Planned', 'Error')
+      AND TRIM(COALESCE(i.product_type, '')) <> ''
+  `).all();
+  return [...new Set([
+    ...Object.keys(config.childCollectionByType || {}),
+    ...rows.map(row => String(row.product_type || "").trim()).filter(Boolean)
+  ])].sort((left, right) => left.localeCompare(right));
 }
 
 function salePlanFromRow(row) {
@@ -11975,6 +11979,7 @@ async function readSalePlannerResponse(req, selectedPlanId = "") {
     metrics: salePlannerMetrics(items),
     analysis: plan ? readSalePlannerAnalysis(plan.id, items) : readSalePlannerAnalysis("", []),
     collectionConfig: config,
+    collectionProductTypes: salePlannerCollectionProductTypes(config),
     collections,
     collectionCount: Number((collectionResult.collections || []).length),
     collectionsCached: Boolean(collectionResult.cached),
@@ -11997,14 +12002,23 @@ async function handleSalePlannerGet(req, res) {
 
 async function handleSalePlannerConfig(req, res) {
   const body = await readJsonBody(req);
-  const config = writeSalePlannerConfig(body.config || body);
+  const scopedProductTypes = Array.isArray(body.scopeProductTypes) ? body.scopeProductTypes : [];
+  const config = writeSalePlannerConfig(body.config || body, scopedProductTypes);
   const planId = String(body.planId || "").trim();
   let propagated = 0;
-  if (planId && body.applyToPlan !== false) {
+  const affectedPlans = new Map();
+  if (body.applyToPlan !== false) {
     const collectionResult = await fetchShopifyCollectionsForSalePlanner();
     const collections = collectionResult.collections || [];
     const db = openOrderSqliteDb();
-    const items = readSalePlannerItems(planId).filter(item => ["Planned", "Error"].includes(item.status));
+    const items = db.prepare(`
+      SELECT i.*
+      FROM sale_plan_items i
+      JOIN sale_plans p ON p.id = i.plan_id
+      WHERE p.status <> 'Archived'
+        AND i.status IN ('Planned', 'Error')
+      ORDER BY i.plan_id, i.updated_at
+    `).all().map(salePlanItemFromRow);
     const update = db.prepare(`
       UPDATE sale_plan_items
       SET root_sale_collection_id = ?,
@@ -12021,17 +12035,34 @@ async function handleSalePlannerConfig(req, res) {
         const warnings = (item.warnings || []).filter(warning => !/Sale collection|Root Sale collection|Sale child collection/i.test(String(warning)));
         if (!rootId) warnings.push("Root Sale collection not found.");
         if (!childId) warnings.push(`Sale child collection not found for ${item.productType || "product type"}.`);
-        update.run(rootId, childId, JSON.stringify([...new Set(warnings)]), item.id);
+        const warningsJson = JSON.stringify([...new Set(warnings)]);
+        const currentWarningsJson = JSON.stringify(item.warnings || []);
+        if (rootId === item.rootSaleCollectionId && childId === item.childSaleCollectionId && warningsJson === currentWarningsJson) continue;
+        update.run(rootId, childId, warningsJson, item.id);
+        propagated += 1;
+        affectedPlans.set(item.planId, Number(affectedPlans.get(item.planId) || 0) + 1);
       }
     });
     transaction(items);
-    propagated = items.length;
-    if (propagated) {
-      invalidateSalePlanApproval(planId);
-      recordSalePlanEvent(planId, "", "mapping_propagated", actorName(req), `Sale collection mapping applied to ${propagated} editable item${propagated === 1 ? "" : "s"}`, actorData(req));
+    for (const [affectedPlanId, count] of affectedPlans) {
+      invalidateSalePlanApproval(affectedPlanId);
+      recordSalePlanEvent(
+        affectedPlanId,
+        "",
+        "mapping_propagated",
+        actorName(req),
+        `Account-wide Sale collection mapping applied to ${count} editable item${count === 1 ? "" : "s"}`,
+        { accountWide: true, scopeProductTypes: scopedProductTypes, ...actorData(req) }
+      );
     }
   }
-  sendJson(res, 200, { ok: true, config, propagated, ...(await readSalePlannerResponse(req, planId)) });
+  sendJson(res, 200, {
+    ok: true,
+    config,
+    propagated,
+    propagatedPlans: affectedPlans.size,
+    ...(await readSalePlannerResponse(req, planId))
+  });
 }
 
 async function handleSalePlannerCollectionsRefresh(req, res) {

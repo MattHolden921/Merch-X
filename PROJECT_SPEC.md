@@ -1,6 +1,6 @@
 # Merch X Project Spec
 
-Last reviewed: 2026-07-24
+Last reviewed: 2026-07-27
 
 This is the shared logic and product reference for Merch X. Keep it current when the app's workflows, calculations, data model, integrations, or page responsibilities change.
 
@@ -533,7 +533,7 @@ Key principles:
 - Sale prices round to the nearest pound by default. Existing markdowns use `compareAtPrice` as the original price and only recommend the same or a deeper markdown step.
 - Multi-variant products receive the same discount percentage per variant, calculated from each variant's own original/current price. Manual target-price edits update every stored variant target so Shopify receives the visible plan price. The planner shows requested and effective variant markdowns plus target GP% using `(((retail price / 1.2) - cost price) / (retail price / 1.2))`, with the row value using the lowest variant GP%. Missing cost is visible; by default cost is required at 40%+ markdown (`SALE_PLANNER_REQUIRE_COST_AT_DISCOUNT`) and target GP cannot fall below `SALE_PLANNER_MIN_GP_PCT`, defaulting to 0%.
 - Apply preflight blocks incompatible row states, missing Shopify/variant/original-price data, zero or above-RRP targets, no live stock, inactive/unpublished products, gift cards, missing root Sale collection, unapproved snapshots, and stale Shopify price state. Child collection gaps and lower-risk missing costs remain visible warnings. Apply accepts only Planned/Error rows and removal accepts only Applied rows.
-- Sale collection mapping auto-detects the root `Sale` collection and child collections such as `Sale Tops`; Admin users can save overrides in `app_settings.salePlannerCollections`. Shopify collections are cached for 15 minutes by default (`SALE_PLANNER_COLLECTION_CACHE_MINUTES`), the page receives only relevant Sale candidates plus saved selections, and saving a mapping propagates it to editable rows while leaving Applied rows' removal targets unchanged.
+- Sale collection mapping auto-detects the root `Sale` collection and child collections such as `Sale Tops`; Admin users save one account-wide mapping in `app_settings.salePlannerCollections`, shared by every Sale Plan. The mapping editor includes configured product types and types used by editable rows across non-archived plans. Saving one plan's visible types merges them into the account mapping instead of deleting types used by other plans, then propagates the complete mapping to all editable rows across non-archived plans and invalidates only approvals whose rows changed. Applied rows retain their stored collection targets for safe removal. Shopify collections are cached for 15 minutes by default (`SALE_PLANNER_COLLECTION_CACHE_MINUTES`), and the page receives only relevant Sale candidates plus saved selections.
 - Applying sale state preflights the live Shopify product and blocks stale plans when planned variant prices no longer match Shopify. Successful applies update variant `price` and `compareAtPrice`, then add the product to the root Sale collection and mapped child Sale collection.
 - Applying sale state also writes Shopify `custom.product_status` to `S`. Removing sale state writes it back to `N`.
 - Sale state keeps a local variant-level ledger of the first true RRP, so incremental markdowns and final restore actions use the original RRP rather than a previous markdown price.
