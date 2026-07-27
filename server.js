@@ -11624,6 +11624,7 @@ function saleAnalysisSummary(outcomes = [], items = []) {
     deepen: outcomes.filter(row => row.outcome === "deepen").length,
     remove: outcomes.filter(row => row.outcome === "remove").length,
     early: outcomes.filter(row => Number(row.daysObserved || 0) < 14).length,
+    watchEarly: outcomes.filter(row => row.outcome === "watch" && Number(row.daysObserved || 0) < 14).length,
     comparable: comparable.length,
     highConfidence: outcomes.filter(row => row.data?.confidence === "high").length,
     unavailable: outcomes.filter(row => !row.data?.comparableWeeks).length,
@@ -11638,6 +11639,11 @@ function saleAnalysisSummary(outcomes = [], items = []) {
 }
 
 function compactSaleOutcome(row) {
+  const ratio = (numerator, denominator) => Number(denominator || 0) > 0 ? Number(numerator || 0) / Number(denominator) : 0;
+  const preSellThrough = ratio(row.preUnits, Number(row.preUnits || 0) + Number(row.preStock || 0));
+  const postSellThrough = ratio(row.postUnits, Number(row.postUnits || 0) + Number(row.postStock || 0));
+  const preCvr = Number(row.preGaViews || 0) > 0 ? ratio(row.preGaPurchases, row.preGaViews) : null;
+  const postCvr = Number(row.postGaViews || 0) > 0 ? ratio(row.postGaPurchases, row.postGaViews) : null;
   return {
     itemId: row.itemId,
     title: row.title,
@@ -11648,10 +11654,25 @@ function compactSaleOutcome(row) {
     discountPercent: row.discountPercent,
     outcome: row.outcome,
     reason: row.reason,
+    appliedAt: row.appliedAt,
+    analysisStartDate: row.analysisStartDate,
+    analysisEndDate: row.analysisEndDate,
     daysObserved: row.daysObserved,
+    preUnits: row.preUnits,
+    postUnits: row.postUnits,
+    preStock: row.preStock,
     postStock: row.postStock,
+    preGaViews: row.preGaViews,
+    postGaViews: row.postGaViews,
+    preGaPurchases: row.preGaPurchases,
+    postGaPurchases: row.postGaPurchases,
+    preSellThrough,
+    postSellThrough,
+    preCvr,
+    postCvr,
     sellThroughLift: row.sellThroughLift,
     cvrLift: row.cvrLift,
+    stockReduction: row.stockReduction,
     comparableWeeks: Number(row.data?.comparableWeeks || 0),
     confidence: row.data?.confidence || "unavailable",
     updatedAt: row.updatedAt
@@ -11915,7 +11936,7 @@ function readSalePlannerAnalysis(planId, items = []) {
     summary: saleAnalysisSummary(outcomes, items),
     actionSummary: saleActionSummary(actions),
     exceptions,
-    outcomes: outcomes.slice(0, 80).map(compactSaleOutcome),
+    outcomes: outcomes.map(compactSaleOutcome),
     actions: actions.slice(0, 1000).map(compactSaleAction),
     refreshedAt: outcomes[0]?.updatedAt || ""
   };

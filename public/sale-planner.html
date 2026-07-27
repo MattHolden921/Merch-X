@@ -20,7 +20,18 @@
 .analysis-row:first-of-type{border-top:0}
 .analysis-row strong{display:block;color:var(--ds-text);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .analysis-row span{display:block;color:var(--ds-text-soft);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.analysis-row b{font-weight:650;color:var(--ds-text)}
+.analysis-row b{font-weight:650;color:var(--ds-text);white-space:nowrap}
+.analysis-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 170px 170px auto;gap:10px;align-items:end;margin:14px 0 10px}
+.analysis-table{width:100%;min-width:1510px;border-collapse:collapse;table-layout:fixed}
+.analysis-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);white-space:nowrap}
+.analysis-table td{font-size:11px;color:var(--ds-text-muted);padding:8px 6px;border-bottom:1px solid var(--ds-line);vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+.analysis-table tbody tr:hover td{background:var(--ds-bg-muted)}
+.analysis-table tfoot td{background:var(--ds-bg-muted);border-top:1px solid var(--ds-line);border-bottom:0;font-weight:650}
+.analysis-pair b{display:block;color:var(--ds-text);font-size:12px;white-space:nowrap}
+.analysis-pair span{display:block;color:var(--ds-text-soft);font-size:10px;margin-top:2px;white-space:nowrap}
+.analysis-explainer{margin:9px 0 0;color:var(--ds-text-muted);font-size:11px;line-height:1.45}
+.badge.worked{color:var(--ds-good);border-color:rgba(21,128,61,.35)}
+.badge.watch{color:var(--ds-warn);border-color:rgba(180,83,9,.35)}
 .action-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) 150px 150px auto;gap:10px;align-items:end;margin-bottom:10px}
 .action-tools{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
 .action-table{width:100%;min-width:1180px;border-collapse:collapse;table-layout:fixed}
@@ -89,7 +100,7 @@
 .event:first-child{border-top:0;padding-top:0}
 .event strong{display:block;color:var(--ds-text)}
 .empty-state{padding:34px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.55}
-@media(max-width:1180px){.metric-grid,.analysis-grid{grid-template-columns:repeat(2,1fr)}.analysis-exceptions{grid-template-columns:repeat(2,1fr)}.toolbar,.topbar,.map-grid,.action-toolbar{grid-template-columns:1fr}.action-tools{justify-content:flex-start}}
+@media(max-width:1180px){.metric-grid,.analysis-grid{grid-template-columns:repeat(2,1fr)}.analysis-exceptions{grid-template-columns:repeat(2,1fr)}.toolbar,.topbar,.map-grid,.action-toolbar,.analysis-toolbar{grid-template-columns:1fr}.action-tools{justify-content:flex-start}}
 @media(max-width:860px){.analysis-exceptions{grid-template-columns:1fr}}
 @media(max-width:720px){body{padding:18px 10px 36px}.metric-grid,.analysis-grid{grid-template-columns:repeat(2,1fr)}.metric-grid .metric:last-child{grid-column:1/-1}.filtered-summary{grid-template-columns:repeat(2,1fr)}.filtered-summary .metric:last-child{grid-column:1/-1}.actions,.plan-actions{justify-content:flex-start}.table-tools{display:block}.table-tools .actions{margin-top:10px}.desktop-table{display:none}.mobile-products{display:grid;gap:9px}.dialog-head,.dialog-foot{align-items:flex-start;flex-direction:column}.mobile-card-grid{grid-template-columns:repeat(3,1fr)}#products-panel{order:1}#filters-panel{order:2}#mapping-panel{order:3}}
 </style>
@@ -144,6 +155,14 @@
     </div>
     <div class="analysis-grid" id="analysis-metrics"></div>
     <div class="analysis-exceptions" id="analysis-exceptions"></div>
+    <p class="analysis-explainer" id="analysis-explainer"></p>
+    <div class="analysis-toolbar" id="analysis-toolbar">
+      <div class="field"><label>Analysis search</label><input id="analysis-search" placeholder="Product, SKU, type, reason"></div>
+      <div class="field"><label>Outcome</label><select class="select" id="analysis-outcome-filter"><option value="">All outcomes</option><option value="worked">Worked</option><option value="watch">Watch</option><option value="deepen">Deepen</option><option value="remove">Remove</option></select></div>
+      <div class="field"><label>Confidence</label><select class="select" id="analysis-confidence-filter"><option value="">All confidence</option><option value="unavailable">Unavailable</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+      <span class="pill" id="analysis-visible-count">0 products</span>
+    </div>
+    <div class="table-wrap" id="analysis-table-wrap"></div>
   </section>
 
   <section class="panel" id="action-panel">
@@ -274,7 +293,10 @@ function escapeHtml(value){return String(value||"").replace(/[&<>"']/g,ch=>({"&"
 function attr(value){return escapeHtml(value).replaceAll("`","&#96;");}
 function formatDate(value){if(!value)return"";const date=new Date(value);return Number.isNaN(date.getTime())?value:dateFmt.format(date);}
 function moneyText(value){return exactMoney.format(Number(value||0));}
-function pctText(value){const numeric=Number(value||0)*100;return `${numeric>=0?"+":""}${numeric.toFixed(1)}%`;}
+function rateText(numerator,denominator){const den=Number(denominator||0);return den>0?`${((Number(numerator||0)/den)*100).toFixed(1)}%`:"-";}
+function cvrText(purchases,views){return Number(views||0)>0?`${((Number(purchases||0)/Number(views))*100).toFixed(1)}%`:"-";}
+function ppText(value){const numeric=Number(value||0)*100;return `${numeric>=0?"+":""}${numeric.toFixed(1)}pp`;}
+function reductionText(value){const numeric=Math.max(0,Number(value||0))*100;return `${numeric.toFixed(1)}% stock reduction`;}
 function discountText(value){return `${Math.round(Number(value||0))}%`;}
 function gpText(item){
   const value=Number(item?.metrics?.targetGpPct);
@@ -315,18 +337,21 @@ function renderAnalysis(){
   if(!analysis.refreshedAt){
     el("analysis-metrics").innerHTML="";
     el("analysis-exceptions").innerHTML="";
+    el("analysis-explainer").textContent="";
+    el("analysis-toolbar").hidden=true;
+    el("analysis-table-wrap").innerHTML="";
     el("analysis-note").className="status warn";
     el("analysis-note").textContent="Refresh analysis when completed Monday-Sunday reports are available before and after the markdown.";
     return;
   }
   el("analysis-metrics").innerHTML=[
-    metric("Comparable",Number(s.comparable||0).toLocaleString("en-GB"),`${Number(s.highConfidence||0).toLocaleString("en-GB")} high confidence`),
+    metric("Decision-ready",Number(s.comparable||0).toLocaleString("en-GB"),"medium or high confidence"),
     metric("Worked",Number(s.worked||0).toLocaleString("en-GB"),"positive read"),
-    metric("Watch",Number(s.watch||0).toLocaleString("en-GB"),`${Number(s.early||0).toLocaleString("en-GB")} early`),
+    metric("Watch",Number(s.watch||0).toLocaleString("en-GB"),`${Number(s.watchEarly||0).toLocaleString("en-GB")} early`),
     metric("Deepen",Number(s.deepen||0).toLocaleString("en-GB"),"needs action"),
     metric("Remove",Number(s.remove||0).toLocaleString("en-GB"),"objective met"),
-    metric("ST lift",pctText(s.avgSellThroughLift),"average"),
-    metric("CVR lift",pctText(s.avgCvrLift),"GA")
+    metric("Avg ST change",ppText(s.avgSellThroughLift),"decision-ready products"),
+    metric("Avg CVR change",ppText(s.avgCvrLift),"GA4, decision-ready products")
   ].join("");
   const groups=[
     ["worked","Worked"],
@@ -337,11 +362,87 @@ function renderAnalysis(){
   const exceptions=analysis.exceptions||{};
   el("analysis-exceptions").innerHTML=groups.map(([key,label])=>{
     const rows=exceptions[key]||[];
-    const body=rows.length?rows.map(row=>`<div class="analysis-row"><div><strong title="${attr(row.title)}">${escapeHtml(row.title||"-")}</strong><span>${escapeHtml(row.sku||row.productType||"-")} - ${Number(row.comparableWeeks||0)} matched weeks - ${escapeHtml(row.confidence||"unavailable")}</span></div><b>${pctText(row.sellThroughLift)}</b></div>`).join(""):`<p class="empty-state">None</p>`;
+    const body=rows.length?rows.map(row=>`<div class="analysis-row"><div><strong title="${attr(row.title)}">${escapeHtml(row.title||"-")}</strong><span>${escapeHtml(row.sku||row.productType||"-")} · ${Number(row.comparableWeeks||0)} matched week${Number(row.comparableWeeks||0)===1?"":"s"} · ${escapeHtml(row.confidence||"unavailable")}</span></div><b>ST ${rateText(row.preUnits,Number(row.preUnits||0)+Number(row.preStock||0))} → ${rateText(row.postUnits,Number(row.postUnits||0)+Number(row.postStock||0))} (${ppText(row.sellThroughLift)})</b></div>`).join(""):`<p class="empty-state">None</p>`;
     return `<div class="exception-list"><h3>${escapeHtml(label)}</h3>${body}</div>`;
   }).join("");
+  el("analysis-explainer").textContent="ST is the sell-through proxy for each matched window: units ÷ (units + ending stock). Changes are percentage points (pp), so Stori’s +35.7pp means its sell-through rate moved up by 35.7 percentage points, not that sales increased by 35.7%.";
+  el("analysis-toolbar").hidden=!(analysis.outcomes||[]).length;
+  renderAnalysisTable();
   el("analysis-note").className=analysis.refreshedAt?"status ok":"status warn";
   el("analysis-note").textContent=analysis.refreshedAt?`Refreshed ${formatDate(analysis.refreshedAt)}. ${Number(a.pending||0).toLocaleString("en-GB")} pending action${Number(a.pending||0)===1?"":"s"}.`:"Refresh analysis after saved bestsellers reports are up to date.";
+}
+
+function outcomeLabel(value){return {worked:"Worked",watch:"Watch",deepen:"Deepen",remove:"Remove"}[value]||value||"Watch";}
+
+function analysisRows(){
+  const q=val("analysis-search").toLowerCase();
+  const outcome=val("analysis-outcome-filter");
+  const confidence=val("analysis-confidence-filter");
+  return (state.analysis?.outcomes||[]).filter(row=>{
+    const haystack=[row.title,row.sku,row.productType,row.season,row.reason,row.outcome,row.confidence].join(" ").toLowerCase();
+    return (!q||haystack.includes(q))&&(!outcome||row.outcome===outcome)&&(!confidence||row.confidence===confidence);
+  });
+}
+
+function analysisNextStep(row){
+  const queued=(state.analysis?.actions||[]).find(action=>action.itemId===row.itemId);
+  if(queued)return `<div class="analysis-pair"><b>${escapeHtml(actionLabel(queued.actionType))}</b><span>${escapeHtml(queued.status||"Pending")} in action queue</span></div>`;
+  if(["deepen","remove"].includes(row.outcome)&&!["medium","high"].includes(row.confidence))return '<div class="analysis-pair"><b>Wait for evidence</b><span>Needs 2 matched weeks for an action</span></div>';
+  if(row.outcome==="worked")return '<div class="analysis-pair"><b>Keep markdown</b><span>Positive read; continue monitoring</span></div>';
+  return `<div class="analysis-pair"><b>Watch</b><span>${Number(row.comparableWeeks||0)<2?"Needs more matched weeks":"No stronger action yet"}</span></div>`;
+}
+
+function analysisPeriodText(row){
+  const start=String(row.analysisStartDate||"").slice(0,10);
+  const end=String(row.analysisEndDate||"").slice(0,10);
+  return start&&end?`${start} to ${end}`:"Comparison dates unavailable";
+}
+
+function analysisTotals(rows){
+  return rows.reduce((total,row)=>({
+    preUnits:total.preUnits+Number(row.preUnits||0),
+    postUnits:total.postUnits+Number(row.postUnits||0),
+    preStock:total.preStock+Number(row.preStock||0),
+    postStock:total.postStock+Number(row.postStock||0),
+    preViews:total.preViews+Number(row.preGaViews||0),
+    postViews:total.postViews+Number(row.postGaViews||0),
+    prePurchases:total.prePurchases+Number(row.preGaPurchases||0),
+    postPurchases:total.postPurchases+Number(row.postGaPurchases||0)
+  }),{preUnits:0,postUnits:0,preStock:0,postStock:0,preViews:0,postViews:0,prePurchases:0,postPurchases:0});
+}
+
+function renderAnalysisTable(){
+  const rows=analysisRows();
+  el("analysis-visible-count").textContent=`${rows.length.toLocaleString("en-GB")} product${rows.length===1?"":"s"}`;
+  if(!rows.length){
+    el("analysis-table-wrap").innerHTML='<p class="empty-state">No analysis rows match the current filters.</p>';
+    return;
+  }
+  const totals=analysisTotals(rows);
+  const preSt=totals.preUnits+totals.preStock>0?totals.preUnits/(totals.preUnits+totals.preStock):0;
+  const postSt=totals.postUnits+totals.postStock>0?totals.postUnits/(totals.postUnits+totals.postStock):0;
+  const preCvr=totals.preViews>0?totals.prePurchases/totals.preViews:0;
+  const postCvr=totals.postViews>0?totals.postPurchases/totals.postViews:0;
+  el("analysis-table-wrap").innerHTML=`<table class="analysis-table">
+    <thead><tr>
+      <th style="width:250px">Product / evidence</th><th style="width:95px">Outcome</th><th style="width:220px">Before markdown</th><th style="width:220px">After markdown</th><th style="width:175px">Change</th><th style="width:190px">Next step</th><th>Why</th>
+    </tr></thead>
+    <tbody>${rows.map(row=>`<tr>
+      <td><div class="action-main"><strong title="${attr(row.title)}">${escapeHtml(row.title||"-")}</strong><span>${escapeHtml(row.sku||"-")} · ${escapeHtml(row.productType||"-")} · ${Number(row.comparableWeeks||0)} matched week${Number(row.comparableWeeks||0)===1?"":"s"} · ${escapeHtml(row.confidence||"unavailable")}</span><span>${escapeHtml(analysisPeriodText(row))}</span></div></td>
+      <td><span class="badge ${attr(row.outcome)}">${escapeHtml(outcomeLabel(row.outcome))}</span></td>
+      <td><div class="analysis-pair"><b>${Number(row.preUnits||0).toLocaleString("en-GB")} units · ST ${rateText(row.preUnits,Number(row.preUnits||0)+Number(row.preStock||0))}</b><span>End stock ${Number(row.preStock||0).toLocaleString("en-GB")} · ${Number(row.preGaViews||0).toLocaleString("en-GB")} views · CVR ${cvrText(row.preGaPurchases,row.preGaViews)}</span></div></td>
+      <td><div class="analysis-pair"><b>${Number(row.postUnits||0).toLocaleString("en-GB")} units · ST ${rateText(row.postUnits,Number(row.postUnits||0)+Number(row.postStock||0))}</b><span>End stock ${Number(row.postStock||0).toLocaleString("en-GB")} · ${Number(row.postGaViews||0).toLocaleString("en-GB")} views · CVR ${cvrText(row.postGaPurchases,row.postGaViews)}</span></div></td>
+      <td><div class="analysis-pair"><b>ST ${ppText(row.sellThroughLift)}</b><span>CVR ${ppText(row.cvrLift)} · ${reductionText(row.stockReduction)}</span></div></td>
+      <td>${analysisNextStep(row)}</td>
+      <td title="${attr(row.reason)}">${escapeHtml(row.reason||"-")}</td>
+    </tr>`).join("")}</tbody>
+    <tfoot><tr>
+      <td>${rows.length.toLocaleString("en-GB")} filtered products</td><td>Totals</td>
+      <td><div class="analysis-pair"><b>${totals.preUnits.toLocaleString("en-GB")} units · ST ${rateText(totals.preUnits,totals.preUnits+totals.preStock)}</b><span>End stock ${totals.preStock.toLocaleString("en-GB")} · ${totals.preViews.toLocaleString("en-GB")} views · CVR ${cvrText(totals.prePurchases,totals.preViews)}</span></div></td>
+      <td><div class="analysis-pair"><b>${totals.postUnits.toLocaleString("en-GB")} units · ST ${rateText(totals.postUnits,totals.postUnits+totals.postStock)}</b><span>End stock ${totals.postStock.toLocaleString("en-GB")} · ${totals.postViews.toLocaleString("en-GB")} views · CVR ${cvrText(totals.postPurchases,totals.postViews)}</span></div></td>
+      <td><div class="analysis-pair"><b>ST ${ppText(postSt-preSt)}</b><span>CVR ${ppText(postCvr-preCvr)}</span></div></td><td></td><td></td>
+    </tr></tfoot>
+  </table>`;
 }
 
 function actionLabel(type){
@@ -360,7 +461,7 @@ function actionRows(){
 
 function actionSignal(action){
   if(action.actionType==="low_views")return `${Number(action.viewsPerWeek||0).toFixed(1)} views/wk`;
-  return `${pctText(action.sellThroughLift)} ST / ${pctText(action.cvrLift)} CVR`;
+  return `${ppText(action.sellThroughLift)} ST / ${ppText(action.cvrLift)} CVR`;
 }
 
 function actionRecommendedHtml(action){
@@ -893,6 +994,7 @@ async function reconcileSelected(){
 }
 
 ["search","status-filter","type-filter","discount-filter","warning-filter"].forEach(id=>el(id).addEventListener("input",renderTable));
+["analysis-search","analysis-outcome-filter","analysis-confidence-filter"].forEach(id=>el(id).addEventListener("input",renderAnalysisTable));
 ["action-search","action-type-filter","action-status-filter"].forEach(id=>el(id).addEventListener("input",renderActions));
 el("refresh-btn").addEventListener("click",()=>loadPlanner());
 el("plan-select").addEventListener("change",()=>loadPlanner(val("plan-select")));

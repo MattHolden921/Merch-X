@@ -410,6 +410,11 @@
         ["States and analysis", [
           ["Planned / Applied / Error", "Editable plan state, successfully applied Shopify state, or a row needing correction/retry."],
           ["Worked / Watch / Deepen / Remove", "Post-period recommendations based on comparable sell-through and GA4 CVR evidence."],
+          ["Matched weeks", "Equal numbers of completed, non-overlapping Monday–Sunday Bestsellers weeks before and after the markdown. One matched week is low confidence; two is medium and four is high."],
+          ["Decision-ready", "Products with at least two matched weeks (medium or high confidence). Deepen and Remove outcomes do not create action-queue rows before this threshold."],
+          ["Sell-through (ST)", "A window proxy using net units and ending stock. The table shows the before and after rates; change is in percentage points (pp), not percentage growth.", "ST = net units ÷ (net units + ending stock)"],
+          ["GA4 CVR", "GA4 item purchases divided by GA4 item views for each matched window. A dash means the window has no GA4 views; change is shown in percentage points.", "CVR = GA4 item purchases ÷ GA4 item views"],
+          ["Analysis totals", "Units, ending stock, views and purchases add across the filtered products. Total ST and CVR are recalculated from those totals rather than averaging row percentages."],
           ["Confidence", "Only medium/high-confidence outcomes from multiple comparable weeks train future markdown guidance."],
           ["Action queue", "Persistent shortlist of changed follow-ups; accepting an action does not itself update Shopify."]
         ]],
