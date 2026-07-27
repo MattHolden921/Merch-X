@@ -11619,6 +11619,13 @@ function saleOutcomeFromRow(row) {
 
 function saleAnalysisSummary(outcomes = [], items = []) {
   const comparable = outcomes.filter(row => ["medium", "high"].includes(row.data?.confidence));
+  const matched = outcomes.filter(row => Number(row.data?.comparableWeeks || 0) > 0);
+  const openingStock = matched.reduce((sum, row) => sum + Number(row.preStock || 0), 0);
+  const currentStock = matched.reduce((sum, row) => sum + Number(row.postStock || 0), 0);
+  const postUnits = matched.reduce((sum, row) => sum + Number(row.postUnits || 0), 0);
+  const postGaViews = matched.reduce((sum, row) => sum + Number(row.postGaViews || 0), 0);
+  const postGaPurchases = matched.reduce((sum, row) => sum + Number(row.postGaPurchases || 0), 0);
+  const stockReductionUnits = openingStock - currentStock;
   const summary = {
     analysed: outcomes.length,
     appliedItems: items.filter(item => item.appliedAt || item.status === "Applied" || item.status === "Removed").length,
@@ -11631,6 +11638,17 @@ function saleAnalysisSummary(outcomes = [], items = []) {
     comparable: comparable.length,
     highConfidence: outcomes.filter(row => row.data?.confidence === "high").length,
     unavailable: outcomes.filter(row => !row.data?.comparableWeeks).length,
+    matchedProducts: matched.length,
+    openingStock,
+    currentStock,
+    postUnits,
+    postUnitsPerWeek: matched.reduce((sum, row) => sum + (Number(row.postUnits || 0) / Number(row.data?.comparableWeeks || 1)), 0),
+    stockReductionUnits,
+    stockReductionRate: openingStock > 0 ? stockReductionUnits / openingStock : 0,
+    postSellThrough: postUnits + currentStock > 0 ? postUnits / (postUnits + currentStock) : 0,
+    postGaViews,
+    postGaPurchases,
+    postCvr: postGaViews > 0 ? postGaPurchases / postGaViews : 0,
     avgSellThroughLift: 0,
     avgCvrLift: 0
   };

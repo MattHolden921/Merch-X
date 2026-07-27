@@ -12,7 +12,7 @@
 .topbar{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:12px;align-items:end}
 .plan-actions{display:flex;gap:7px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
 .metric-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:14px}
-.analysis-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:12px}
+.analysis-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px}
 .analysis-exceptions{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .exception-list{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-surface);min-height:120px;overflow:hidden}
 .exception-list h3{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);margin:0;padding:9px 10px;border-bottom:1px solid var(--ds-line);background:var(--ds-bg-muted)}
@@ -104,7 +104,7 @@
 .event:first-child{border-top:0;padding-top:0}
 .event strong{display:block;color:var(--ds-text)}
 .empty-state{padding:34px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.55}
-@media(max-width:1180px){.metric-grid,.analysis-grid{grid-template-columns:repeat(2,1fr)}.analysis-exceptions{grid-template-columns:repeat(2,1fr)}.toolbar,.topbar,.map-grid,.action-toolbar,.analysis-toolbar{grid-template-columns:1fr}.action-tools{justify-content:flex-start}}
+@media(max-width:1180px){.metric-grid{grid-template-columns:repeat(2,1fr)}.analysis-exceptions{grid-template-columns:repeat(2,1fr)}.toolbar,.topbar,.map-grid,.action-toolbar,.analysis-toolbar{grid-template-columns:1fr}.action-tools{justify-content:flex-start}}
 @media(max-width:860px){.analysis-exceptions{grid-template-columns:1fr}}
 @media(max-width:720px){body{padding:18px 10px 36px}.metric-grid,.analysis-grid{grid-template-columns:repeat(2,1fr)}.metric-grid .metric:last-child{grid-column:1/-1}.filtered-summary{grid-template-columns:repeat(2,1fr)}.filtered-summary .metric:last-child{grid-column:1/-1}.actions,.plan-actions{justify-content:flex-start}.table-tools{display:block}.table-tools .actions{margin-top:10px}.desktop-table{display:none}.mobile-products{display:grid;gap:9px}.dialog-head,.dialog-foot{align-items:flex-start;flex-direction:column}.mobile-card-grid{grid-template-columns:repeat(3,1fr)}#products-panel{order:1}#filters-panel{order:2}#mapping-panel{order:3}}
 </style>
@@ -303,6 +303,7 @@ function moneyText(value){return exactMoney.format(Number(value||0));}
 function rateText(numerator,denominator){const den=Number(denominator||0);return den>0?`${((Number(numerator||0)/den)*100).toFixed(1)}%`:"-";}
 function cvrText(purchases,views){return Number(views||0)>0?`${((Number(purchases||0)/Number(views))*100).toFixed(1)}%`:"-";}
 function ppText(value){const numeric=Number(value||0)*100;return `${numeric>=0?"+":""}${numeric.toFixed(1)}pp`;}
+function percentText(value){const numeric=Number(value||0)*100;return `${numeric<0?"-":""}${Math.abs(numeric).toFixed(1)}%`;}
 function reductionText(value){const numeric=Math.max(0,Number(value||0))*100;return `${numeric.toFixed(1)}% stock reduction`;}
 function discountText(value){return `${Math.round(Number(value||0))}%`;}
 function gpText(item){
@@ -351,14 +352,27 @@ function renderAnalysis(){
     el("analysis-note").textContent="Refresh analysis when completed Monday-Sunday reports are available before and after the markdown.";
     return;
   }
+  const matchedProducts=Number(s.matchedProducts||0);
+  const stockReductionUnits=Number(s.stockReductionUnits||0);
+  const commercialCount=value=>matchedProducts?Number(value||0).toLocaleString("en-GB"):"-";
+  const stockReductionNote=!matchedProducts
+    ?"No matched weeks"
+    :stockReductionUnits>=0
+      ?`${stockReductionUnits.toLocaleString("en-GB")} fewer units`
+      :`${Math.abs(stockReductionUnits).toLocaleString("en-GB")} more units`;
   el("analysis-metrics").innerHTML=[
+    metric("Opening stock",commercialCount(s.openingStock),`${matchedProducts.toLocaleString("en-GB")} matched products`),
+    metric("Current stock",commercialCount(s.currentStock),matchedProducts?"latest matched week end":"No matched weeks"),
+    metric("Units sold",commercialCount(s.postUnits),matchedProducts?`${Number(s.postUnitsPerWeek||0).toFixed(1)} units/week`:"No matched weeks"),
+    metric("Stock reduction",matchedProducts?percentText(s.stockReductionRate):"-",stockReductionNote),
+    metric("Sale ST",matchedProducts?percentText(s.postSellThrough):"-",matchedProducts?"matched after-sale windows":"No matched weeks"),
+    metric("GA4 views",commercialCount(s.postGaViews),matchedProducts?`${Number(s.postGaPurchases||0).toLocaleString("en-GB")} purchases`:"No matched weeks"),
+    metric("Sale CVR",matchedProducts?percentText(s.postCvr):"-",matchedProducts?"matched after-sale windows":"No matched weeks"),
     metric("Decision-ready",Number(s.comparable||0).toLocaleString("en-GB"),"medium or high confidence"),
     metric("Worked",Number(s.worked||0).toLocaleString("en-GB"),"positive read"),
     metric("Watch",Number(s.watch||0).toLocaleString("en-GB"),`${Number(s.watchEarly||0).toLocaleString("en-GB")} early`),
     metric("Deepen",Number(s.deepen||0).toLocaleString("en-GB"),"needs action"),
-    metric("Remove",Number(s.remove||0).toLocaleString("en-GB"),"objective met"),
-    metric("Avg ST change",ppText(s.avgSellThroughLift),"decision-ready products"),
-    metric("Avg CVR change",ppText(s.avgCvrLift),"GA4, decision-ready products")
+    metric("Remove",Number(s.remove||0).toLocaleString("en-GB"),"objective met")
   ].join("");
   const groups=[
     ["worked","Worked"],

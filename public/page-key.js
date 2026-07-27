@@ -415,6 +415,7 @@
           ["Sell-through (ST)", "A window proxy using net units and ending stock. The table shows the before and after rates; change is in percentage points (pp), not percentage growth.", "ST = net units ÷ (net units + ending stock)"],
           ["GA4 CVR", "GA4 item purchases divided by GA4 item views for each matched window. A dash means the window has no GA4 views; change is shown in percentage points.", "CVR = GA4 item purchases ÷ GA4 item views"],
           ["Images", "Analysis images are hidden by default. Show images fetches current featured images directly from Shopify for the analysed products; URLs stay only in the browser session and are not added to saved analysis data. Hide images returns to the denser table without changing filters."],
+          ["Sale summary", "Top performance cards use only products with at least one matched week. Opening stock is the summed pre-sale ending stock; current stock is the latest matched after-sale ending stock. Stock reduction is opening stock minus current stock. Sale ST and CVR are recalculated from the combined units, stock, purchases and views."],
           ["Analysis totals", "Units, ending stock, views and purchases add across the filtered products. Total ST and CVR are recalculated from those totals rather than averaging row percentages."],
           ["Confidence", "Only medium/high-confidence outcomes from multiple comparable weeks train future markdown guidance."],
           ["Action queue", "Persistent shortlist of changed follow-ups; accepting an action does not itself update Shopify."]
