@@ -5224,6 +5224,15 @@ function openOrderSqliteDb() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS cashflow_vat_overrides (
+      period_end TEXT PRIMARY KEY,
+      amount REAL NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS cashflow_cost_forecasts (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -5364,6 +5373,7 @@ function openOrderSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_pnl_windsor_sync_runs_lookup ON pnl_windsor_sync_runs(connector, status, start_date, end_date, synced_at);
     CREATE INDEX IF NOT EXISTS idx_cashflow_budgets_week ON cashflow_weekly_budgets(week_start);
     CREATE INDEX IF NOT EXISTS idx_cashflow_manual_date ON cashflow_manual_movements(movement_date, direction);
+    CREATE INDEX IF NOT EXISTS idx_cashflow_vat_period_end ON cashflow_vat_overrides(period_end);
     CREATE INDEX IF NOT EXISTS idx_cashflow_cost_due ON cashflow_cost_forecasts(due_date, cost_class);
     CREATE INDEX IF NOT EXISTS idx_cashflow_cost_rule ON cashflow_cost_forecasts(pnl_rule_id, due_date);
     CREATE INDEX IF NOT EXISTS idx_order_payments_order ON order_payment_transactions(order_id, payment_date, status);
@@ -16806,8 +16816,18 @@ function cashflowDefaultSettings() {
     forecastAov: 0,
     forecastItemsPerOrder: 0,
     lowCashThreshold: 0,
+    vatForecastEnabled: false,
+    vatPeriodEndAnchor: "",
+    vatInputRecoveryPercent: 0,
     pnlCostTiming: {}
   };
+}
+
+function isCalendarMonthEnd(value) {
+  if (!validReportDate(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.getUTCDate() === 1;
 }
 
 function cashflowTimingSetting(value = {}, fallbackPaymentTiming = "weekly") {
@@ -16840,6 +16860,7 @@ function readCashflowSettings() {
   const saved = readAppSettingJson("cashflowConfig", {});
   const defaults = cashflowDefaultSettings();
   const savedCostTiming = saved.pnlCostTiming && typeof saved.pnlCostTiming === "object" && !Array.isArray(saved.pnlCostTiming) ? saved.pnlCostTiming : {};
+  const savedVatRecovery = Number(saved.vatInputRecoveryPercent ?? defaults.vatInputRecoveryPercent);
   return {
     openingBalance: Number(saved.openingBalance || defaults.openingBalance),
     receiptLagBusinessDays: Math.max(0, Math.min(15, Math.trunc(Number(saved.receiptLagBusinessDays ?? defaults.receiptLagBusinessDays)))),
@@ -16847,6 +16868,9 @@ function readCashflowSettings() {
     forecastAov: Math.max(0, Number(saved.forecastAov || defaults.forecastAov)),
     forecastItemsPerOrder: Math.max(0, Number(saved.forecastItemsPerOrder || defaults.forecastItemsPerOrder)),
     lowCashThreshold: Number(saved.lowCashThreshold || defaults.lowCashThreshold),
+    vatForecastEnabled: Boolean(saved.vatForecastEnabled),
+    vatPeriodEndAnchor: isCalendarMonthEnd(saved.vatPeriodEndAnchor) ? saved.vatPeriodEndAnchor : "",
+    vatInputRecoveryPercent: Number.isFinite(savedVatRecovery) ? Math.max(0, Math.min(100, savedVatRecovery)) : defaults.vatInputRecoveryPercent,
     pnlCostTiming: Object.fromEntries(Object.entries(savedCostTiming).slice(0, 250).map(([id, timing]) => [String(id), cashflowTimingSetting(timing)]))
   };
 }
@@ -16854,6 +16878,10 @@ function readCashflowSettings() {
 function writeCashflowSettings(input = {}) {
   const current = readCashflowSettings();
   const rawCostTiming = input.pnlCostTiming && typeof input.pnlCostTiming === "object" && !Array.isArray(input.pnlCostTiming) ? input.pnlCostTiming : current.pnlCostTiming;
+  const inputVatRecovery = Number(input.vatInputRecoveryPercent ?? current.vatInputRecoveryPercent);
+  const requestedVatAnchor = input.vatPeriodEndAnchor == null ? current.vatPeriodEndAnchor : String(input.vatPeriodEndAnchor || "").trim();
+  if (requestedVatAnchor && !validReportDate(requestedVatAnchor)) throw new Error("Choose a valid quarterly VAT period end.");
+  if (requestedVatAnchor && !isCalendarMonthEnd(requestedVatAnchor)) throw new Error("The quarterly VAT period end must be the final day of a calendar month.");
   const next = {
     openingBalance: Number.isFinite(Number(input.openingBalance)) ? Number(input.openingBalance) : current.openingBalance,
     receiptLagBusinessDays: Math.max(0, Math.min(15, Math.trunc(Number(input.receiptLagBusinessDays ?? current.receiptLagBusinessDays)))),
@@ -16861,6 +16889,9 @@ function writeCashflowSettings(input = {}) {
     forecastAov: Math.max(0, Number(input.forecastAov ?? current.forecastAov)),
     forecastItemsPerOrder: Math.max(0, Number(input.forecastItemsPerOrder ?? current.forecastItemsPerOrder)),
     lowCashThreshold: Number.isFinite(Number(input.lowCashThreshold)) ? Number(input.lowCashThreshold) : current.lowCashThreshold,
+    vatForecastEnabled: input.vatForecastEnabled == null ? current.vatForecastEnabled : Boolean(input.vatForecastEnabled),
+    vatPeriodEndAnchor: requestedVatAnchor,
+    vatInputRecoveryPercent: Number.isFinite(inputVatRecovery) ? Math.max(0, Math.min(100, inputVatRecovery)) : current.vatInputRecoveryPercent,
     pnlCostTiming: Object.fromEntries(Object.entries(rawCostTiming).slice(0, 250).map(([id, timing]) => [String(id), cashflowTimingSetting(timing)]))
   };
   return writeAppSettingJson("cashflowConfig", next);
@@ -16984,6 +17015,57 @@ function deleteCashflowManualMovement(id) {
   const clean = String(id || "").trim();
   if (!clean) throw new Error("Missing cash movement id.");
   return Boolean(openOrderSqliteDb().prepare("DELETE FROM cashflow_manual_movements WHERE id = ?").run(clean).changes);
+}
+
+function cashflowVatOverrideFromRow(row) {
+  if (!row) return null;
+  return {
+    periodEnd: row.period_end,
+    amount: Number(row.amount || 0),
+    notes: row.notes || "",
+    createdBy: row.created_by || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function readCashflowVatOverrides() {
+  return openOrderSqliteDb().prepare(`
+    SELECT * FROM cashflow_vat_overrides
+    ORDER BY date(period_end)
+  `).all().map(cashflowVatOverrideFromRow);
+}
+
+function upsertCashflowVatOverride(input = {}, req) {
+  const override = input.override || input;
+  const periodEnd = String(override.periodEnd || "").trim();
+  if (!validReportDate(periodEnd)) throw new Error("Choose a valid VAT period end.");
+  const amount = Number(override.amount);
+  if (!Number.isFinite(amount) || amount < 0) throw new Error("VAT override amount must be zero or greater.");
+  openOrderSqliteDb().prepare(`
+    INSERT INTO cashflow_vat_overrides (
+      period_end, amount, notes, created_by, created_at, updated_at
+    ) VALUES (
+      @periodEnd, @amount, @notes, @createdBy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(period_end) DO UPDATE SET
+      amount = excluded.amount,
+      notes = excluded.notes,
+      created_by = excluded.created_by,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    periodEnd,
+    amount: cashflow.money(amount),
+    notes: String(override.notes || "").trim().slice(0, 600),
+    createdBy: actorName(req)
+  });
+  return cashflowVatOverrideFromRow(openOrderSqliteDb().prepare("SELECT * FROM cashflow_vat_overrides WHERE period_end = ?").get(periodEnd));
+}
+
+function deleteCashflowVatOverride(periodEnd) {
+  const clean = String(periodEnd || "").trim();
+  if (!validReportDate(clean)) throw new Error("Missing or invalid VAT period end.");
+  return Boolean(openOrderSqliteDb().prepare("DELETE FROM cashflow_vat_overrides WHERE period_end = ?").run(clean).changes);
 }
 
 const cashflowCostClasses = new Set(["marketing", "variable", "fixed", "other"]);
@@ -17228,7 +17310,7 @@ async function fetchShopifyCashflowDailyActuals(range) {
   `;
   const reportQuery = `
     FROM sales
-    SHOW day, total_sales, orders, quantity_ordered
+    SHOW day, total_sales, taxes, orders, quantity_ordered
     GROUP BY day
     SINCE ${range.startDate}
     UNTIL ${range.endDate}
@@ -17241,6 +17323,7 @@ async function fetchShopifyCashflowDailyActuals(range) {
   const rows = (response.tableData?.rows || []).map(row => ({
     date: String(row.day || "").slice(0, 10),
     despatch: Number(row.total_sales || 0),
+    tax: row.taxes == null || row.taxes === "" ? null : Number(row.taxes),
     orders: Number(row.orders || 0),
     units: Math.max(0, Number(row.quantity_ordered || 0))
   })).filter(row => validReportDate(row.date));
@@ -17399,10 +17482,15 @@ async function cashflowPayload(url, req) {
   const receiptLookbackStart = cashflow.addDays(startDate, -(settings.receiptLagBusinessDays * 2 + 7));
   const serviceLookbackStart = effectiveCostForecastRows.filter(row => row.calculationType === "pnl_rule").map(row => row.serviceStartDate).filter(validReportDate).sort()[0] || startDate;
   const scheduledLookbackStart = pnlCashTiming.costRules.filter(row => row.enabled && row.paymentTiming === "scheduled" && validReportDate(row.paymentDate)).flatMap(row => cashflow.monthlyPaymentDates(row.paymentDate, startDate, endDate).map(paymentDate => cashflow.previousCalendarMonthRange(paymentDate)?.startDate).filter(Boolean)).sort()[0] || startDate;
-  const fetchStart = [benchmarkStart, receiptLookbackStart, serviceLookbackStart, scheduledLookbackStart].sort()[0];
+  const vatPeriods = settings.vatForecastEnabled && settings.vatPeriodEndAnchor
+    ? cashflow.quarterlyVatPeriods(settings.vatPeriodEndAnchor, startDate, endDate)
+    : [];
+  const vatLookbackStart = vatPeriods.map(row => row.periodStart).sort()[0] || startDate;
+  const fetchStart = [benchmarkStart, receiptLookbackStart, serviceLookbackStart, scheduledLookbackStart, vatLookbackStart].sort()[0];
   const fetchEnd = yesterday < endDate ? yesterday : endDate;
   let actuals = { configured: false, rows: [], message: "No completed Despatch days fall inside the selected range." };
   const warnings = [];
+  if (settings.vatForecastEnabled && !settings.vatPeriodEndAnchor) warnings.push("VAT forecasting is enabled but no quarterly period end is set, so no VAT payments are included yet.");
   const missingRulePaymentDates = pnlCashTiming.costRules.filter(row => row.enabled && row.paymentTiming === "scheduled" && !row.paymentDate);
   if (missingRulePaymentDates.length) warnings.push(`${missingRulePaymentDates.length} P&L cost rule${missingRulePaymentDates.length === 1 ? " uses" : "s use"} monthly cash treatment without a first payment date, so ${missingRulePaymentDates.length === 1 ? "it is" : "they are"} not included yet.`);
   if (fetchStart <= fetchEnd) {
@@ -17426,6 +17514,10 @@ async function cashflowPayload(url, req) {
   if (!settings.forecastItemsPerOrder && !derivedItems) warnings.push("No recent Shopify unit history was available, so forecast items per order defaults to 1.5.");
   const budgets = readCashflowBudgets(startDate, endDate);
   const manualMovements = readCashflowManualMovements(startDate, endDate);
+  const vatOverrides = readCashflowVatOverrides();
+  if (settings.vatForecastEnabled && manualMovements.some(row => row.direction === "outflow" && /\bvat\b/i.test(`${row.category} ${row.name}`))) {
+    warnings.push("A manual VAT outflow also exists in this forecast. Review it alongside the automatic VAT payment to avoid double counting.");
+  }
   const suppliers = cashflowSupplierMovements(startDate);
   warnings.push(...suppliers.warnings);
   const forecast = cashflow.buildCashflow({
@@ -17442,8 +17534,15 @@ async function cashflowPayload(url, req) {
     costTiming,
     costForecasts: effectiveCostForecastRows,
     supplierMovements: suppliers.movements,
-    manualMovements
+    manualMovements,
+    vatSettings: {
+      enabled: settings.vatForecastEnabled,
+      periodEndAnchor: settings.vatPeriodEndAnchor,
+      inputRecoveryPercent: settings.vatInputRecoveryPercent
+    },
+    vatOverrides
   });
+  warnings.push(...(forecast.vat?.warnings || []));
   return {
     configured: actuals.configured,
     forecast,
@@ -17451,6 +17550,8 @@ async function cashflowPayload(url, req) {
     effectiveDrivers: { forecastAov: cashflow.money(effectiveAov), forecastItemsPerOrder: Math.round(effectiveItems * 100) / 100 },
     budgets,
     manualMovements,
+    vatOverrides,
+    vatForecast: forecast.vat,
     payments: readOrderPayments(),
     pnlCashTiming,
     costForecasts: forecast.costForecasts,
@@ -17459,6 +17560,7 @@ async function cashflowPayload(url, req) {
       type: actuals.configured ? "shopifyql_daily_despatch" : "budget_only",
       fetchedAt: actuals.fetchedAt || "",
       actualDayCount: actuals.rows.length,
+      actualTaxDayCount: actuals.rows.filter(row => row.tax != null).length,
       receiptMethod: `${settings.receiptLagBusinessDays} business-day estimate`,
       message: actuals.message || ""
     },
@@ -17487,6 +17589,28 @@ async function handleApi(req, res) {
       sendJson(res, 200, { ok: true, settings: writeCashflowSettings(body.settings || body) });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not save cashflow settings." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cashflow/vat-overrides/upsert") {
+    if (!requireRoles(req, res, cashflowWriteRoles, "Only Finance or Admin users can update VAT payment overrides.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, { ok: true, override: upsertCashflowVatOverride(body, req) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save the VAT payment override." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cashflow/vat-overrides/delete") {
+    if (!requireRoles(req, res, cashflowWriteRoles, "Only Finance or Admin users can delete VAT payment overrides.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, { ok: true, deleted: deleteCashflowVatOverride(body.periodEnd) });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not delete the VAT payment override." });
     }
     return true;
   }

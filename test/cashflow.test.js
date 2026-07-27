@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { addBusinessDays, buildCashflow, buildWeeks, mondayOf, monthlyPaymentDates } = require("../lib/cashflow");
+const { addBusinessDays, buildCashflow, buildWeeks, mondayOf, monthlyPaymentDates, quarterlyVatPeriods, vatPaymentDate } = require("../lib/cashflow");
 
 test("normalizes weeks to Monday and shifts receipts by business days", () => {
   assert.equal(mondayOf("2026-07-22"), "2026-07-20");
@@ -206,4 +206,75 @@ test("clamps monthly payment anchors to the final day of shorter months", () => 
     "2026-03-31",
     "2026-04-30"
   ]);
+});
+
+test("builds quarterly UK VAT periods and moves weekend deadlines to Friday", () => {
+  assert.equal(vatPaymentDate("2026-06-30"), "2026-08-07");
+  assert.equal(vatPaymentDate("2026-09-30"), "2026-11-06");
+  assert.deepEqual(quarterlyVatPeriods("2026-06-30", "2026-07-20", "2026-11-08"), [
+    { periodStart: "2026-04-01", periodEnd: "2026-06-30", paymentDate: "2026-08-07" },
+    { periodStart: "2026-07-01", periodEnd: "2026-09-30", paymentDate: "2026-11-06" }
+  ]);
+  assert.deepEqual(quarterlyVatPeriods("2026-09-30", "2026-11-01", "2027-02-28"), [
+    { periodStart: "2026-07-01", periodEnd: "2026-09-30", paymentDate: "2026-11-06" },
+    { periodStart: "2026-10-01", periodEnd: "2026-12-31", paymentDate: "2027-02-05" }
+  ]);
+});
+
+test("forecasts VAT from actual Shopify tax and future Despatch, then applies recovery and an override", () => {
+  const result = buildCashflow({
+    startDate: "2026-07-20",
+    weeks: 16,
+    asOfDate: "2026-07-22",
+    openingBalance: 1000,
+    budgets: [{ weekStart: "2026-07-20", amount: 720 }],
+    dailyActuals: [
+      { date: "2026-07-01", despatch: 60, tax: 10 },
+      { date: "2026-07-20", despatch: 120, tax: 20 }
+    ],
+    vatSettings: { enabled: true, periodEndAnchor: "2026-06-30", inputRecoveryPercent: 25 },
+    vatOverrides: [{ periodEnd: "2026-09-30", amount: 90, notes: "Filed estimate" }]
+  });
+
+  const september = result.vat.periods.find(row => row.periodEnd === "2026-09-30");
+  assert.equal(september.actualOutputVat, 30);
+  assert.equal(september.forecastOutputVat, 100);
+  assert.equal(september.calculatedAmount, 97.5);
+  assert.equal(september.paymentAmount, 90);
+  assert.equal(september.overridden, true);
+  assert.equal(result.totals.vatPayments, 90);
+  assert.equal(result.weeks.find(row => row.startDate === "2026-11-02").vatPayments, 90);
+  assert.equal(result.totals.closingCash, 1630);
+});
+
+test("falls back to standard-rate VAT for actual Despatch without Shopify tax", () => {
+  const result = buildCashflow({
+    startDate: "2026-08-03",
+    weeks: 1,
+    asOfDate: "2026-08-03",
+    dailyActuals: [{ date: "2026-06-30", despatch: 120 }],
+    vatSettings: { enabled: true, periodEndAnchor: "2026-06-30", inputRecoveryPercent: 0 }
+  });
+
+  assert.equal(result.vat.periods[0].actualOutputVat, 20);
+  assert.equal(result.totals.vatPayments, 20);
+  assert.match(result.vat.warnings[0], /no Shopify tax value/);
+});
+
+test("does not add VAT movements when forecasting is disabled or unconfigured", () => {
+  const disabled = buildCashflow({
+    startDate: "2026-08-03",
+    weeks: 1,
+    vatSettings: { enabled: false, periodEndAnchor: "2026-06-30" }
+  });
+  const unconfigured = buildCashflow({
+    startDate: "2026-08-03",
+    weeks: 1,
+    vatSettings: { enabled: true, periodEndAnchor: "" }
+  });
+
+  assert.equal(disabled.totals.vatPayments, 0);
+  assert.equal(disabled.vat.periods.length, 0);
+  assert.equal(unconfigured.totals.vatPayments, 0);
+  assert.equal(unconfigured.vat.configured, false);
 });

@@ -103,7 +103,7 @@
     },
     "cashflow.html": {
       title: "Cashflow planner key",
-      intro: "A weekly planning estimate that shifts Despatch into expected receipts and combines it with dated supplier, operating and manual cash movements. It is not a bank or accounting ledger.",
+      intro: "A weekly planning estimate that shifts Despatch into expected receipts and combines it with dated supplier, operating, VAT and manual cash movements. It is not a bank or accounting ledger.",
       sections: [
         ["Sales and receipts", [
           ["Despatch budget", "The Finance-entered weekly sales budget including VAT. Completed days use ShopifyQL Despatch actuals; the remaining budget is spread evenly over the future days in that week."],
@@ -118,13 +118,22 @@
           ["Monthly amount", "Monthly costs are paid one calendar month in arrears. A November payment calculates its amount from October's Despatch, orders or units, then places that amount on the recurring November payment date."],
           ["Marketing boundary", "Historical P&L marketing is backward-looking and is not used as a forecast. The weekly combined Meta + PPC budget is entered only in Cashflow; other one-off items can use a manual movement."],
           ["Double-count safeguard", "A P&L rule is either weekly or monthly, never both. A direct monthly rule also supersedes an older linked forecast for that rule. Product COGS is excluded because purchase-order payments represent stock cash separately."],
-          ["Manual movements", "Finance can add dated inflows or outflows for items outside Orders and the P&L, such as VAT, payroll, funding, tax, loans or capex."]
+          ["Manual movements", "Finance can add dated inflows or outflows for items outside Orders, the P&L and automatic VAT forecasting, such as payroll, funding, other tax, loans or capex."]
+        ]],
+        ["VAT forecast", [
+          ["Quarterly schedule", "Finance enables the forecast and saves one calendar-month-end VAT period anchor. The schedule repeats every three months, including across year-end."],
+          ["Output VAT actual", "Completed Despatch days use ShopifyQL reported Taxes. If a completed day has Despatch but no tax value, the planner warns and estimates VAT using the standard 20% rate."],
+          ["Output VAT forecast", "Future VAT-inclusive Despatch uses the shared standard 20% VAT rate.", "forecast output VAT = Despatch * 20 / 120"],
+          ["Expected recovery", "Finance enters expected input-VAT recovery as a percentage of output VAT, based on historical returns. Individual supplier and operating costs are not VAT-classified.", "calculated payment = output VAT * (1 - recovery %)"],
+          ["Cash date", "Payment is placed seven days after the following month end. If that date is Saturday or Sunday, it moves to the preceding Friday; bank holidays are not adjusted."],
+          ["Return override", "Finance or Admin can replace one return's calculated payment with a saved non-negative amount and note. The calculated comparison remains visible; VAT repayments should be entered as manual inflows."],
+          ["Duplicate safeguard", "A manual outflow labelled VAT remains included but triggers a warning while automatic VAT forecasting is enabled, so Finance can remove an accidental duplicate."]
         ]],
         ["Roll-forward and safeguards", [
           ["Opening / closing cash", "Opening cash is applied to the first displayed Monday. Each week's closing cash becomes the next week's opening cash.", "closing cash = opening cash + inflows - outflows"],
           ["Expanded week", "Click a week to see one Money in row with seven Mon–Sun tiles. Each tile totals all receipts and other inflows landing that day; dated supplier, marketing, P&L and manual outflows remain itemised as cost cards below."],
           ["Legacy payments", "Older paid invoices can have only an order-level paid date. Those movements are labelled as estimates and should be reviewed when they fall inside the forecast."],
-          ["Access", "Finance and Admin can edit weekly Despatch and Meta + PPC budgets, settings, P&L rule use, manual movements and supplier transactions. Buying Director has read-only access."]
+          ["Access", "Finance and Admin can edit weekly Despatch and Meta + PPC budgets, settings, VAT assumptions and overrides, P&L rule use, manual movements and supplier transactions. Buying Director has read-only access."]
         ]]
       ]
     },

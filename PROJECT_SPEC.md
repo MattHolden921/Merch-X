@@ -1,6 +1,6 @@
 # Merch X Project Spec
 
-Last reviewed: 2026-07-22
+Last reviewed: 2026-07-24
 
 This is the shared logic and product reference for Merch X. Keep it current when the app's workflows, calculations, data model, integrations, or page responsibilities change.
 
@@ -43,7 +43,7 @@ The app favours simple operational tools over a large framework:
 - `public/order-reports.html`: read-only operational reports for arrivals, intake exceptions, next actions, finance, supplier performance, buying mix, and data quality.
 - `public/supplier-report.html`: supplier-led workbench for top-down review of one supplier's orders, products, receipt actuals, discrepancies, and credit exposure.
 - `public/pnl.html`: finance P&L planner using live Shopify actuals, saved cost rules, manual marketing spend, and driver-based profit scenarios.
-- `public/cashflow.html`: Finance-led 13-week cashflow planner combining weekly Despatch and Meta + PPC budgets, three-business-day estimated receipts, supplier commitments, P&L rules with weekly or monthly-in-arrears cash treatment configured in-row, and manual cash movements.
+- `public/cashflow.html`: Finance-led 13-week cashflow planner combining weekly Despatch and Meta + PPC budgets, three-business-day estimated receipts, supplier commitments, P&L rules with weekly or monthly-in-arrears cash treatment, quarterly UK VAT payment forecasts, and manual cash movements.
 - `public/sku-register.html`: local SKU register and safe deletion of unused issued SKUs.
 - `public/products.html`: product and supplier master-data workspace, local SKU enrichment, readiness review, and Shopify draft push workflow.
 - `public/merchandising.html`: Shopify product merchandising view using product, order, and optional GA4 metrics.
@@ -88,7 +88,7 @@ Primary table groups:
 - Weekly actions: `weekly_actions`, `weekly_action_events`.
 - Seasonal sale review and Sale Planner: `product_live_dates` tracks the best-known product live timestamp and its source; `sale_season_reviews` and `sale_season_review_items` persist seasonal scope, frozen metrics, buyer decisions, first/second-drop assignments, notes, and handoff links. Operational sale state remains in `sale_plans`, `sale_plan_items`, `sale_plan_events`, the variant restoration ledger in `sale_state_ledger`, markdown outcomes/actions, durable `sale_planner_jobs` and `sale_planner_job_items`, plus Sale collection mapping stored in `app_settings.salePlannerCollections`.
 - P&L planner: reusable `pnl_cost_rules`, dated manual/automated `pnl_marketing_spend` entries, raw `pnl_marketing_spend_actuals` rows for Windsor campaign spend, and `pnl_windsor_sync_runs` for sync coverage/cooldown tracking.
-- Cashflow planner: weekly sales/Despatch and combined Meta + PPC inputs in `cashflow_weekly_budgets`, dated non-order adjustments in `cashflow_manual_movements`, shared assumptions plus each P&L rule's inclusion, weekly/monthly-in-arrears cash treatment, and monthly first-payment anchor under `app_settings.cashflowConfig`, and supplier payment transactions from `order_payment_transactions`. Legacy standalone forward costs in `cashflow_cost_forecasts` remain readable and API-compatible but are no longer a primary page workflow; older P&L-linked forecast rows are superseded when the rule has a direct monthly anchor. Calculated outputs remain planning estimates rather than posted accounting entries.
+- Cashflow planner: weekly sales/Despatch and combined Meta + PPC inputs in `cashflow_weekly_budgets`, dated non-order adjustments in `cashflow_manual_movements`, shared assumptions plus P&L cash timing and quarterly VAT settings under `app_settings.cashflowConfig`, per-return VAT overrides in `cashflow_vat_overrides`, and supplier payment transactions from `order_payment_transactions`. Legacy standalone forward costs in `cashflow_cost_forecasts` remain readable and API-compatible but are no longer a primary page workflow; older P&L-linked forecast rows are superseded when the rule has a direct monthly anchor. Calculated outputs remain planning estimates rather than posted accounting entries.
 - Email merchandising: `email_campaigns`, immutable product snapshots in `email_campaign_products`, and source-specific `email_campaign_metric_snapshots`.
 
 Legacy/prototype data:
@@ -130,7 +130,7 @@ Used for:
 - Seasonal Sale Review current catalogue, variant inventory/cost/price, publication date, and full/recent product-sales windows.
 - Bestsellers sync from Shopify orders/products.
 - P&L actual sales via ShopifyQL reports.
-- Cashflow daily Despatch actuals via ShopifyQL reports. Cashflow does not read Shopify Payments payouts; receipt timing is estimated from Despatch.
+- Cashflow daily Despatch and reported tax actuals via ShopifyQL reports. Cashflow does not read Shopify Payments payouts; receipt timing is estimated from Despatch.
 
 When Shopify is not configured, tools should return a clear configured=false response and use samples or saved local data where appropriate.
 
@@ -199,6 +199,8 @@ Reports and actions:
 - `GET /api/cashflow`
 - `POST /api/cashflow/settings`
 - `POST /api/cashflow/budgets`
+- `POST /api/cashflow/vat-overrides/upsert`
+- `POST /api/cashflow/vat-overrides/delete`
 - `POST /api/cashflow/cost-forecasts/upsert`
 - `POST /api/cashflow/cost-forecasts/delete`
 - `POST /api/cashflow/movements/upsert`
@@ -568,15 +570,21 @@ Key principles:
 
 - The default horizon is 13 Monday-Sunday weeks and can be viewed at 8, 13, 18, or 26 weeks. Finance enters one Despatch budget including VAT and one combined Meta + PPC budget for each week. Completed days use daily ShopifyQL `total_sales`; the remaining weekly Despatch budget is reduced by actual week-to-date Despatch and spread evenly over the remaining days. The Meta + PPC budget creates one Marketing outflow on the Sunday ending that week.
 - Customer cash receipt timing is estimated, not reconciled to Shopify Payments or a bank. Each actual or budget Despatch day is shifted by `receiptLagBusinessDays`, defaulting to three; Saturdays and Sundays do not consume lag days. Friday, Saturday, and Sunday Despatch therefore lands on the following Wednesday under the default. Payout reserves, failures, payout-schedule changes, chargebacks, and bank-clearing delays are outside the estimate.
-- Opening cash applies to the first displayed Monday. Each week's closing cash becomes the following week's opening cash. The roll-forward exposes Despatch and Meta + PPC budgets, Despatch actual/forecast, estimated receipts, supplier payments, marketing, variable costs, fixed costs, manual movements, net cash, and closing cash. Expanding a week groups every inflow into a fixed seven-tile Mon-Sun Money in row, with each tile totalling movements landing that day, while all dated outflows remain itemised as cost cards underneath. Footer totals add only meaningful flow values; closing cash is the final balance, not a sum of weekly balances.
+- Opening cash applies to the first displayed Monday. Each week's closing cash becomes the following week's opening cash. The roll-forward exposes Despatch and Meta + PPC budgets, Despatch actual/forecast, estimated receipts, supplier payments, marketing, variable costs, fixed costs, VAT payments, manual movements, net cash, and closing cash. Expanding a week groups every inflow into a fixed seven-tile Mon-Sun Money in row, with each tile totalling movements landing that day, while all dated outflows remain itemised as cost cards underneath. Footer totals add only meaningful flow values; closing cash is the final balance, not a sum of weekly balances.
 - Forecast order volumes use recent ShopifyQL Despatch/orders/quantity as the default AOV and items-per-order. Finance can persist overrides. When neither overrides nor recent actuals exist, the visible fallback assumptions are £50 AOV and 1.5 items per order.
 - Operating outflows reuse `lib/pnl.js` and `lib/commerce-finance.js`. Every active P&L rule exposes its inclusion and cash treatment together in the P&L driver-rules table. Weekly rules keep the P&L calculation basis—fixed monthly, per order, per item, pick/pack, Despatch percentage, or blended Despatch percentage/per-order—and use the cashflow's mixed actual/budget Despatch, orders, units, AOV, and items/order drivers. They are paid on the Sunday ending each incurred forecast week.
 - Warehouse, storage, courier, shipping/delivery, pick-and-pack, packaging, intake, return, and marketing-named P&L rules default to monthly treatment instead of an assumed month end. Finance chooses a first payment date in that rule's Cash treatment cell. The anchor repeats on the same day in each following calendar month inside the forecast horizon: the 15th remains the 15th, while a 29th, 30th or 31st clamps to the final day of a shorter month. Monthly rules are paid one calendar month in arrears: each occurrence calculates the rule from the previous calendar month's forecast activity, so a November payment represents October activity, then creates one movement on the recurring payment date. An anchor before the horizon still generates its later monthly occurrences; a blank date creates no movement. A rule is either weekly or monthly, never both. If a legacy P&L-linked `cashflow_cost_forecasts` row exists, a direct monthly anchor supersedes it to prevent duplication.
 - Historical P&L marketing entries are backward-looking actuals and are not imported as cashflow forecasts. Forward paid-media planning uses the weekly combined Meta + PPC budget beside Despatch and does not create future P&L marketing entries. Other one-off dated items can use Manual movements. Existing standalone forecast rows remain calculable for compatibility but are not exposed as a primary Cashflow page input.
 - Product COGS and gross profit are not cashflow movements because supplier purchase-order payments represent stock cash separately.
+- Quarterly UK VAT forecasting is optional. Finance saves one calendar-month-end VAT period anchor; other dates are rejected. It repeats every three months and preserves calendar month-end quarter boundaries. Only returns whose payment cash date falls inside the displayed horizon create movements.
+- Completed days in each VAT period use ShopifyQL reported `taxes`. A completed Despatch day without a usable tax value falls back to the canonical standard VAT rate from `lib/commerce-finance.js` and creates a visible warning. Future VAT-inclusive Despatch uses `Despatch * 20 / 120`.
+- Estimated input-VAT recovery is a Finance-maintained percentage of output VAT based on historical returns; v1 does not classify individual supplier, marketing, or operating costs for VAT. Estimated payment is `max(0, actual output VAT + forecast output VAT) * (1 - recovery percentage)`.
+- The normal VAT cash date is seven days after the end of the calendar month following the return period. A Saturday or Sunday date moves to the preceding Friday so cash is available before the deadline; bank-holiday adjustment and accounting-platform integration are outside v1.
+- Finance/Admin can save one non-negative override amount and note per VAT period end in `cashflow_vat_overrides`. The override replaces that return's calculated outflow while the comparison remains visible. Zero represents no payment; VAT repayments remain manual inflows. Removing the override restores the calculated estimate.
+- VAT is a separate weekly and horizon outflow, not part of operating costs or Other. A manual outflow whose category or name contains VAT remains included but warns about possible double counting while automatic forecasting is enabled.
 - Supplier `Paid` and `Planned` ledger transactions use their saved payment dates. Remaining unpaid invoice balances use invoice due dates. Residual uninvoiced order balances use the workflow payment due date, then intake/required dates, and finally the first forecast week as a visible fallback. Overdue outstanding commitments are brought into the first forecast week rather than disappearing before the range.
 - Existing Paid invoices without a payment-ledger row use the order workflow paid date as a `legacy_estimate` when available and show a warning. Missing dates, missing FX, fallback payment dates, or planned payments above the current outstanding balance remain visible as data-quality warnings.
-- Manual movements cover dated inflows/outflows not represented by Orders or the P&L, such as VAT, payroll, funding, tax, loans, or capex. They are planning inputs, not posted accounting entries.
+- Manual movements cover dated inflows/outflows not represented by Orders, the P&L, or automatic VAT forecasting, such as payroll, funding, other tax, loans, capex, or a VAT repayment. They are planning inputs, not posted accounting entries.
 
 ### Collection Reorder Planner
 
