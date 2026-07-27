@@ -13,6 +13,7 @@ const {
   normalizeActuals,
   operatingLeverage,
   shopifyQlSalesActualsFromRow,
+  shopifyQlSalesActualsFromRows,
   sensitivityTables,
   validateRange
 } = require("../lib/pnl");
@@ -57,7 +58,20 @@ test("calculates pick and pack first item plus additional item rate", () => {
   assert.equal(line.amountApplied, 176);
 });
 
-test("calculates blended card fees as revenue percent plus per order fee", () => {
+test("calculates reversed-item costs from Shopify reversal quantity", () => {
+  const line = calculateCostRule({
+    name: "Return handling",
+    category: "Fulfilment",
+    costType: "per_reversed_item",
+    amount: 0.2,
+    status: "Active"
+  }, { range, netRevenue: 10000, orders: 100, units: 260, returnedUnits: 42 }, range);
+
+  assert.equal(line.amountApplied, 8.4);
+  assert.equal(line.formula, "0.2 per reversed item");
+});
+
+test("calculates blended card fees from order demand plus per order fee", () => {
   const line = calculateCostRule({
     name: "Card fees",
     category: "Payment",
@@ -68,6 +82,7 @@ test("calculates blended card fees as revenue percent plus per order fee", () =>
   }, { range, netRevenue: 10000, orders: 250, units: 500 }, range);
 
   assert.equal(line.amountApplied, 200);
+  assert.equal(line.formula, "1.5% of order demand + 0.2 per order");
 });
 
 test("prorates marketing spend entries by date overlap", () => {
@@ -128,7 +143,8 @@ test("builds actual P&L totals and missing-cost warnings", () => {
     { channel: "Google", startDate: "2026-06-15", endDate: "2026-07-14", amount: 2500 }
   ]);
 
-  assert.equal(pnl.grossProfit, 12800);
+  assert.equal(pnl.productGrossProfit, 12800);
+  assert.equal(pnl.grossProfit, 13450);
   assert.equal(pnl.grossRevenue, 24000);
   assert.equal(pnl.discounts, 1500);
   assert.equal(pnl.returns, 2500);
@@ -136,18 +152,44 @@ test("builds actual P&L totals and missing-cost warnings", () => {
   assert.equal(pnl.tax, 350);
   assert.equal(pnl.returnFees, 25);
   assert.equal(pnl.despatchRevenue, 21000);
-  assert.equal(pnl.costRuleTotal, 1620);
+  assert.equal(pnl.costRuleTotal, 1657.62);
   assert.equal(pnl.fixedCostTotal, 0);
-  assert.equal(pnl.variableCostTotal, 1620);
-  assert.equal(pnl.variableCostPerOrder, 4.05);
+  assert.equal(pnl.variableCostTotal, 1657.62);
+  assert.equal(pnl.variableCostPerOrder, 4.14);
   assert.equal(pnl.orderVariableCostTotal, 1200);
   assert.equal(pnl.orderVariableCostPerOrder, 3);
-  assert.equal(pnl.revenueVariableCostTotal, 420);
+  assert.equal(pnl.revenueVariableCostTotal, 457.62);
   assert.equal(pnl.marketingSpend, 2500);
-  assert.equal(pnl.operatingProfit, 8680);
+  assert.equal(pnl.operatingRevenue, 20650);
+  assert.equal(pnl.operatingProfit, 9292.38);
+  assert.equal(pnl.grossProfitPerOrder, 33.63);
+  assert.equal(pnl.operatingProfitPerOrder, 23.23);
   assert.equal(pnl.aov, 52.5);
   assert.ok(pnl.warnings.some(message => message.includes("missing Shopify unit cost")));
   assert.ok(pnl.warnings.some(message => message.includes("no COGS estimate")));
+});
+
+test("marks profit provisional when Windsor marketing coverage is incomplete", () => {
+  const statement = buildPnl({
+    range,
+    netRevenue: 1000,
+    grossRevenue: 1200,
+    despatchRevenue: 1200,
+    demandRevenue: 1200,
+    grossProfit: 700,
+    grossMarginRevenue: 1000,
+    costedNetSales: 1000,
+    orders: 10,
+    marketingSpendProvisional: true,
+    marketingQualityReasons: ["Google Windsor marketing spend has 1 day synced before finalisation."],
+    marketingDataQuality: { applicable: true, complete: false }
+  }, [], [{ id: "marketing", channel: "Google", startDate: range.startDate, endDate: range.endDate, amount: 200 }]);
+
+  assert.equal(statement.marketingSpend, 200);
+  assert.equal(statement.marketingSpendProvisional, true);
+  assert.equal(statement.profitProvisional, true);
+  assert.deepEqual(statement.marketingQualityReasons, ["Google Windsor marketing spend has 1 day synced before finalisation."]);
+  assert.ok(statement.profitQualityReasons.includes("Google Windsor marketing spend has 1 day synced before finalisation."));
 });
 
 test("maps ShopifyQL sales report rows to Despatch, Demand, and profit actuals", () => {
@@ -183,10 +225,139 @@ test("maps ShopifyQL sales report rows to Despatch, Demand, and profit actuals",
 
   const statement = buildPnl(actuals);
   assert.equal(statement.cogs, 2362.02);
-  assert.equal(statement.grossProfit, 17667.89);
+  assert.equal(statement.productGrossProfit, 17667.89);
+  assert.equal(statement.grossProfit, 18377.96);
   assert.equal(statement.grossMarginRevenue, 17667.89 + 2362.02);
   assert.equal(statement.grossMargin, 17667.89 / (17667.89 + 2362.02));
-  assert.equal(statement.operatingProfit, 17667.89);
+  assert.equal(statement.operatingRevenue, 22176.46);
+  assert.equal(statement.operatingProfit, 18377.96);
+});
+
+test("preserves signed 17 July Shopify reversals and separates sale adjustments", () => {
+  const totals = {
+    total_sales__totals: "4508.1",
+    gross_sales__totals: "3997.23",
+    net_sales__totals: "4246.26",
+    discounts__totals: "-210.48",
+    taxes__totals: "169.33",
+    shipping_charges__totals: "92.51",
+    return_fees__totals: "0",
+    orders__totals: "71",
+    gross_profit__totals: "594.53",
+    cost_of_goods_sold__totals: "175.01",
+    quantity_ordered__totals: "126",
+    reversed_quantity__totals: "-92",
+    net_sales_with_cost_recorded__totals: "769.54",
+    net_sales_without_cost_recorded__totals: "-15.08"
+  };
+  const actuals = shopifyQlSalesActualsFromRows([
+    { ...totals, order_or_sales_reversal: "order", is_sale_adjustment: false, line_type: "product", total_sales: "4544.1", net_sales: "3786.75" },
+    { order_or_sales_reversal: "order", is_sale_adjustment: false, line_type: "shipping", total_sales: "120", net_sales: "0" },
+    { order_or_sales_reversal: "reversal", is_sale_adjustment: false, line_type: "product", total_sales: "-3638.8", net_sales: "-3032.29" },
+    { order_or_sales_reversal: "reversal", is_sale_adjustment: false, line_type: "shipping", total_sales: "-9", net_sales: "0" },
+    { order_or_sales_reversal: "reversal", is_sale_adjustment: true, line_type: "sale_adjustment", total_sales: "3491.8", net_sales: "3491.8" }
+  ], { startDate: "2026-07-17", endDate: "2026-07-17" });
+
+  assert.equal(actuals.demandRevenue, 4544.1);
+  assert.equal(Math.round(actuals.aov * 100) / 100, 64);
+  assert.equal(actuals.productReversalRevenue, -3638.8);
+  assert.equal(Math.round(actuals.productReversalRate * 1000) / 10, 80.1);
+  assert.equal(actuals.productReversalNetRevenue, -3032.29);
+  assert.equal(actuals.saleAdjustments, 3491.8);
+  assert.equal(actuals.newShippingRevenue, 120);
+  assert.equal(actuals.shippingReversalRevenue, -9);
+  assert.equal(actuals.otherSalesRevenue, 0);
+  assert.equal(actuals.despatchRevenue, 4508.1);
+  assert.equal(actuals.returnedUnits, 92);
+  assert.equal(actuals.profitProvisional, true);
+  assert.ok(actuals.profitQualityReasons.some(message => message.includes("sale adjustments")));
+
+  const scenario = buildScenario(actuals, [], [], { targetDailySales: actuals.despatchRevenue });
+  assert.equal(Math.round(scenario.scenario.orders), 71);
+  assert.equal(Math.round(scenario.scenario.aov * 100) / 100, 64);
+  assert.equal(scenario.delta.operatingProfit, 0);
+});
+
+test("reconciles the signed 26 July bridge and marks profit provisional", () => {
+  const totals = {
+    total_sales__totals: "4203.8",
+    gross_sales__totals: "3714.63",
+    net_sales__totals: "3983.04",
+    discounts__totals: "-250.81",
+    taxes__totals: "103.25",
+    shipping_charges__totals: "117.51",
+    return_fees__totals: "0",
+    orders__totals: "81",
+    gross_profit__totals: "437.46",
+    cost_of_goods_sold__totals: "86.54",
+    quantity_ordered__totals: "156",
+    reversed_quantity__totals: "-102",
+    net_sales_with_cost_recorded__totals: "524",
+    net_sales_without_cost_recorded__totals: "-125.16"
+  };
+  const actuals = shopifyQlSalesActualsFromRows([
+    { ...totals, order_or_sales_reversal: "order", is_sale_adjustment: false, line_type: "product", total_sales: "4156.6", net_sales: "3463.82" },
+    { order_or_sales_reversal: "order", is_sale_adjustment: false, line_type: "shipping", total_sales: "152", net_sales: "0" },
+    { order_or_sales_reversal: "reversal", is_sale_adjustment: false, line_type: "product", total_sales: "-3678", net_sales: "-3064.98" },
+    { order_or_sales_reversal: "reversal", is_sale_adjustment: false, line_type: "shipping", total_sales: "-11", net_sales: "0" },
+    { order_or_sales_reversal: "reversal", is_sale_adjustment: true, line_type: "sale_adjustment", total_sales: "3584.2", net_sales: "3584.2" }
+  ], { startDate: "2026-07-26", endDate: "2026-07-26" });
+
+  assert.equal(actuals.demandRevenue, 4156.6);
+  assert.equal(actuals.productReversalRevenue, -3678);
+  assert.equal(actuals.saleAdjustments, 3584.2);
+  assert.equal(actuals.despatchRevenue, 4203.8);
+  assert.ok(Math.abs(actuals.costCoverage - (524 / (524 + 125.16))) < 1e-12);
+  assert.equal(actuals.profitProvisional, true);
+  assert.equal(actuals.demandRevenue + actuals.newShippingRevenue + actuals.productReversalRevenue + actuals.shippingReversalRevenue + actuals.saleAdjustments + actuals.otherSalesRevenue, actuals.despatchRevenue);
+
+  const audited = normalizeActuals({
+    ...actuals,
+    refundAuditAvailable: true,
+    refundAuditStatus: "available",
+    pendingRefundAmount: 3584.2,
+    pendingRefundCount: 51,
+    successfulRefundAmount: 112.4,
+    successfulRefundCount: 2,
+    refundTransactionCount: 53,
+    refundRecordCount: 53,
+    matchedPendingRefundAdjustment: undefined,
+    residualSaleAdjustments: undefined,
+    accruedSalesRevenue: undefined,
+    accruedNetRevenue: undefined
+  });
+  assert.equal(audited.matchedPendingRefundAdjustment, 3584.2);
+  assert.equal(audited.residualSaleAdjustments, 0);
+  assert.equal(audited.accruedSalesRevenue, 619.6);
+  assert.equal(audited.accruedNetRevenue, 398.84);
+  assert.equal(audited.pendingRefundCount, 51);
+  assert.ok(audited.refundSettlementNote.includes("do not add"));
+  assert.ok(!audited.profitQualityReasons.some(message => message.includes("sale adjustments")));
+});
+
+test("treats matched pending refund settlement as informational rather than an extra deduction", () => {
+  const actuals = normalizeActuals({
+    range: { startDate: "2026-07-26", endDate: "2026-07-26" },
+    netRevenue: 400,
+    grossRevenue: 500,
+    despatchRevenue: 4200,
+    demandRevenue: 4300,
+    saleAdjustments: 3500,
+    refundAuditAvailable: true,
+    pendingRefundAmount: 3500,
+    pendingRefundCount: 50,
+    grossProfit: 300,
+    costedNetSales: 400,
+    grossMarginRevenue: 400,
+    orders: 80
+  });
+
+  assert.equal(actuals.matchedPendingRefundAdjustment, 3500);
+  assert.equal(actuals.residualSaleAdjustments, 0);
+  assert.equal(actuals.profitProvisional, false);
+  assert.deepEqual(actuals.profitQualityReasons, []);
+  assert.ok(actuals.refundSettlementNote.includes("already represented"));
+  assert.ok(actuals.refundSettlementNote.includes("do not add"));
 });
 
 test("scenario scales sales, AOV, marketing, and variable costs while fixed costs stay fixed", () => {
@@ -252,13 +423,13 @@ test("marketing-driven scenarios change sales and variable costs while fixed cos
   assert.equal(result.scenario.marketingSpend, 12000);
   assert.equal(result.scenario.orders, 2160);
   assert.equal(result.scenario.costLines.find(line => line.name === "Rent").amountApplied, 6000);
-  assert.equal(result.scenario.costLines.find(line => line.name === "Payment fees").amountApplied, 2160);
+  assert.equal(result.scenario.costLines.find(line => line.name === "Payment fees").amountApplied, 2419.2);
   assert.equal(result.scenario.costLines.find(line => line.name === "Customer service").amountApplied, 2160);
-  assert.equal(result.scenario.variableCostTotal, 4320);
-  assert.equal(result.scenario.variableCostPerOrder, 2);
+  assert.equal(result.scenario.variableCostTotal, 4579.2);
+  assert.equal(result.scenario.variableCostPerOrder, 2.12);
   assert.equal(result.scenario.orderVariableCostTotal, 2160);
   assert.equal(result.scenario.orderVariableCostPerOrder, 1);
-  assert.equal(result.scenario.revenueVariableCostTotal, 2160);
+  assert.equal(result.scenario.revenueVariableCostTotal, 2419.2);
   assert.equal(result.delta.variableCostPerOrder, 0);
 });
 

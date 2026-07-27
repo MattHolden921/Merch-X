@@ -81,20 +81,31 @@
       intro: "Actuals use ShopifyQL for an inclusive range of up to 366 days; scenarios are decision-support estimates and are not accounting entries.",
       sections: [
         ["Sales and profit", [
-          ["Demand", "Product sales including VAT, after discounts and before returns."],
-          ["Despatch", "Shopify total sales for the period. AOV uses Despatch divided by order count."],
-          ["Net sales", "Total product revenue excluding VAT after discounts and returns; the net-profit percentage denominator."],
-          ["Gross profit", "ShopifyQL reported gross profit for sales with product cost recorded. GP% uses the matching costed net sales excluding VAT, derived as gross profit plus COGS.", "GP% = gross profit ÷ (gross profit + COGS)"],
-          ["Actual comparison", "Loads a second actualised Shopify period using the same P&L rules. KPI tiles show the comparison with primary context, and the detailed table labels both value columns with their dates before showing comparison-minus-primary Delta values."]
+          ["Order demand", "New product-order sales after discounts and including product VAT, before post-order reversals or adjustments."],
+          ["New shipping", "Shipping charged on new orders, including shipping VAT and before later shipping reversals. It is kept separate because Order demand is product-only. Net shipping revenue excluding VAT is included in gross and net profit because courier/postage costs are deducted through cost rules."],
+          ["Order AOV", "Order demand divided by ShopifyQL new-order count. It is an order-creation measure, so later refunds, returns and settlement adjustments do not lower it."],
+          ["Accrued sales", "Order demand plus shipping and signed return activity, excluding only the part of a positive Shopify adjustment that exactly matches live pending refund transactions. Accepted returns therefore affect the P&L before payment settlement finishes."],
+          ["Shopify reported sales", "Shopify's signed reporting total for the period. The settlement bridge adds its matched pending-refund hold to Accrued sales; it is a reconciliation figure rather than literal physical despatch."],
+          ["Product reversals", "Signed product value removed through returns, cancellations, exchanges, refunds or edits. The percentage shown is the absolute reversal value divided by Order demand, so it is a broader reversal rate rather than a pure completed-refund rate. Accepted refund product value is already included even when payment settlement is still pending; reversed quantity is shown separately.", "product reversal rate = absolute product reversals ÷ Order demand"],
+          ["Pending settlement", "A refund-status view, not an extra deduction. For recent ranges up to 62 days, live Shopify transactions split into Pending, Successful and Failed amounts. Pending amounts already recognised in reversal activity and Accrued sales are shown so Finance can monitor payment completion."],
+          ["Accrued net sales", "Shopify product net sales excluding the matched pending-refund hold. Net shipping is added separately to form P&L revenue."],
+          ["Gross profit", "ShopifyQL reported product gross profit plus net shipping revenue excluding VAT. Costed product GP% remains Shopify's product-only margin on its matching costed-sales basis, while Cost coverage shows the share of signed product activity with cost recorded.", "gross profit = product gross profit + net shipping revenue ex VAT"],
+          ["Profit per order", "Gross profit per order is gross profit including net shipping divided by new orders. Net profit per order is accrued net profit divided by new orders."],
+          ["Provisional profit", "Accrued net profit is marked provisional when cost coverage is below 95%, unmatched adjustments exceed 1% of Accrued sales, or a Windsor marketing day is missing/not finalised. Pending settlement alone is informational because the accepted refund is already accrued."],
+          ["Actual comparison", "Loads a second actualised Shopify period using the same P&L rules without refreshing Windsor again. Overlapping periods are warned because shared days cancel out; the detailed Delta remains comparison minus primary."]
         ]],
         ["Costs", [
           ["Variable costs", "Non-fixed cost rules such as fulfilment, postage, pick/pack and payment fees."],
-          ["Fixed cost drag", "Prorated fixed monthly costs as a share of net sales excluding VAT.", "fixed cost drag = fixed monthly costs ÷ net sales ex VAT"],
+          ["Revenue-based costs", "Percentage and percentage-plus-order rules use Order demand, not return-adjusted Shopify reported sales, so historical refund batches do not erase the original payment-processing base."],
+          ["Reversed-item cost", "The per reversed item rule uses Shopify reversed quantity instead of charging every new order. The exact existing Fulfilment rule named Return is migrated once from per-order; other rules change only when Finance selects this type."],
+          ["Marketing finalisation", "A Windsor row proves spend is available, not that the day is complete. Partial-day rows are automatically refreshed; a day becomes final after a successful sync at least six hours after UTC day end. Windsor stable-cache actuals are accepted for older completed days."],
+          ["P&L revenue", "Accrued product net sales plus net shipping revenue, all excluding VAT. This is the denominator for net-profit %, contribution %, and fixed-cost drag."],
+          ["Fixed cost drag", "Prorated fixed monthly costs as a share of P&L revenue.", "fixed cost drag = fixed monthly costs ÷ P&L revenue"],
           ["Contribution before fixed", "Gross profit after marketing and variable costs, before fixed monthly overhead."],
-          ["Net profit", "Gross profit after marketing, variable costs and fixed costs; Net profit % uses net sales excluding VAT."]
+          ["Accrued net profit", "Gross profit after marketing, variable costs and fixed costs; Net profit % uses Accrued net sales."]
         ]],
         ["Scenarios", [
-          ["Drivers", "Daily Despatch, AOV, marketing, ROAS, GP% and items per order reshape the selected scenario."],
+          ["Drivers", "Daily Despatch, AOV, marketing, ROAS, GP% and items per order reshape the selected scenario. Without a GP% override, the loaded Shopify GP scales with sales so an unchanged scenario preserves source GP."],
           ["Marketing drives sales", "When enabled, marketing spend and return move the linked Despatch target; uplift is not added twice."],
           ["Break-even ROAS", "The minimum incremental Despatch return needed for extra marketing spend not to reduce net profit."],
           ["Temporary comparisons", "Named scenario comparisons stay only in the current page and clear when a new actual period loads."]

@@ -10,7 +10,9 @@ const {
   channelFields,
   configuredChannels,
   filterRowsByAllowedAccounts,
-  normalizeRows
+  isFinalizedSpendDate,
+  normalizeRows,
+  successfulCoverage
 } = require("../lib/windsor-marketing");
 
 test("builds Windsor connector URLs for a dated spend query", () => {
@@ -143,4 +145,56 @@ test("uses Meta account connector parameter", () => {
     WINDSOR_META_ACCOUNT_IDS: "2187569"
   });
   assert.deepEqual(accountConnectorParams(channels.Meta), { account: "2187569" });
+});
+
+test("distinguishes intraday Windsor coverage from a finalised marketing day", () => {
+  assert.equal(isFinalizedSpendDate("2026-07-17", "2026-07-17 10:52:10", 6), false);
+  assert.equal(isFinalizedSpendDate("2026-07-17", "2026-07-18 05:59:59", 6), false);
+  assert.equal(isFinalizedSpendDate("2026-07-17", "2026-07-18 06:00:00", 6), true);
+});
+
+test("uses the latest successful sync per date when evaluating Windsor coverage", () => {
+  const coverage = successfulCoverage({
+    startDate: "2026-07-17",
+    endDate: "2026-07-18"
+  }, [
+    { start_date: "2026-07-17", end_date: "2026-07-18", synced_at: "2026-07-17 10:52:10" },
+    { start_date: "2026-07-17", end_date: "2026-07-17", synced_at: "2026-07-19 08:00:00" },
+    { start_date: "2026-07-18", end_date: "2026-07-18", synced_at: "2026-07-19 07:00:00" }
+  ], { finalizationDelayHours: 6 });
+
+  assert.equal(coverage.covered, true);
+  assert.equal(coverage.complete, true);
+  assert.deepEqual(coverage.missingDates, []);
+  assert.deepEqual(coverage.partialDates, []);
+  assert.equal(coverage.dates["2026-07-17"], "2026-07-19 08:00:00");
+  assert.equal(coverage.dates["2026-07-18"], "2026-07-19 07:00:00");
+});
+
+test("reports missing and pre-finalisation Windsor dates separately", () => {
+  const coverage = successfulCoverage({
+    startDate: "2026-07-17",
+    endDate: "2026-07-19"
+  }, [
+    { start_date: "2026-07-17", end_date: "2026-07-18", synced_at: "2026-07-18 02:00:00" },
+    { start_date: "2026-07-18", end_date: "2026-07-18", synced_at: "2026-07-19 06:00:00" }
+  ], { finalizationDelayHours: 6 });
+
+  assert.equal(coverage.covered, false);
+  assert.equal(coverage.complete, false);
+  assert.deepEqual(coverage.partialDates, ["2026-07-17"]);
+  assert.deepEqual(coverage.missingDates, ["2026-07-19"]);
+});
+
+test("accepts a post-finalisation stable-cache response for an older Windsor day", () => {
+  const coverage = successfulCoverage({
+    startDate: "2026-07-17",
+    endDate: "2026-07-17"
+  }, [
+    { start_date: "2026-07-17", end_date: "2026-07-17", synced_at: "2026-07-27 08:00:00" }
+  ], { finalizationDelayHours: 6 });
+
+  assert.equal(coverage.covered, true);
+  assert.equal(coverage.complete, true);
+  assert.deepEqual(coverage.partialDates, []);
 });

@@ -398,6 +398,7 @@ function windsorConfig() {
     autoSync: boolEnv("WINDSOR_AUTO_SYNC", true),
     autoSyncStaleHours: numberEnv("WINDSOR_AUTO_SYNC_STALE_HOURS", 24),
     autoSyncCooldownMinutes: numberEnv("WINDSOR_AUTO_SYNC_COOLDOWN_MINUTES", 60),
+    finalizationDelayHours: numberEnv("WINDSOR_FINALIZATION_DELAY_HOURS", 6),
     channels: windsorMarketing.configuredChannels(process.env)
   };
 }
@@ -5528,6 +5529,23 @@ function openOrderSqliteDb() {
     INSERT OR IGNORE INTO app_settings (key, value, updated_at)
     VALUES ('salePlannerCollections', ?, CURRENT_TIMESTAMP)
   `).run(JSON.stringify({ rootSaleCollectionId: "", childCollectionByType: {} }));
+  const returnCostMigrationKey = "migration:pnl-return-cost-per-reversed-item:v1";
+  if (!orderSqliteDb.prepare("SELECT 1 FROM app_settings WHERE key = ?").get(returnCostMigrationKey)) {
+    orderSqliteDb.transaction(() => {
+      const result = orderSqliteDb.prepare(`
+        UPDATE pnl_cost_rules
+        SET cost_type = 'per_reversed_item',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE lower(trim(name)) = 'return'
+          AND lower(trim(category)) = 'fulfilment'
+          AND cost_type = 'per_order'
+      `).run();
+      orderSqliteDb.prepare(`
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+      `).run(returnCostMigrationKey, JSON.stringify({ changedRules: result.changes }));
+    })();
+  }
   orderSqliteDb.prepare(`
     UPDATE new_arrivals_cleanup_audit
     SET status = 'error',
@@ -15970,7 +15988,8 @@ function pnlWindsorStatus() {
     autoSync: {
       enabled: cfg.autoSync,
       staleHours: cfg.autoSyncStaleHours,
-      cooldownMinutes: cfg.autoSyncCooldownMinutes
+      cooldownMinutes: cfg.autoSyncCooldownMinutes,
+      finalizationDelayHours: cfg.finalizationDelayHours
     },
     channels: Object.values(cfg.channels).filter(channel => channel.enabled).map(channel => ({
       channel: channel.channel,
@@ -16137,9 +16156,7 @@ function datesInRange(startDate, endDate) {
   return dates;
 }
 
-function pnlWindsorSuccessCoverage(range, connector) {
-  const requiredDates = datesInRange(range.startDate, range.endDate);
-  const covered = new Map(requiredDates.map(date => [date, ""]));
+function pnlWindsorSuccessCoverage(range, connector, cfg = windsorConfig()) {
   const rows = openOrderSqliteDb().prepare(`
     SELECT start_date, end_date, synced_at
     FROM pnl_windsor_sync_runs
@@ -16150,23 +16167,9 @@ function pnlWindsorSuccessCoverage(range, connector) {
       AND date(end_date) >= date(?)
     ORDER BY datetime(synced_at) DESC
   `).all(connector, range.endDate, range.startDate);
-
-  for (const row of rows) {
-    const startDate = row.start_date > range.startDate ? row.start_date : range.startDate;
-    const endDate = row.end_date < range.endDate ? row.end_date : range.endDate;
-    for (const date of datesInRange(startDate, endDate)) {
-      if (covered.has(date)) covered.set(date, row.synced_at || "");
-    }
-  }
-
-  const missingDates = [...covered.entries()].filter(([, syncedAt]) => !syncedAt).map(([date]) => date);
-  const syncedDates = [...covered.values()].filter(Boolean).sort();
-  return {
-    covered: requiredDates.length > 0 && missingDates.length === 0,
-    synced_at: syncedDates[0] || "",
-    latest_synced_at: syncedDates[syncedDates.length - 1] || "",
-    missingDates
-  };
+  return windsorMarketing.successfulCoverage(range, rows, {
+    finalizationDelayHours: cfg.finalizationDelayHours
+  });
 }
 
 function pnlWindsorRecentAttempt(range, connector, cutoffDate) {
@@ -16176,24 +16179,52 @@ function pnlWindsorRecentAttempt(range, connector, cutoffDate) {
     FROM pnl_windsor_sync_runs AS run
     WHERE run.source = 'windsor'
       AND run.connector = ?
-      AND run.status IN ('started', 'error')
+      AND run.status IN ('started', 'success', 'error')
       AND date(run.start_date) <= date(?)
       AND date(run.end_date) >= date(?)
       AND datetime(run.synced_at) >= datetime(?)
-      AND NOT EXISTS (
-        SELECT 1
-        FROM pnl_windsor_sync_runs AS terminal
-        WHERE terminal.source = 'windsor'
-          AND terminal.connector = run.connector
-          AND terminal.id <> run.id
-          AND terminal.status IN ('success', 'error')
-          AND date(terminal.start_date) <= date(?)
-          AND date(terminal.end_date) >= date(?)
-          AND datetime(terminal.synced_at) >= datetime(run.synced_at)
-      )
-    ORDER BY datetime(synced_at) DESC
+    ORDER BY datetime(synced_at) DESC, rowid DESC
     LIMIT 1
-  `).get(connector, range.endDate, range.startDate, cutoff, range.endDate, range.startDate);
+  `).get(connector, range.endDate, range.startDate, cutoff);
+}
+
+function pnlWindsorMarketingQuality(range) {
+  const cfg = windsorConfig();
+  const channels = Object.values(cfg.channels || {}).filter(channel => channel.enabled);
+  if (!cfg.apiKey || !channels.length) {
+    return {
+      applicable: false,
+      complete: true,
+      finalizationDelayHours: cfg.finalizationDelayHours,
+      reasons: [],
+      channels: []
+    };
+  }
+  const details = channels.map(channel => {
+    const coverage = pnlWindsorSuccessCoverage(range, channel.connector, cfg);
+    return {
+      channel: channel.channel,
+      connector: channel.connector,
+      complete: coverage.complete,
+      covered: coverage.covered,
+      syncedAt: coverage.latest_synced_at || coverage.synced_at || "",
+      missingDates: coverage.missingDates,
+      partialDates: coverage.partialDates
+    };
+  });
+  const reasons = [];
+  const channelList = items => items.map(item => item.channel).join(" and ");
+  const missing = details.filter(detail => detail.missingDates.length);
+  const partial = details.filter(detail => detail.partialDates.length);
+  if (missing.length) reasons.push(`${channelList(missing)} Windsor marketing spend is missing one or more selected days.`);
+  if (partial.length) reasons.push(`${channelList(partial)} Windsor marketing spend includes a day synced before finalisation.`);
+  return {
+    applicable: true,
+    complete: details.every(detail => detail.complete),
+    finalizationDelayHours: cfg.finalizationDelayHours,
+    reasons,
+    channels: details
+  };
 }
 
 function recordWindsorSyncRun(range, result, mode, status, req, error = "") {
@@ -16464,22 +16495,26 @@ function planPnlWindsorAutoSync(range, req) {
   const toSync = [];
 
   for (const channel of channels) {
-    const coverage = pnlWindsorSuccessCoverage(range, channel.connector);
+    const coverage = pnlWindsorSuccessCoverage(range, channel.connector, cfg);
     const coveredAt = coverage.latest_synced_at || coverage.synced_at || "";
     const coveredDate = timestampToDate(coveredAt);
     const oldestCoveredDate = timestampToDate(coverage.synced_at);
-    const covered = Boolean(coverage.covered && coveredDate);
+    const available = Boolean(coverage.covered && coveredDate);
+    const covered = Boolean(coverage.complete && coveredDate);
+    const partial = Boolean((coverage.partialDates || []).length);
     const stale = Boolean(covered && touchesRefreshWindow && staleMs > 0 && oldestCoveredDate && now.getTime() - oldestCoveredDate.getTime() > staleMs);
-    const neededReason = !covered ? "missing" : stale ? "stale" : "";
+    const neededReason = !available ? "missing" : partial ? "partial" : stale ? "stale" : "";
     const recent = neededReason ? pnlWindsorRecentAttempt(range, channel.connector, cooldownStart) : null;
     const cooldown = Boolean(recent);
     const detail = {
       channel: channel.channel,
       connector: channel.connector,
       accountScope: windsorMarketing.accountScopeLabel(channel),
+      available,
       covered,
       coveredAt,
-      missingDates: covered ? [] : coverage.missingDates || [],
+      missingDates: coverage.missingDates || [],
+      partialDates: coverage.partialDates || [],
       reason: neededReason || "covered",
       cooldown,
       recentStatus: recent?.status || "",
@@ -16505,6 +16540,7 @@ function planPnlWindsorAutoSync(range, req) {
     reason,
     staleHours: cfg.autoSyncStaleHours,
     cooldownMinutes: cfg.autoSyncCooldownMinutes,
+    finalizationDelayHours: cfg.finalizationDelayHours,
     channels: details,
     toSync
   };
@@ -16529,6 +16565,7 @@ async function maybeAutoSyncPnlWindsor(range, req) {
       reason: plan.reason,
       staleHours: plan.staleHours,
       cooldownMinutes: plan.cooldownMinutes,
+      finalizationDelayHours: plan.finalizationDelayHours,
       channels: result.channels,
       syncedAt: result.syncedAt
     };
@@ -16540,6 +16577,7 @@ async function maybeAutoSyncPnlWindsor(range, req) {
       error: error.message || "Could not auto-sync Windsor marketing spend.",
       staleHours: plan.staleHours,
       cooldownMinutes: plan.cooldownMinutes,
+      finalizationDelayHours: plan.finalizationDelayHours,
       channels: plan.channels
     };
   }
@@ -16834,9 +16872,15 @@ async function fetchShopifyPnlActuals(range) {
   `;
   const reportQuery = `
     FROM sales
-    SHOW total_sales, gross_sales, net_sales, discounts, taxes, returns,
-      shipping_charges, return_fees, orders, average_order_value,
-      gross_profit, cost_of_goods_sold, quantity_ordered, quantity_returned
+    SHOW total_sales, gross_sales, net_sales, discounts, taxes,
+      sales_reversals, gross_sales_reversals, discount_reversals,
+      net_sales_reversals, tax_reversals, shipping_reversals,
+      total_sales_reversals, shipping_charges, return_fees, orders,
+      average_order_value, gross_profit, cost_of_goods_sold,
+      net_sales_with_cost_recorded, net_sales_without_cost_recorded,
+      quantity_ordered, reversed_quantity
+    GROUP BY order_or_sales_reversal, is_sale_adjustment, line_type
+    WITH TOTALS
     SINCE ${range.startDate}
     UNTIL ${range.endDate}
   `.replace(/\s+/g, " ").trim();
@@ -16845,16 +16889,124 @@ async function fetchShopifyPnlActuals(range) {
   const parseErrors = response.parseErrors || [];
   if (parseErrors.length) throw new Error(`ShopifyQL P&L report query failed: ${parseErrors.join("; ")}`);
   const rows = Array.isArray(response.tableData?.rows) ? response.tableData.rows : [];
-  const reportRow = rows[0] || {};
+  let actuals = pnl.shopifyQlSalesActualsFromRows(rows, range);
+  const auditWarnings = [];
+  const rangeEnd = new Date(`${range.endDate}T00:00:00.000Z`);
+  const ageDays = Math.floor((Date.now() - rangeEnd.getTime()) / 86400000);
+  const canAuditRefunds = range.days <= 62 && ageDays >= -1 && ageDays <= 90 && actuals.returnedUnits > 0;
+  if (canAuditRefunds) {
+    try {
+      actuals = pnl.normalizeActuals({
+        ...actuals,
+        ...(await fetchShopifyPnlRefundAudit(range)),
+        matchedPendingRefundAdjustment: undefined,
+        residualSaleAdjustments: undefined,
+        accruedSalesRevenue: undefined,
+        accruedNetRevenue: undefined
+      });
+    } catch (error) {
+      auditWarnings.push(`Refund settlement audit unavailable: ${error.message || "Shopify refund lookup failed."}`);
+      actuals = pnl.normalizeActuals({
+        ...actuals,
+        refundAuditStatus: "error",
+        warnings: [...(actuals.warnings || []), ...auditWarnings]
+      });
+    }
+  } else if (actuals.returnedUnits > 0) {
+    actuals = pnl.normalizeActuals({
+      ...actuals,
+      refundAuditStatus: "not_run_range",
+      warnings: [
+        ...(actuals.warnings || []),
+        "Refund settlement statuses are audited only for selected ranges up to 62 days ending within the last 90 days."
+      ]
+    });
+  }
   return {
     configured: true,
-    actuals: pnl.shopifyQlSalesActualsFromRow(reportRow, range),
+    actuals,
     sourceType: "shopifyql_sales",
     columns: response.tableData?.columns || [],
     rowCount: rows.length,
     reportQuery,
     fetchedAt: new Date().toISOString()
   };
+}
+
+async function fetchShopifyPnlRefundAudit(range) {
+  const query = `
+    query PnlRefundAudit($cursor: String, $query: String!) {
+      orders(first: 100, after: $cursor, query: $query, sortKey: UPDATED_AT, reverse: true) {
+        nodes {
+          refunds {
+            id
+            createdAt
+            transactions(first: 20) {
+              nodes {
+                status
+                kind
+                amountSet { shopMoney { amount currencyCode } }
+              }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  `;
+  const endExclusive = new Date(`${range.endDate}T00:00:00.000Z`);
+  endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+  const search = `updated_at:>=${range.startDate}T00:00:00Z status:any`;
+  const refundIds = new Set();
+  const totals = {
+    refundAuditAvailable: true,
+    refundAuditStatus: "available",
+    pendingRefundAmount: 0,
+    successfulRefundAmount: 0,
+    failedRefundAmount: 0,
+    pendingRefundCount: 0,
+    successfulRefundCount: 0,
+    failedRefundCount: 0,
+    refundTransactionCount: 0,
+    refundRecordCount: 0
+  };
+  let cursor = null;
+  let hasNextPage = true;
+  while (hasNextPage) {
+    const data = await shopifyGraphql(query, { cursor, query: search });
+    const connection = data.orders;
+    for (const order of connection.nodes || []) {
+      for (const refund of order.refunds || []) {
+        const createdAt = new Date(refund.createdAt || "");
+        if (!Number.isFinite(createdAt.getTime()) || createdAt < new Date(`${range.startDate}T00:00:00.000Z`) || createdAt >= endExclusive) continue;
+        if (refundIds.has(refund.id)) continue;
+        refundIds.add(refund.id);
+        totals.refundRecordCount += 1;
+        for (const transaction of refund.transactions?.nodes || []) {
+          if (String(transaction.kind || "").toUpperCase() !== "REFUND") continue;
+          const amount = Math.max(0, moneySetAmount(transaction.amountSet));
+          const status = String(transaction.status || "").toUpperCase();
+          totals.refundTransactionCount += 1;
+          if (status === "SUCCESS") {
+            totals.successfulRefundAmount += amount;
+            totals.successfulRefundCount += 1;
+          } else if (status === "PENDING") {
+            totals.pendingRefundAmount += amount;
+            totals.pendingRefundCount += 1;
+          } else {
+            totals.failedRefundAmount += amount;
+            totals.failedRefundCount += 1;
+          }
+        }
+      }
+    }
+    hasNextPage = Boolean(connection.pageInfo?.hasNextPage);
+    cursor = connection.pageInfo?.endCursor || null;
+  }
+  for (const key of ["pendingRefundAmount", "successfulRefundAmount", "failedRefundAmount"]) {
+    totals[key] = pnl.money(totals[key]);
+  }
+  return totals;
 }
 
 function pnlSettingsPayload(req) {
@@ -16893,13 +17045,20 @@ async function handlePnlGet(req, res) {
     ? { status: "skipped", mode: "auto", reason: "request_disabled", enabled: false, channels: [] }
     : await maybeAutoSyncPnlWindsor(range, req);
   settings = pnlSettingsPayload(req);
-  const statement = pnl.buildPnl(fetched.actuals, settings.costRules, readPnlMarketingSpend());
+  const marketingDataQuality = pnlWindsorMarketingQuality(range);
+  const statement = pnl.buildPnl({
+    ...fetched.actuals,
+    marketingSpendProvisional: !marketingDataQuality.complete,
+    marketingQualityReasons: marketingDataQuality.reasons,
+    marketingDataQuality
+  }, settings.costRules, readPnlMarketingSpend());
   sendJson(res, 200, {
     configured: true,
     range,
     statement,
     settings,
     windsorSync,
+    marketingDataQuality,
     source: {
       type: fetched.sourceType || "shopify_orders",
       fetchedAt: fetched.fetchedAt,

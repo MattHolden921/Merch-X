@@ -10,7 +10,7 @@
 .wrap{max-width:1680px}
 [hidden]{display:none!important}
 .head{align-items:start}
-.toolbar{display:grid;grid-template-columns:170px 150px 150px auto minmax(220px,1fr);gap:10px;align-items:end}
+.toolbar{display:grid;grid-template-columns:170px 150px 150px minmax(220px,1fr);gap:10px;align-items:end}
 .actual-compare-tools{display:grid;grid-template-columns:150px 150px auto;gap:8px;align-items:end;margin-bottom:10px}
 .metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
 .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
@@ -51,6 +51,8 @@ tr:last-child td{border-bottom:0}
 .notice-list{display:grid;gap:8px;margin-bottom:14px}
 .notice{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:10px 12px;font-size:12px;line-height:1.5;color:var(--ds-text-muted)}
 .notice.warn{border-color:rgba(180,83,9,.35);background:rgba(180,83,9,.08)}
+.notice.info{border-color:rgba(2,132,199,.3);background:rgba(2,132,199,.07)}
+.notice strong{display:block;color:var(--ds-text);margin-bottom:2px}
 .sales-bridge{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px;margin-bottom:12px}
 .bridge-step{border:1px solid var(--ds-line);border-radius:var(--ds-radius);background:var(--ds-bg-muted);padding:9px 10px;min-height:76px}
 .bridge-step label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ds-text-soft);margin-bottom:8px}
@@ -104,7 +106,6 @@ tr:last-child td{border-bottom:0}
       <div class="field"><label>Quick period</label><select class="select" id="quick-period"><option value="completed-week" selected>Last completed week</option><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option><option value="60">Last 60 days</option><option value="92">Last 92 days</option><option value="180">Last 180 days</option><option value="366">Last 366 days</option><option value="custom">Custom</option></select></div>
       <div class="field"><label>From</label><input id="date-from" type="date"></div>
       <div class="field"><label>To</label><input id="date-to" type="date"></div>
-      <div class="field"><label>&nbsp;</label><button class="btn" type="button" id="apply-quick-btn">Apply quick period</button></div>
       <p class="status" id="status-note">Ready.</p>
     </div>
   </section>
@@ -257,7 +258,7 @@ tr:last-child td{border-bottom:0}
         <div class="field wide"><label>Name</label><input id="rule-name"></div>
         <div class="field"><label>Category</label><input id="rule-category" list="cost-cats" value="Fulfilment"><datalist id="cost-cats"><option>Fulfilment</option><option>Postage</option><option>Payment</option><option>Overheads</option><option>Software</option><option>Warehouse</option><option>Other</option></datalist></div>
         <div class="field"><label>Status</label><select class="select" id="rule-status"><option>Active</option><option>Inactive</option></select></div>
-        <div class="field"><label>Type</label><select class="select" id="rule-type"><option value="fixed_monthly">Fixed monthly</option><option value="per_order">Per order</option><option value="per_item">Per item</option><option value="pick_pack">Pick and pack</option><option value="percent_revenue">Percent despatch</option><option value="percent_revenue_plus_per_order">Percent + per order</option></select></div>
+          <div class="field"><label>Type</label><select class="select" id="rule-type"><option value="fixed_monthly">Fixed monthly</option><option value="per_order">Per order</option><option value="per_item">Per ordered item</option><option value="per_reversed_item">Per reversed item</option><option value="pick_pack">Pick and pack</option><option value="percent_revenue">Percent order demand</option><option value="percent_revenue_plus_per_order">Demand percent + per order</option></select></div>
         <div class="field"><label>Amount</label><input id="rule-amount" type="number" min="0" step="0.01"></div>
         <div class="field"><label>Rate %</label><input id="rule-rate" type="number" min="0" step="0.01"></div>
         <div class="field"><label>First item</label><input id="rule-first" type="number" min="0" step="0.01"></div>
@@ -358,7 +359,7 @@ function updateActualBaselines(){
   const days=Math.max(1,Number(s.range?.days||1));
   const google=statementChannel("Google");
   const meta=statementChannel("Meta");
-  const marketingReturn=Number(s.marketingSpend||0)>0?Number(s.despatchRevenue||0)/Number(s.marketingSpend||0):0;
+  const marketingReturn=Number(s.marketingSpend||0)>0?Number(s.demandRevenue||0)/Number(s.marketingSpend||0):0;
   setBaseline("sc-daily-sales",gbp(Number(s.despatchRevenue||0)/days));
   setBaseline("sc-aov-delta",gbp(s.aov,true));
   setBaseline("sc-marketing",gbp(s.marketingSpend));
@@ -558,24 +559,33 @@ function actualSmall(actual,delta,type="money",exact=false){return `Actual ${val
 function renderMetrics(){
   const s=state.statement;
   if(!s){el("metrics").innerHTML=[
-    metric("Despatch","-"),metric("Demand","-"),metric("Discounts","-"),metric("Returns","-"),metric("Shipping","-"),metric("Net sales","-"),metric("Gross profit","-","-"),metric("Net profit","-"),metric("Fixed cost drag","-"),metric("Orders","-"),metric("AOV","-"),metric("Variable costs","-"),metric("Variable cost / order","-"),metric("Marketing","-")
+    metric("Shopify reported sales","-"),metric("Accrued sales","-"),metric("Order demand","-"),metric("New shipping","-"),metric("Product reversals","-"),metric("Pending settlement","-"),metric("Other adjustments","-"),metric("Accrued net sales","-"),metric("Gross profit","-","-"),metric("Gross profit / order","-"),metric("Cost coverage","-"),metric("Accrued net profit","-"),metric("Net profit / order","-"),metric("Fixed cost drag","-"),metric("Orders","-"),metric("Order AOV","-"),metric("Variable costs","-"),metric("Variable cost / order","-"),metric("Marketing","-")
   ].join("");return;}
   const days=Math.max(s.range.days,1);
+  const quality=s.profitProvisional?"Provisional":"Complete";
+  const coverage=s.costCoverage==null?"Not available":pct(s.costCoverage);
+  const pendingCount=Number(s.pendingRefundCount||0);
+  const marketingQuality=s.marketingSpendProvisional?"Provisional Windsor coverage":"Finalised Windsor actuals";
   el("metrics").innerHTML=[
-    metric("Despatch",gbp(s.despatchRevenue),`${gbp(s.despatchRevenue/days)} / day`),
-    metric("Demand",gbp(s.demandRevenue),`${gbp(s.demandRevenue/days)} / day`),
-    metric("Discounts",signedGbp(-Math.abs(s.discounts)),`${pct(s.despatchRevenue?Math.abs(s.discounts)/s.despatchRevenue:0)} of despatch`,"bad"),
-    metric("Returns",signedGbp(-Math.abs(s.returns)),`${pct(s.despatchRevenue?Math.abs(s.returns)/s.despatchRevenue:0)} of despatch`,"bad"),
-    metric("Shipping",gbp(s.shippingRevenue),`${gbp(s.shippingRevenue/days)} / day`),
-    metric("Net sales",gbp(s.netRevenue),"Ex VAT product"),
-    metric("Gross profit",gbp(s.grossProfit),pct(s.grossMargin),s.grossProfit>=0?"good":"bad"),
-    metric("Net profit",gbp(s.operatingProfit),pct(s.operatingMargin),s.operatingProfit>=0?"good":"bad"),
+    metric("Shopify reported sales",gbp(s.despatchRevenue),`${gbp(s.despatchRevenue/days)} / day`),
+    metric("Accrued sales",gbp(s.accruedSalesRevenue),`${gbp(s.accruedSalesRevenue/days)} / day`),
+    metric("Order demand",gbp(s.demandRevenue),`${gbp(s.demandRevenue/days)} / day`),
+    metric("New shipping",gbp(s.newShippingRevenue),`${gbp(s.newShippingRevenue/days)} / day · before shipping reversals`),
+    metric("Product reversals",signedGbp(s.productReversalRevenue),`${pct(s.productReversalRate)} of demand · ${numberFmt.format(s.returnedUnits||0)} reversed units${pendingCount?" · includes pending-refund activity":""}`,Number(s.productReversalRevenue||0)<0?"bad":""),
+    metric("Pending settlement",gbp(s.pendingRefundAmount),pendingCount?`Already recognised · ${numberFmt.format(pendingCount)} transaction${pendingCount===1?"":"s"}`:"No pending transactions",Number(s.pendingRefundAmount||0)>0?"warn":"good"),
+    metric("Other adjustments",signedGbp(s.residualSaleAdjustments),"Unmatched to pending refunds",Math.abs(Number(s.residualSaleAdjustments||0))>0?"bad":"good"),
+    metric("Accrued net sales",gbp(s.accruedNetRevenue),"Ex VAT product and adjustments"),
+    metric("Gross profit",gbp(s.grossProfit),`${gbp(s.productGrossProfit)} product GP + ${gbp(s.shippingRevenue)} net shipping`,s.grossProfit>=0?"good":"bad"),
+    metric("Gross profit / order",gbp(s.grossProfitPerOrder,true),"Gross profit incl shipping / new orders",s.grossProfitPerOrder>=0?"good":"bad"),
+    metric("Cost coverage",coverage,quality,s.profitProvisional?"bad":"good"),
+    metric("Accrued net profit",gbp(s.operatingProfit),`${quality} · ${pct(s.operatingMargin)}`,s.profitProvisional?"bad":s.operatingProfit>=0?"good":"bad"),
+    metric("Net profit / order",gbp(s.operatingProfitPerOrder,true),"Accrued profit / new orders",s.profitProvisional?"bad":s.operatingProfitPerOrder>=0?"good":"bad"),
     metric("Fixed cost drag",pct(s.fixedCostImpact),`${gbp(s.fixedCostTotal)} fixed costs`),
-    metric("Orders",numberFmt.format(s.orders),`${numberFmt.format(s.units)} units`),
-    metric("AOV",gbp(s.aov,true),"Despatch / order"),
+    metric("Orders",numberFmt.format(s.orders),`${numberFmt.format(s.units)} ordered units`),
+    metric("Order AOV",gbp(s.aov,true),`${gbp(s.demandRevenue,true)} demand ÷ ${numberFmt.format(s.orders)} new orders`),
     metric("Variable costs",gbp(s.variableCostTotal),`${gbp(s.variableCostPerOrder,true)} / order`),
     metric("Variable cost / order",gbp(s.variableCostPerOrder,true),"Fulfilment, postage, card etc"),
-    metric("Marketing",gbp(s.marketingSpend),`${gbp(s.costRuleTotal)} other costs`)
+    metric("Marketing",gbp(s.marketingSpend),marketingQuality,s.marketingSpendProvisional?"bad":"good")
   ].join("");
 }
 function bridgeStep(label,value,note="",className=""){return `<div class="bridge-step"><label>${esc(label)}</label><strong class="${className}">${esc(value)}</strong>${note?`<small>${esc(note)}</small>`:""}</div>`;}
@@ -584,15 +594,18 @@ function renderSalesBridge(){
   if(!box)return;
   const s=state.statement;
   if(!s){box.innerHTML="";return;}
-  box.innerHTML=[
-    bridgeStep("Demand",gbp(s.demandRevenue,true),"Inc VAT, after discounts"),
-    bridgeStep("Discounts",signedGbp(-Math.abs(s.discounts)),"Report value","bad"),
-    bridgeStep("Returns",signedGbp(-Math.abs(s.returns)),"Report value","bad"),
-    bridgeStep("Net sales",gbp(s.netRevenue,true),"Ex VAT product"),
-    bridgeStep("Shipping",gbp(s.shippingRevenue,true),"Charges"),
-    bridgeStep("Taxes",gbp(s.tax,true),"VAT"),
-    bridgeStep("Despatch",gbp(s.despatchRevenue,true),"Total sales","good")
-  ].join("");
+  const steps=[
+    bridgeStep("Order demand",gbp(s.demandRevenue,true),"Product, after discounts, inc VAT"),
+    bridgeStep("New shipping",signedGbp(s.newShippingRevenue),"Inc VAT"),
+    bridgeStep("Product reversals",signedGbp(s.productReversalRevenue),Number(s.pendingRefundAmount||0)>0?"Accepted refunds already included":"Signed, inc VAT",Number(s.productReversalRevenue||0)<0?"bad":""),
+    bridgeStep("Shipping reversals",signedGbp(s.shippingReversalRevenue),"Signed, inc VAT",Number(s.shippingReversalRevenue||0)<0?"bad":""),
+    bridgeStep("Other adjustments",signedGbp(s.residualSaleAdjustments),"Not matched to pending refunds",Math.abs(Number(s.residualSaleAdjustments||0))>0?"bad":"")
+  ];
+  if(Math.abs(Number(s.otherSalesRevenue||0))>=0.01)steps.push(bridgeStep("Other sales activity",signedGbp(s.otherSalesRevenue),"Duties, fees or other lines"));
+  steps.push(bridgeStep("Accrued sales",gbp(s.accruedSalesRevenue,true),"Returns recognised when accepted","good"));
+  if(Math.abs(Number(s.matchedPendingRefundAdjustment||0))>=0.01)steps.push(bridgeStep("Shopify reporting hold",signedGbp(s.matchedPendingRefundAdjustment),"Reconciliation only; excluded from Accrued sales",""));
+  steps.push(bridgeStep("Shopify reported sales",gbp(s.despatchRevenue,true),"Exact settlement bridge total","good"));
+  box.innerHTML=steps.join("");
 }
 function row(label,value,note="",cls=""){return `<tr><td>${esc(label)}${note?`<span class="delta muted">${esc(note)}</span>`:""}</td><td class="num ${cls}">${value}</td></tr>`;}
 function section(label){return `<tr class="section-row"><td colspan="2">${esc(label)}</td></tr>`;}
@@ -602,46 +615,70 @@ function renderPnl(){
   el("range-pill").textContent=`${s.range.startDate} to ${s.range.endDate}`;
   const rows=[
     section("Revenue"),
-    row("Demand",gbp(s.demandRevenue,true),"Inc VAT, after discounts, before returns"),
+    row("Order demand",gbp(s.demandRevenue,true),"New product orders after discounts, including VAT"),
+    row("Order AOV",gbp(s.aov,true),`${gbp(s.demandRevenue,true)} Order demand ÷ ${numberFmt.format(s.orders)} new orders`),
     row("Gross sales ex VAT",gbp(s.grossRevenue,true),"Before discounts and returns"),
     row("Discounts",signedGbp(-Math.abs(Number(s.discounts||0))),"",Number(s.discounts||0)>0?"bad":""),
-    row("Returns",signedGbp(-Math.abs(Number(s.returns||0))),"",Number(s.returns||0)>0?"bad":""),
-    row("Net sales",gbp(s.netRevenue,true)),
-    row("Shipping charges",gbp(s.shippingRevenue,true)),
+    row("Product reversals inc VAT",signedGbp(s.productReversalRevenue),Number(s.pendingRefundAmount||0)>0?"Includes accepted refunds that are still pending payment settlement":"Signed Shopify product reversal activity",Number(s.productReversalRevenue||0)<0?"bad":""),
+    row("Product reversals ex VAT",signedGbp(s.productReversalNetRevenue),"Used in Shopify product net sales",Number(s.productReversalNetRevenue||0)<0?"bad":""),
+    row("Refunds pending payment settlement",gbp(s.pendingRefundAmount,true),`${numberFmt.format(s.pendingRefundCount||0)} transaction${Number(s.pendingRefundCount||0)===1?"":"s"} · already in reversal activity; do not add to Product reversals`,Number(s.pendingRefundAmount||0)>0?"warn":"good"),
+    row("Refunds settled successfully",gbp(s.successfulRefundAmount,true),`${numberFmt.format(s.successfulRefundCount||0)} successful transaction${Number(s.successfulRefundCount||0)===1?"":"s"}`),
+    row("Failed refund transactions",gbp(s.failedRefundAmount,true),`${numberFmt.format(s.failedRefundCount||0)} failed transaction${Number(s.failedRefundCount||0)===1?"":"s"}`,Number(s.failedRefundAmount||0)>0?"bad":""),
+    row("Other sale adjustments",signedGbp(s.residualSaleAdjustments),"Shopify adjustments not matched to pending refunds",Math.abs(Number(s.residualSaleAdjustments||0))>0?"bad":""),
+    row("Shopify net sales",gbp(s.netRevenue,true),"Includes Shopify's pending-refund hold"),
+    row("Accrued net sales",gbp(s.accruedNetRevenue,true),"Excludes the matched pending-refund hold"),
+    row("New shipping inc VAT",gbp(s.newShippingRevenue,true)),
+    row("Shipping reversals inc VAT",signedGbp(s.shippingReversalRevenue),"Signed",Number(s.shippingReversalRevenue||0)<0?"bad":""),
+    row("Net shipping charges ex VAT",gbp(s.shippingRevenue,true)),
     row("Return fees",gbp(s.returnFees,true)),
-    row("Taxes",gbp(s.tax,true)),
-    row("Despatch",gbp(s.despatchRevenue,true),"Total sales"),
+    row("Net taxes",gbp(s.tax,true),"Includes signed tax reversals"),
+    row("Accrued sales",gbp(s.accruedSalesRevenue,true),"Accepted returns recognised regardless of payment settlement"),
+    row("Shopify reported sales",gbp(s.despatchRevenue,true),"Accrued sales plus Shopify's pending-refund hold"),
     section("Product profit"),
     row("COGS",gbp(s.cogs,true),"ShopifyQL reported for the selected dates", "bad"),
-    row("Gross profit",gbp(s.grossProfit,true),pct(s.grossMargin),"good"),
+    row("Product gross profit",gbp(s.productGrossProfit,true),`Costed product GP ${pct(s.grossMargin)}`,"good"),
+    row("Net shipping revenue ex VAT",gbp(s.shippingRevenue,true),"Included in gross and net profit",s.shippingRevenue>=0?"good":"bad"),
+    row("Gross profit incl shipping",gbp(s.grossProfit,true),"Product gross profit + net shipping revenue","good"),
+    row("Gross profit / order",gbp(s.grossProfitPerOrder,true),"Gross profit incl shipping / new orders",s.grossProfitPerOrder>=0?"good":"bad"),
+    row("Costed product net sales",gbp(s.costedNetSales,true),"Shopify product activity with cost recorded"),
+    row("Uncosted product net sales",gbp(s.uncostedNetSales,true),"Signed Shopify product activity without cost"),
+    row("Cost coverage",s.costCoverage==null?"Not available":pct(s.costCoverage),s.profitProvisional?"Profit is provisional":"Profit quality checks passed",s.profitProvisional?"bad":"good"),
     section("Operating costs"),
-    row("Marketing spend",gbp(s.marketingSpend,true)),
+    row("Marketing spend",gbp(s.marketingSpend,true),s.marketingSpendProvisional?"Provisional: one or more Windsor days are not finalised":"Finalised Windsor coverage",s.marketingSpendProvisional?"bad":"good"),
     row("Cost rules",gbp(s.costRuleTotal,true)),
-    row("Fixed monthly costs",gbp(s.fixedCostTotal,true),`${pct(s.fixedCostImpact)} of net sales`),
+    row("Fixed monthly costs",gbp(s.fixedCostTotal,true),`${pct(s.fixedCostImpact)} of P&L revenue`),
     row("Variable costs",gbp(s.variableCostTotal,true),"Fulfilment, postage, card etc; excludes COGS and fixed monthly costs"),
     row("Variable cost / order",gbp(s.variableCostPerOrder,true),"Variable costs / orders"),
     row("Order-driven variable costs",gbp(s.orderVariableCostTotal,true),"Order, item, pick/pack, and per-order fee components"),
-    row("Revenue-driven variable costs",gbp(s.revenueVariableCostTotal,true),"Percent-of-despatch costs"),
+    row("Revenue-driven variable costs",gbp(s.revenueVariableCostTotal,true),"Percent-of-order-demand costs"),
     row("Contribution before fixed",gbp(s.contributionProfit,true),pct(s.contributionMargin),s.contributionProfit>=0?"good":"bad"),
     row("Total costs",gbp(s.operatingCosts,true),"Marketing + rules","bad"),
     section("Profit"),
-    row("Net profit",gbp(s.operatingProfit,true),pct(s.operatingMargin),s.operatingProfit>=0?"good":"bad"),
+    row("P&L revenue ex VAT",gbp(s.operatingRevenue,true),"Accrued product net sales + net shipping revenue"),
+    row("Accrued net profit",gbp(s.operatingProfit,true),pct(s.operatingMargin),s.operatingProfit>=0?"good":"bad"),
+    row("Net profit / order",gbp(s.operatingProfitPerOrder,true),"Accrued net profit / new orders",s.operatingProfitPerOrder>=0?"good":"bad"),
     row("Net profit / day",gbp(s.profitPerDay,true))
   ].join("");
   const costRows=(s.costGroups||[]).map(group=>`<tr><td>${esc(group.category)}</td><td class="num">${gbp(group.amount,true)}</td></tr>`).join("");
   el("pnl-table").innerHTML=`<table><tbody>${rows}${costRows?`${section("Cost breakdown")}${costRows}`:""}</tbody></table>`;
 }
 const ACTUAL_COMPARISON_ROWS=[
-  ["Despatch","despatchRevenue",false],
-  ["Demand","demandRevenue",false],
+  ["Shopify reported sales","despatchRevenue",false],
+  ["Accrued sales","accruedSalesRevenue",false],
+  ["Order demand","demandRevenue",false],
   ["Gross sales ex VAT","grossRevenue",false],
   ["Discounts","discounts",false],
-  ["Returns","returns",false],
-  ["Net sales","netRevenue",false],
-  ["Shipping charges","shippingRevenue",false],
+  ["Product reversals","productReversalRevenue",false],
+  ["Pending settlement (included)","pendingRefundAmount",false],
+  ["Successful refunds","successfulRefundAmount",false],
+  ["Other adjustments","residualSaleAdjustments",false],
+  ["Shopify net sales","netRevenue",false],
+  ["Accrued net sales","accruedNetRevenue",false],
+  ["Net shipping revenue ex VAT","shippingRevenue",false],
+  ["P&L revenue ex VAT","operatingRevenue",false],
   ["Orders","orders",false],
   ["Units","units",false],
-  ["AOV","aov",false],
+  ["Order AOV","aov",false],
   ["Variable costs","variableCostTotal",false],
   ["Variable cost / order","variableCostPerOrder",false],
   ["Fixed monthly costs","fixedCostTotal",false],
@@ -650,27 +687,32 @@ const ACTUAL_COMPARISON_ROWS=[
   ["Order-driven variable costs","orderVariableCostTotal",false],
   ["Revenue-driven variable costs","revenueVariableCostTotal",false],
   ["Order-driven cost / order","orderVariableCostPerOrder",false],
-  ["Gross profit","grossProfit",false],
-  ["Gross profit %","grossMargin",true],
+  ["Product gross profit","productGrossProfit",false],
+  ["Gross profit incl shipping","grossProfit",false],
+  ["Gross profit / order","grossProfitPerOrder",false],
+  ["Costed gross profit %","grossMargin",true],
+  ["Cost coverage","costCoverage",true],
   ["Marketing spend","marketingSpend",false],
   ["Contribution before fixed","contributionProfit",false],
   ["Contribution %","contributionMargin",true],
   ["Total costs","operatingCosts",false],
-  ["Net profit","operatingProfit",false],
+  ["Accrued net profit","operatingProfit",false],
+  ["Net profit / order","operatingProfitPerOrder",false],
   ["Net profit %","operatingMargin",true],
   ["Net profit / day","profitPerDay",false]
 ];
-const ACTUAL_COMPARISON_BAD_HIGHER=new Set(["discounts","returns","variableCostTotal","variableCostPerOrder","fixedCostTotal","fixedCostPerOrder","fixedCostImpact","orderVariableCostTotal","orderVariableCostPerOrder","revenueVariableCostTotal","marketingSpend","operatingCosts"]);
-const ACTUAL_COMPARISON_EXACT_MONEY=new Set(["aov","variableCostPerOrder","fixedCostPerOrder","orderVariableCostPerOrder"]);
+const ACTUAL_COMPARISON_BAD_HIGHER=new Set(["discounts","pendingRefundAmount","failedRefundAmount","residualSaleAdjustments","variableCostTotal","variableCostPerOrder","fixedCostTotal","fixedCostPerOrder","fixedCostImpact","orderVariableCostTotal","orderVariableCostPerOrder","revenueVariableCostTotal","marketingSpend","operatingCosts"]);
+const ACTUAL_COMPARISON_EXACT_MONEY=new Set(["aov","variableCostPerOrder","fixedCostPerOrder","orderVariableCostPerOrder","grossProfitPerOrder","operatingProfitPerOrder"]);
 function actualComparisonCell(key,value,isPct,isDelta=false){
   if(isPct)return isDelta?`${Number(value||0)>0?"+":""}${(Number(value||0)*100).toFixed(1)}pp`:pct(value);
   if(key==="orders"||key==="units")return isDelta?`${Number(value||0)>0?"+":""}${numberFmt.format(value)}`:numberFmt.format(value);
-  if(!isDelta&&(key==="discounts"||key==="returns"))return signedGbp(-Math.abs(Number(value||0)));
+  if(!isDelta&&key==="discounts")return signedGbp(-Math.abs(Number(value||0)));
+  if(!isDelta&&(key==="productReversalRevenue"||key==="residualSaleAdjustments"))return signedGbp(Number(value||0));
   if(isDelta)return signedGbp(value,ACTUAL_COMPARISON_EXACT_MONEY.has(key));
   return gbp(value,ACTUAL_COMPARISON_EXACT_MONEY.has(key));
 }
 function primarySmall(primary,delta,type="money",exact=false){return `Primary ${valueText(primary,type,exact)} (${deltaValueText(delta,type,exact)})`;}
-function actualMarketingRoas(statement){return Number(statement?.marketingSpend||0)>0?Number(statement.despatchRevenue||0)/Number(statement.marketingSpend):0;}
+function actualMarketingRoas(statement){return Number(statement?.marketingSpend||0)>0?Number(statement.demandRevenue||0)/Number(statement.marketingSpend):0;}
 function renderActualComparisonSummary(){
   const box=el("actual-comparison-summary");
   if(!box)return;
@@ -678,7 +720,7 @@ function renderActualComparisonSummary(){
   const comparison=state.actualComparison?.statement;
   if(!primary||!comparison){
     box.innerHTML=[
-      metric("Comparison net profit","-"),metric("Despatch","-"),metric("AOV","-"),metric("Variable costs","-"),metric("Variable cost / order","-"),metric("Fixed cost drag","-"),metric("Marketing spend","-"),metric("Marketing ROAS","-"),metric("Gross profit %","-"),metric("Net profit %","-"),metric("Profit / day","-")
+      metric("Comparison accrued profit","-"),metric("Accrued sales","-"),metric("AOV","-"),metric("Variable costs","-"),metric("Variable cost / order","-"),metric("Fixed cost drag","-"),metric("Marketing spend","-"),metric("Demand ROAS","-"),metric("Costed gross profit %","-"),metric("Net profit %","-"),metric("Profit / day","-")
     ].join("");
     return;
   }
@@ -686,18 +728,26 @@ function renderActualComparisonSummary(){
   const primaryRoas=actualMarketingRoas(primary);
   const comparisonRoas=actualMarketingRoas(comparison);
   box.innerHTML=[
-    metric("Comparison net profit",gbp(comparison.operatingProfit),primarySmall(primary.operatingProfit,delta("operatingProfit")),comparison.operatingProfit>=0?"good":"bad"),
-    metric("Despatch",gbp(comparison.despatchRevenue),primarySmall(primary.despatchRevenue,delta("despatchRevenue")),delta("despatchRevenue")>=0?"good":"bad"),
+    metric("Comparison accrued profit",gbp(comparison.operatingProfit),primarySmall(primary.operatingProfit,delta("operatingProfit")),comparison.operatingProfit>=0?"good":"bad"),
+    metric("Accrued sales",gbp(comparison.accruedSalesRevenue),primarySmall(primary.accruedSalesRevenue,delta("accruedSalesRevenue")),delta("accruedSalesRevenue")>=0?"good":"bad"),
     metric("AOV",gbp(comparison.aov,true),primarySmall(primary.aov,delta("aov"),"money",true),delta("aov")>=0?"good":"bad"),
     metric("Variable costs",gbp(comparison.variableCostTotal),primarySmall(primary.variableCostTotal,delta("variableCostTotal")),delta("variableCostTotal")>0?"bad":"good"),
     metric("Variable cost / order",gbp(comparison.variableCostPerOrder,true),primarySmall(primary.variableCostPerOrder,delta("variableCostPerOrder"),"money",true),delta("variableCostPerOrder")>0?"bad":"good"),
     metric("Fixed cost drag",pct(comparison.fixedCostImpact),primarySmall(primary.fixedCostImpact,delta("fixedCostImpact"),"pct"),delta("fixedCostImpact")>0?"bad":"good"),
     metric("Marketing spend",gbp(comparison.marketingSpend),primarySmall(primary.marketingSpend,delta("marketingSpend")),delta("marketingSpend")>0?"bad":"good"),
-    metric("Marketing ROAS",roas(comparisonRoas),primarySmall(primaryRoas,comparisonRoas-primaryRoas,"roas"),comparisonRoas>=primaryRoas?"good":"bad"),
-    metric("Gross profit %",pct(comparison.grossMargin),primarySmall(primary.grossMargin,delta("grossMargin"),"pct"),delta("grossMargin")>=0?"good":"bad"),
+    metric("Demand ROAS",roas(comparisonRoas),primarySmall(primaryRoas,comparisonRoas-primaryRoas,"roas"),comparisonRoas>=primaryRoas?"good":"bad"),
+    metric("Costed gross profit %",pct(comparison.grossMargin),primarySmall(primary.grossMargin,delta("grossMargin"),"pct"),delta("grossMargin")>=0?"good":"bad"),
     metric("Net profit %",pct(comparison.operatingMargin),primarySmall(primary.operatingMargin,delta("operatingMargin"),"pct"),delta("operatingMargin")>=0?"good":"bad"),
     metric("Profit / day",gbp(comparison.profitPerDay),primarySmall(primary.profitPerDay,delta("profitPerDay")),delta("profitPerDay")>=0?"good":"bad")
   ].join("");
+}
+function comparisonOverlapDays(first,second){
+  const starts=[first?.range?.startDate,second?.range?.startDate].map(value=>new Date(`${value}T00:00:00.000Z`));
+  const ends=[first?.range?.endDate,second?.range?.endDate].map(value=>new Date(`${value}T00:00:00.000Z`));
+  if(starts.some(date=>!Number.isFinite(date.getTime()))||ends.some(date=>!Number.isFinite(date.getTime())))return 0;
+  const start=new Date(Math.max(starts[0].getTime(),starts[1].getTime()));
+  const end=new Date(Math.min(ends[0].getTime(),ends[1].getTime()));
+  return start>end?0:Math.floor((end-start)/864e5)+1;
 }
 function renderActualComparison(){
   const box=el("actual-comparison-table");
@@ -727,11 +777,19 @@ function renderActualComparison(){
   }).join("");
   const primaryDates=`${primary.range.startDate} to ${primary.range.endDate}`;
   const comparisonDates=`${comparison.range.startDate} to ${comparison.range.endDate}`;
-  box.innerHTML=`<table><thead><tr><th>Metric</th><th class="num">${esc(primaryDates)}</th><th class="num">${esc(comparisonDates)}</th><th class="num">Delta</th></tr></thead><tbody>${rows}</tbody></table>`;
+  const overlap=comparisonOverlapDays(primary,comparison);
+  const overlapNotice=overlap?`<div class="notice warn">${overlap} day${overlap===1?"":"s"} overlap between these periods. Shared days cancel out, so the deltas only reflect the non-overlapping dates.</div>`:"";
+  box.innerHTML=`${overlapNotice}<table><thead><tr><th>Metric</th><th class="num">${esc(primaryDates)}</th><th class="num">${esc(comparisonDates)}</th><th class="num">Delta</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 function renderWarnings(){
-  const warnings=[...(state.statement?.warnings||[])];
-  el("warnings").innerHTML=warnings.map(message=>`<div class="notice warn">${esc(message)}</div>`).join("");
+  const statement=state.statement||{};
+  const quality=statement.profitQualityReasons||[];
+  const otherWarnings=(statement.warnings||[]).filter(message=>!String(message).startsWith("Profit is provisional:"));
+  const blocks=[];
+  if(statement.refundSettlementNote)blocks.push(`<div class="notice info"><strong>Refund status — already included</strong>${esc(statement.refundSettlementNote)}</div>`);
+  if(quality.length)blocks.push(`<div class="notice warn"><strong>Why profit is provisional</strong>${quality.map(esc).join(" ")}</div>`);
+  blocks.push(...otherWarnings.map(message=>`<div class="notice warn">${esc(message)}</div>`));
+  el("warnings").innerHTML=blocks.join("");
 }
 function ruleBadge(rule){return `<span class="badge ${String(rule.status).toLowerCase()}">${esc(rule.status)}</span>`;}
 function renderRules(){
@@ -750,7 +808,7 @@ function renderSpend(){
   el("spend-count").textContent=`${manual.length} manual · ${automated.length} automated`;
   const channels=(windsor.channels||[]).map(item=>item.label||item.channel).join(", ");
   const scopes=[...new Set((windsor.channels||[]).map(item=>item.accountScope).filter(Boolean))].join(", ");
-  const autoText=windsor.autoSync?.enabled?`Auto on load, ${windsor.autoSync.cooldownMinutes||60}m cooldown`:"Manual sync only";
+  const autoText=windsor.autoSync?.enabled?`Auto on load, ${windsor.autoSync.cooldownMinutes||60}m cooldown, final after day end + ${windsor.autoSync.finalizationDelayHours??6}h`:"Manual sync only";
   const last=windsor.lastSyncedAt?`Last sync ${new Date(windsor.lastSyncedAt.replace(" ","T")).toLocaleString("en-GB")}`:"Not synced yet";
   el("windsor-note").textContent=windsor.configured?`${channels||"Google Ads, Meta Ads"} · ${scopes?`Scoped to ${scopes} · `:""}${autoText} · ${last}`:"Set WINDSOR_API_KEY to enable Google and Meta spend sync.";
   const syncBtn=el("sync-windsor-btn");
@@ -1011,7 +1069,7 @@ function applyStatementDefaults(){
   const metaSpend=baseChannelSpend("Meta");
   setScaler("sc-google-spend",{min:0,max:Math.ceil(Math.max(googleSpend*2,googleSpend+2500,1000)/100)*100,step:0.01,value:googleSpend.toFixed(2)});
   setScaler("sc-meta-spend",{min:0,max:Math.ceil(Math.max(metaSpend*2,metaSpend+2500,1000)/100)*100,step:0.01,value:metaSpend.toFixed(2)});
-  const marketingReturn=Number(s.marketingSpend||0)>0?s.despatchRevenue/s.marketingSpend:0;
+  const marketingReturn=Number(s.marketingSpend||0)>0?s.demandRevenue/s.marketingSpend:0;
   const googleReturn=Number(channelForecast("Google").attributedRoas||channelForecast("Google").scenarioReturn||channelForecast("Google").calibratedReturn||marketingReturn||0);
   const metaReturn=Number(channelForecast("Meta").attributedRoas||channelForecast("Meta").scenarioReturn||channelForecast("Meta").calibratedReturn||marketingReturn||0);
   setScaler("sc-google-roas",{min:0,max:Math.ceil(Math.max(googleReturn*2,marketingReturn*2,10)),step:0.01,value:googleReturn.toFixed(2)});
@@ -1043,9 +1101,13 @@ async function loadActuals(){
     const autoSync=data.windsorSync||{};
     if(autoSync.status==="synced"){
       const parts=(autoSync.channels||[]).map(item=>`${item.channel} ${gbp(item.amount)}`).join(", ");
-      setStatus(`P&L actuals loaded. Windsor auto-synced ${parts||"marketing spend"}.`,"ok");
+      setStatus(`P&L actuals loaded. Windsor auto-synced ${parts||"marketing spend"}.${state.statement.marketingSpendProvisional?" Marketing and profit remain provisional until every day is finalised.":""}`,state.statement.marketingSpendProvisional?"warn":"ok");
     }else if(autoSync.status==="error"){
       setStatus(`P&L actuals loaded, but Windsor auto-sync failed: ${autoSync.error}`,"warn");
+    }else if(state.statement.marketingSpendProvisional){
+      setStatus(`P&L actuals loaded, but marketing and profit are provisional: ${(state.statement.marketingQualityReasons||[]).join(" ")}`,"warn");
+    }else if(state.statement.profitProvisional){
+      setStatus("P&L actuals loaded. Profit is provisional; see the data-quality note below.","warn");
     }else{
       setStatus("P&L actuals loaded.","ok");
     }
@@ -1064,7 +1126,7 @@ async function loadActualComparison(){
     button.disabled=true;
     note.className="status warn";
     note.textContent=`Loading Shopify comparison actuals for ${startDate} to ${endDate}...`;
-    const data=await apiJson(`/api/pnl${pnlQuery(startDate,endDate)}`);
+    const data=await apiJson(`/api/pnl${pnlQuery(startDate,endDate)}&autoSyncWindsor=false`);
     state.settings=data.settings||state.settings;
     if(!data.configured){state.actualComparison=null;note.className="status warn";note.textContent=data.message||"Shopify is not configured.";renderAll();return;}
     state.actualComparison={statement:snapshot(data.statement)};
@@ -1188,7 +1250,6 @@ async function syncWindsorSpend(){
 }
 window.editRule=editRule;window.deleteRule=deleteRule;window.editSpend=editSpend;window.deleteSpend=deleteSpend;window.removeScenarioComparison=removeScenarioComparison;
 
-document.getElementById("apply-quick-btn").addEventListener("click",()=>{setQuick(val("quick-period"));clearSpend();setStatus(val("quick-period")==="custom"?"Custom period unchanged. Click Load actuals to fetch it.":"Period dates updated. Click Load actuals.","ok");});
 document.getElementById("quick-period").addEventListener("change",()=>{setQuick(val("quick-period"));clearSpend();setStatus(val("quick-period")==="custom"?"Custom period selected. Enter dates, then click Load actuals.":"Period dates updated. Click Load actuals.","ok");});
 document.getElementById("date-from").addEventListener("change",markCustomPeriod);
 document.getElementById("date-to").addEventListener("change",markCustomPeriod);
