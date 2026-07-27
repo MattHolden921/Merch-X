@@ -11519,7 +11519,6 @@ function analyseSalePlanItem(item, now = new Date()) {
     post,
     data: {
       sku: item.sku,
-      imageUrl: item.imageUrl,
       originalPrice: item.originalPrice,
       currentPrice: item.currentPrice,
       targetPrice: item.targetPrice,
@@ -11652,7 +11651,6 @@ function compactSaleOutcome(row) {
     itemId: row.itemId,
     title: row.title,
     sku: row.data?.sku || "",
-    imageUrl: row.data?.imageUrl || "",
     productType: row.productType,
     season: row.season,
     discountPercent: row.discountPercent,
@@ -12195,6 +12193,60 @@ async function handleSalePlannerAnalysisRefresh(req, res) {
     ...actorData(req)
   });
   sendJson(res, 200, { ok: true, analysis, ...(await readSalePlannerResponse(req, planId)) });
+}
+
+async function fetchSalePlannerAnalysisImages(planId, requestedItemIds = []) {
+  const { shop, clientId, clientSecret } = shopifyConfig();
+  if (!shop || !clientId || !clientSecret) {
+    return { configured: false, message: "Set Shopify credentials to load product images.", images: [] };
+  }
+  const requested = new Set((requestedItemIds || []).map(String).filter(Boolean));
+  if (!requested.size) return { configured: true, images: [], fetchedAt: new Date().toISOString() };
+  if (requested.size > 5000) throw new Error("Choose no more than 5,000 analysis products.");
+  const items = readSalePlannerItems(planId).filter(item => requested.has(String(item.id)));
+  const productIds = [...new Set(items
+    .map(item => String(item.shopifyProductId || ""))
+    .filter(id => id.startsWith("gid://shopify/Product/")))];
+  const productImages = new Map();
+  const query = `
+    query SalePlannerAnalysisImages($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Product {
+          id
+          title
+          featuredImage { url altText }
+        }
+      }
+    }
+  `;
+  for (let offset = 0; offset < productIds.length; offset += 250) {
+    const data = await shopifyGraphql(query, { ids: productIds.slice(offset, offset + 250) });
+    for (const product of data.nodes || []) {
+      if (!product?.id) continue;
+      productImages.set(product.id, {
+        imageUrl: product.featuredImage?.url || "",
+        imageAlt: product.featuredImage?.altText || product.title || ""
+      });
+    }
+  }
+  return {
+    configured: true,
+    images: items.map(item => ({
+      itemId: item.id,
+      ...(productImages.get(String(item.shopifyProductId || "")) || { imageUrl: "", imageAlt: item.title || "" })
+    })),
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+async function handleSalePlannerAnalysisImages(req, res) {
+  const body = await readJsonBody(req);
+  const planId = String(body.planId || "").trim();
+  if (!planId) throw new Error("Missing sale plan.");
+  const plan = openOrderSqliteDb().prepare("SELECT id FROM sale_plans WHERE id = ?").get(planId);
+  if (!plan) throw new Error("Sale plan not found.");
+  const result = await fetchSalePlannerAnalysisImages(planId, body.itemIds || []);
+  sendJson(res, 200, result);
 }
 
 async function handleSalePlannerActionsUpdate(req, res) {
@@ -18428,6 +18480,16 @@ async function handleApi(req, res) {
       await handleSalePlannerAnalysisRefresh(req, res);
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not refresh sale planner analysis" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-planner/analysis/images") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      await handleSalePlannerAnalysisImages(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not load sale analysis images" });
     }
     return true;
   }

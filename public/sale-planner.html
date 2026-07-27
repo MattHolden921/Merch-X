@@ -21,7 +21,7 @@
 .analysis-row strong{display:block;color:var(--ds-text);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .analysis-row span{display:block;color:var(--ds-text-soft);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .analysis-row b{font-weight:650;color:var(--ds-text);white-space:nowrap}
-.analysis-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 170px 170px auto;gap:10px;align-items:end;margin:14px 0 10px}
+.analysis-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 170px 170px auto auto;gap:10px;align-items:end;margin:14px 0 10px}
 .analysis-table{width:100%;min-width:1510px;border-collapse:collapse;table-layout:fixed}
 .analysis-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);white-space:nowrap}
 .analysis-table td{font-size:11px;color:var(--ds-text-muted);padding:8px 6px;border-bottom:1px solid var(--ds-line);vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
@@ -29,6 +29,10 @@
 .analysis-table tfoot td{background:var(--ds-bg-muted);border-top:1px solid var(--ds-line);border-bottom:0;font-weight:650}
 .analysis-pair b{display:block;color:var(--ds-text);font-size:12px;white-space:nowrap}
 .analysis-pair span{display:block;color:var(--ds-text-soft);font-size:10px;margin-top:2px;white-space:nowrap}
+.analysis-product-cell{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:center}
+.analysis-product-cell.images-hidden{grid-template-columns:minmax(0,1fr)}
+.analysis-thumb{width:52px;height:68px;background:var(--ds-bg-muted);border-radius:var(--ds-radius);overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--ds-text-soft);font-size:9px;border:1px solid var(--ds-line)}
+.analysis-thumb img{width:100%;height:100%;object-fit:contain;display:block}
 .analysis-explainer{margin:9px 0 0;color:var(--ds-text-muted);font-size:11px;line-height:1.45}
 .badge.worked{color:var(--ds-good);border-color:rgba(21,128,61,.35)}
 .badge.watch{color:var(--ds-warn);border-color:rgba(180,83,9,.35)}
@@ -160,6 +164,7 @@
       <div class="field"><label>Analysis search</label><input id="analysis-search" placeholder="Product, SKU, type, reason"></div>
       <div class="field"><label>Outcome</label><select class="select" id="analysis-outcome-filter"><option value="">All outcomes</option><option value="worked">Worked</option><option value="watch">Watch</option><option value="deepen">Deepen</option><option value="remove">Remove</option></select></div>
       <div class="field"><label>Confidence</label><select class="select" id="analysis-confidence-filter"><option value="">All confidence</option><option value="unavailable">Unavailable</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+      <button class="btn" type="button" id="analysis-images-btn" aria-pressed="false">Show images</button>
       <span class="pill" id="analysis-visible-count">0 products</span>
     </div>
     <div class="table-wrap" id="analysis-table-wrap"></div>
@@ -265,6 +270,8 @@ const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",hour:
 let state={plans:[],plan:null,items:[],events:[],metrics:{},analysis:{summary:{},actionSummary:{},exceptions:{worked:[],watch:[],deepen:[],remove:[]},actions:[]},collections:[],collectionConfig:{rootSaleCollectionId:"",childCollectionByType:{}},collectionProductTypes:[],recentJobs:[],policies:{minGpPct:0,requireCostAtDiscount:40},canApply:false,shopifyConfigured:false,shopifyMessage:"",collectionCount:0};
 let selectedRows=new Set();
 let selectedActions=new Set();
+let analysisImagesVisible=false;
+const analysisImageCache=new Map();
 let pendingJob=null;
 
 const el=id=>document.getElementById(id);
@@ -365,7 +372,7 @@ function renderAnalysis(){
     const body=rows.length?rows.map(row=>`<div class="analysis-row"><div><strong title="${attr(row.title)}">${escapeHtml(row.title||"-")}</strong><span>${escapeHtml(row.sku||row.productType||"-")} · ${Number(row.comparableWeeks||0)} matched week${Number(row.comparableWeeks||0)===1?"":"s"} · ${escapeHtml(row.confidence||"unavailable")}</span></div><b>ST ${rateText(row.preUnits,Number(row.preUnits||0)+Number(row.preStock||0))} → ${rateText(row.postUnits,Number(row.postUnits||0)+Number(row.postStock||0))} (${ppText(row.sellThroughLift)})</b></div>`).join(""):`<p class="empty-state">None</p>`;
     return `<div class="exception-list"><h3>${escapeHtml(label)}</h3>${body}</div>`;
   }).join("");
-  el("analysis-explainer").textContent="ST is the sell-through proxy for each matched window: units ÷ (units + ending stock). Changes are percentage points (pp), so Stori’s +35.7pp means its sell-through rate moved up by 35.7 percentage points, not that sales increased by 35.7%.";
+  el("analysis-explainer").textContent="ST is the sell-through proxy for each matched window: units ÷ (units + ending stock). Changes are percentage points (pp), so a +35.7pp result means the sell-through rate moved up by 35.7 percentage points, not that sales increased by 35.7%.";
   el("analysis-toolbar").hidden=!(analysis.outcomes||[]).length;
   renderAnalysisTable();
   el("analysis-note").className=analysis.refreshedAt?"status ok":"status warn";
@@ -413,6 +420,8 @@ function analysisTotals(rows){
 
 function renderAnalysisTable(){
   const rows=analysisRows();
+  el("analysis-images-btn").textContent=analysisImagesVisible?"Hide images":"Show images";
+  el("analysis-images-btn").setAttribute("aria-pressed",String(analysisImagesVisible));
   el("analysis-visible-count").textContent=`${rows.length.toLocaleString("en-GB")} product${rows.length===1?"":"s"}`;
   if(!rows.length){
     el("analysis-table-wrap").innerHTML='<p class="empty-state">No analysis rows match the current filters.</p>';
@@ -428,7 +437,7 @@ function renderAnalysisTable(){
       <th style="width:250px">Product / evidence</th><th style="width:95px">Outcome</th><th style="width:220px">Before markdown</th><th style="width:220px">After markdown</th><th style="width:175px">Change</th><th style="width:190px">Next step</th><th>Why</th>
     </tr></thead>
     <tbody>${rows.map(row=>`<tr>
-      <td><div class="action-main"><strong title="${attr(row.title)}">${escapeHtml(row.title||"-")}</strong><span>${escapeHtml(row.sku||"-")} · ${escapeHtml(row.productType||"-")} · ${Number(row.comparableWeeks||0)} matched week${Number(row.comparableWeeks||0)===1?"":"s"} · ${escapeHtml(row.confidence||"unavailable")}</span><span>${escapeHtml(analysisPeriodText(row))}</span></div></td>
+      <td><div class="analysis-product-cell${analysisImagesVisible?"":" images-hidden"}">${analysisImagesVisible?analysisImageHtml(row):""}<div class="action-main"><strong title="${attr(row.title)}">${escapeHtml(row.title||"-")}</strong><span>${escapeHtml(row.sku||"-")} · ${escapeHtml(row.productType||"-")} · ${Number(row.comparableWeeks||0)} matched week${Number(row.comparableWeeks||0)===1?"":"s"} · ${escapeHtml(row.confidence||"unavailable")}</span><span>${escapeHtml(analysisPeriodText(row))}</span></div></div></td>
       <td><span class="badge ${attr(row.outcome)}">${escapeHtml(outcomeLabel(row.outcome))}</span></td>
       <td><div class="analysis-pair"><b>${Number(row.preUnits||0).toLocaleString("en-GB")} units · ST ${rateText(row.preUnits,Number(row.preUnits||0)+Number(row.preStock||0))}</b><span>End stock ${Number(row.preStock||0).toLocaleString("en-GB")} · ${Number(row.preGaViews||0).toLocaleString("en-GB")} views · CVR ${cvrText(row.preGaPurchases,row.preGaViews)}</span></div></td>
       <td><div class="analysis-pair"><b>${Number(row.postUnits||0).toLocaleString("en-GB")} units · ST ${rateText(row.postUnits,Number(row.postUnits||0)+Number(row.postStock||0))}</b><span>End stock ${Number(row.postStock||0).toLocaleString("en-GB")} · ${Number(row.postGaViews||0).toLocaleString("en-GB")} views · CVR ${cvrText(row.postGaPurchases,row.postGaViews)}</span></div></td>
@@ -443,6 +452,49 @@ function renderAnalysisTable(){
       <td><div class="analysis-pair"><b>ST ${ppText(postSt-preSt)}</b><span>CVR ${ppText(postCvr-preCvr)}</span></div></td><td></td><td></td>
     </tr></tfoot>
   </table>`;
+}
+
+function analysisImageHtml(row){
+  const planImages=analysisImageCache.get(state.plan?.id||"");
+  const image=planImages?.get(String(row.itemId||""));
+  return `<div class="analysis-thumb">${image?.imageUrl?`<img src="${attr(image.imageUrl)}" alt="${attr(image.imageAlt||row.title||"Product image")}" loading="lazy">`:"No Shopify image"}</div>`;
+}
+
+async function toggleAnalysisImages(){
+  if(analysisImagesVisible){
+    analysisImagesVisible=false;
+    renderAnalysisTable();
+    return;
+  }
+  const planId=String(state.plan?.id||"");
+  const rows=state.analysis?.outcomes||[];
+  if(!planId||!rows.length)return;
+  const button=el("analysis-images-btn");
+  button.disabled=true;
+  button.textContent="Loading images...";
+  try{
+    let planImages=analysisImageCache.get(planId);
+    if(!planImages){
+      planImages=new Map();
+      analysisImageCache.set(planId,planImages);
+    }
+    const missing=rows.filter(row=>!planImages.has(String(row.itemId||"")));
+    if(missing.length){
+      const data=await apiJson("/api/sale-planner/analysis/images",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId,itemIds:missing.map(row=>row.itemId)})});
+      if(!data.configured)throw new Error(data.message||"Shopify is not configured.");
+      for(const image of data.images||[])planImages.set(String(image.itemId||""),{imageUrl:image.imageUrl||"",imageAlt:image.imageAlt||""});
+      for(const row of missing)if(!planImages.has(String(row.itemId||"")))planImages.set(String(row.itemId||""),{imageUrl:"",imageAlt:row.title||""});
+    }
+    analysisImagesVisible=true;
+    renderAnalysis();
+  }catch(error){
+    analysisImagesVisible=false;
+    el("analysis-note").className="status err";
+    el("analysis-note").textContent=error.message;
+    renderAnalysisTable();
+  }finally{
+    button.disabled=false;
+  }
 }
 
 function actionLabel(type){
@@ -717,6 +769,7 @@ async function loadPlanner(planId=val("plan-select")){
     const query=planId?`?planId=${encodeURIComponent(planId)}`:"";
     const data=await apiJson(`/api/sale-planner${query}`);
     state={...state,...data};
+    analysisImagesVisible=false;
     selectedActions.clear();
     const legacyReady=state.plan?.status==="Ready"&&!state.plan?.data?.approvedSnapshotHash;
     el("status-note").className=legacyReady||state.plan?.status==="Awaiting approval"?"status warn":"status ok";
@@ -827,6 +880,7 @@ async function refreshAnalysis(){
   try{
     const data=await apiJson("/api/sale-planner/analysis/refresh",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan.id})});
     state={...state,...data};
+    analysisImagesVisible=false;
     el("status-note").className="status ok";
     el("status-note").textContent="Sale analysis refreshed.";
     render();
@@ -1010,6 +1064,7 @@ async function reconcileSelected(){
 
 ["search","status-filter","type-filter","discount-filter","warning-filter"].forEach(id=>el(id).addEventListener("input",renderTable));
 ["analysis-search","analysis-outcome-filter","analysis-confidence-filter"].forEach(id=>el(id).addEventListener("input",renderAnalysisTable));
+el("analysis-images-btn").addEventListener("click",toggleAnalysisImages);
 ["action-search","action-type-filter","action-status-filter"].forEach(id=>el(id).addEventListener("input",renderActions));
 el("refresh-btn").addEventListener("click",()=>loadPlanner());
 el("plan-select").addEventListener("change",()=>loadPlanner(val("plan-select")));
