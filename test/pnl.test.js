@@ -85,6 +85,31 @@ test("calculates blended card fees from order demand plus per order fee", () => 
   assert.equal(line.formula, "1.5% of order demand + 0.2 per order");
 });
 
+test("revenue-based rules can use order intake including new shipping", () => {
+  const line = calculateCostRule({
+    name: "Card charges",
+    category: "Payment",
+    costType: "percent_revenue_plus_per_order",
+    revenueBasis: "order_intake",
+    rate: 0.02,
+    amount: 0.2,
+    status: "Active"
+  }, {
+    range: { startDate: "2026-07-01", endDate: "2026-07-01" },
+    demandRevenue: 1000,
+    newShippingRevenue: 100,
+    despatchRevenue: 900,
+    netRevenue: 750,
+    orders: 10
+  }, { startDate: "2026-07-01", endDate: "2026-07-01" });
+
+  assert.equal(line.revenueBasis, "order_intake");
+  assert.equal(line.revenueDrivenAmount, 22);
+  assert.equal(line.orderDrivenAmount, 2);
+  assert.equal(line.amountApplied, 24);
+  assert.match(line.formula, /order intake/);
+});
+
 test("prorates marketing spend entries by date overlap", () => {
   const applied = marketingEntryAmount({
     startDate: "2026-06-01",
@@ -272,7 +297,7 @@ test("preserves signed 17 July Shopify reversals and separates sale adjustments"
   assert.equal(actuals.profitProvisional, true);
   assert.ok(actuals.profitQualityReasons.some(message => message.includes("sale adjustments")));
 
-  const scenario = buildScenario(actuals, [], [], { targetDailySales: actuals.despatchRevenue });
+  const scenario = buildScenario(actuals, [], [], { targetDailyDemand: actuals.demandRevenue });
   assert.equal(Math.round(scenario.scenario.orders), 71);
   assert.equal(Math.round(scenario.scenario.aov * 100) / 100, 64);
   assert.equal(scenario.delta.operatingProfit, 0);
@@ -360,6 +385,53 @@ test("treats matched pending refund settlement as informational rather than an e
   assert.ok(actuals.refundSettlementNote.includes("do not add"));
 });
 
+test("an unchanged refund-heavy scenario preserves the complete operating P&L", () => {
+  const actual = buildPnl(normalizeActuals({
+    range: { startDate: "2026-07-17", endDate: "2026-07-17" },
+    despatchRevenue: 4508.1,
+    demandRevenue: 4544.1,
+    aovBasisRevenue: 4544.1,
+    grossRevenue: 3997.23,
+    netRevenue: 4246.26,
+    accruedNetRevenue: 754.46,
+    accruedSalesRevenue: 1016.3,
+    productReversalRevenue: -3638.8,
+    productReversalNetRevenue: -3032.29,
+    shippingReversalRevenue: -9,
+    saleAdjustments: 3491.8,
+    matchedPendingRefundAdjustment: 3491.8,
+    newShippingRevenue: 120,
+    shippingRevenue: 92.51,
+    discounts: 210.48,
+    orders: 71,
+    units: 126,
+    returnedUnits: 92,
+    cogs: 175.01,
+    productGrossProfit: 594.53,
+    costedNetSales: 769.54,
+    grossMarginRevenue: 769.54,
+    uncostedNetSales: -15.08
+  }), [], []);
+  const result = buildScenario(actual, [], [], {
+    targetDailyDemand: actual.demandRevenue,
+    itemsPerOrder: actual.itemsPerOrder
+  });
+
+  for (const key of [
+    "demandRevenue", "despatchRevenue", "accruedNetRevenue", "operatingRevenue",
+    "shippingRevenue", "productGrossProfit", "grossProfit", "grossMargin",
+    "orders", "units", "operatingProfit", "operatingMargin"
+  ]) {
+    assert.equal(result.scenario[key], result.actual[key], key);
+  }
+  assert.deepEqual(result.scenario.reconciliation, {
+    revenueDifference: 0,
+    grossProfitDifference: 0,
+    netProfitDifference: 0,
+    passed: true
+  });
+});
+
 test("scenario scales sales, AOV, marketing, and variable costs while fixed costs stay fixed", () => {
   const actual = normalizeActuals({
     range: { startDate: "2026-06-01", endDate: "2026-06-30" },
@@ -388,11 +460,12 @@ test("scenario scales sales, AOV, marketing, and variable costs while fixed cost
   assert.ok(result.scenario.operatingProfit > result.actual.operatingProfit);
 });
 
-test("marketing-driven scenarios change sales and variable costs while fixed costs stay fixed", () => {
+test("marketing-driven scenarios change order demand and variable costs while fixed costs stay fixed", () => {
   const actual = normalizeActuals({
     range: { startDate: "2026-06-01", endDate: "2026-06-30" },
     despatchRevenue: 100000,
     demandRevenue: 112000,
+    aovBasisRevenue: 112000,
     grossRevenue: 95000,
     netRevenue: 80000,
     discounts: 3000,
@@ -415,21 +488,22 @@ test("marketing-driven scenarios change sales and variable costs while fixed cos
     marketingReturn: 4
   });
 
-  assert.equal(result.scenario.despatchRevenue, 108000);
-  assert.equal(result.scenario.netRevenue, 86400);
-  assert.equal(result.scenario.discounts, 3240);
-  assert.equal(result.scenario.returns, 6480);
-  assert.equal(result.scenario.shippingRevenue, 2700);
+  assert.equal(result.scenario.demandRevenue, 120000);
+  assert.equal(result.scenario.despatchRevenue, 107142.86);
+  assert.equal(result.scenario.netRevenue, 85714.29);
+  assert.equal(result.scenario.discounts, 3214.29);
+  assert.equal(result.scenario.returns, 6428.57);
+  assert.equal(result.scenario.shippingRevenue, 2678.57);
   assert.equal(result.scenario.marketingSpend, 12000);
-  assert.equal(result.scenario.orders, 2160);
+  assert.equal(Math.round(result.scenario.orders * 100) / 100, 2142.86);
   assert.equal(result.scenario.costLines.find(line => line.name === "Rent").amountApplied, 6000);
-  assert.equal(result.scenario.costLines.find(line => line.name === "Payment fees").amountApplied, 2419.2);
-  assert.equal(result.scenario.costLines.find(line => line.name === "Customer service").amountApplied, 2160);
-  assert.equal(result.scenario.variableCostTotal, 4579.2);
+  assert.equal(result.scenario.costLines.find(line => line.name === "Payment fees").amountApplied, 2400);
+  assert.equal(result.scenario.costLines.find(line => line.name === "Customer service").amountApplied, 2142.86);
+  assert.equal(result.scenario.variableCostTotal, 4542.86);
   assert.equal(result.scenario.variableCostPerOrder, 2.12);
-  assert.equal(result.scenario.orderVariableCostTotal, 2160);
+  assert.equal(result.scenario.orderVariableCostTotal, 2142.86);
   assert.equal(result.scenario.orderVariableCostPerOrder, 1);
-  assert.equal(result.scenario.revenueVariableCostTotal, 2419.2);
+  assert.equal(result.scenario.revenueVariableCostTotal, 2400);
   assert.equal(result.delta.variableCostPerOrder, 0);
 });
 

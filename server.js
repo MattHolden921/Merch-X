@@ -5546,6 +5546,34 @@ function openOrderSqliteDb() {
       `).run(returnCostMigrationKey, JSON.stringify({ changedRules: result.changes }));
     })();
   }
+  const cardBasisMigrationKey = "migration:pnl-card-charges-order-intake:v2";
+  if (!orderSqliteDb.prepare("SELECT 1 FROM app_settings WHERE key = ?").get(cardBasisMigrationKey)) {
+    orderSqliteDb.transaction(() => {
+      const rows = orderSqliteDb.prepare(`
+        SELECT id, data
+        FROM pnl_cost_rules
+        WHERE lower(trim(name)) IN ('card charge', 'card charges')
+          AND cost_type IN ('percent_revenue', 'percent_revenue_plus_per_order')
+      `).all();
+      const update = orderSqliteDb.prepare(`
+        UPDATE pnl_cost_rules
+        SET data = @data,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = @id
+      `);
+      for (const row of rows) {
+        const data = parseJson(row.data, {});
+        update.run({
+          id: row.id,
+          data: JSON.stringify({ ...data, revenueBasis: "order_intake" })
+        });
+      }
+      orderSqliteDb.prepare(`
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+      `).run(cardBasisMigrationKey, JSON.stringify({ changedRules: rows.length }));
+    })();
+  }
   orderSqliteDb.prepare(`
     UPDATE new_arrivals_cleanup_audit
     SET status = 'error',
@@ -17132,6 +17160,7 @@ function effectiveCashflowPnlTiming(settings, costRules) {
       name: rule.name,
       category: rule.category,
       costType: rule.costType,
+      revenueBasis: rule.revenueBasis,
       ...cashflowTimingSetting(savedRules[rule.id], defaultCashflowCostPaymentTiming(rule))
     }))
   };

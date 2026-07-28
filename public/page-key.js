@@ -88,26 +88,28 @@
           ["Shopify reported sales", "Shopify's signed reporting total for the period. The settlement bridge adds its matched pending-refund hold to Accrued sales; it is a reconciliation figure rather than literal physical despatch."],
           ["Product reversals", "Signed product value removed through returns, cancellations, exchanges, refunds or edits. The percentage shown is the absolute reversal value divided by Order demand, so it is a broader reversal rate rather than a pure completed-refund rate. Accepted refund product value is already included even when payment settlement is still pending; reversed quantity is shown separately.", "product reversal rate = absolute product reversals ÷ Order demand"],
           ["Pending settlement", "A refund-status view, not an extra deduction. For recent ranges up to 62 days, live Shopify transactions split into Pending, Successful and Failed amounts. Pending amounts already recognised in reversal activity and Accrued sales are shown so Finance can monitor payment completion."],
+          ["Other Shopify revenue lines", "Return fees, duties and residual other-sales activity remain in the Shopify reconciliation but are excluded from P&L revenue until Finance classifies their VAT and product-cost treatment. A non-zero amount is shown as an informational boundary."],
           ["Accrued net sales", "Shopify product net sales excluding the matched pending-refund hold. Net shipping is added separately to form P&L revenue."],
           ["Gross profit", "ShopifyQL reported product gross profit plus net shipping revenue excluding VAT. Costed product GP% remains Shopify's product-only margin on its matching costed-sales basis, while Cost coverage shows the share of signed product activity with cost recorded.", "gross profit = product gross profit + net shipping revenue ex VAT"],
           ["Profit per order", "Gross profit per order is gross profit including net shipping divided by new orders. Net profit per order is accrued net profit divided by new orders."],
           ["Provisional profit", "Accrued net profit is marked provisional when cost coverage is below 95%, unmatched adjustments exceed 1% of Accrued sales, or a Windsor marketing day is missing/not finalised. Pending settlement alone is informational because the accepted refund is already accrued."],
-          ["Actual comparison", "Loads a second actualised Shopify period using the same P&L rules without refreshing Windsor again. Overlapping periods are warned because shared days cancel out; the detailed Delta remains comparison minus primary."]
+          ["Actual comparison", "Loads a second actualised Shopify period using the same P&L rules without refreshing Windsor again. Overlapping periods are warned because shared days cancel out; the detailed Delta remains comparison minus primary. Pending and successful refund payment statuses are grouped as already represented and use neutral comparison styling rather than being treated as extra profit movement."]
         ]],
         ["Costs", [
           ["Variable costs", "Non-fixed cost rules such as fulfilment, postage, pick/pack and payment fees."],
-          ["Revenue-based costs", "Percentage and percentage-plus-order rules use Order demand, not return-adjusted Shopify reported sales, so historical refund batches do not erase the original payment-processing base."],
+          ["Revenue-based costs", "Each percentage rule explicitly uses Order demand, Order intake including new shipping, or P&L revenue excluding VAT. A percentage rule named Card Charge/Card Charges uses Order intake because the checkout fee base includes customer shipping, regardless of its reporting category; refund-adjusted Shopify reported sales is not used."],
           ["Reversed-item cost", "The per reversed item rule uses Shopify reversed quantity instead of charging every new order. The exact existing Fulfilment rule named Return is migrated once from per-order; other rules change only when Finance selects this type."],
+          ["Rule history audit", "An active rule without an Effective from date applies to every historical period. The page flags undated rules and reminds Finance that per-reversed-item rules measure all Shopify reversal activity, not only physical warehouse returns."],
           ["Marketing finalisation", "A Windsor row proves spend is available, not that the day is complete. Partial-day rows are automatically refreshed; a day becomes final after a successful sync at least six hours after UTC day end. Windsor stable-cache actuals are accepted for older completed days."],
           ["P&L revenue", "Accrued product net sales plus net shipping revenue, all excluding VAT. This is the denominator for net-profit %, contribution %, and fixed-cost drag."],
           ["Fixed cost drag", "Prorated fixed monthly costs as a share of P&L revenue.", "fixed cost drag = fixed monthly costs ÷ P&L revenue"],
           ["Contribution before fixed", "Gross profit after marketing and variable costs, before fixed monthly overhead."],
-          ["Accrued net profit", "Gross profit after marketing, variable costs and fixed costs; Net profit % uses Accrued net sales."]
+          ["Accrued net profit", "Gross profit after marketing, variable costs and fixed costs; Net profit % uses P&L revenue."]
         ]],
         ["Scenarios", [
-          ["Drivers", "Daily Despatch, AOV, marketing, ROAS, GP% and items per order reshape the selected scenario. Without a GP% override, the loaded Shopify GP scales with sales so an unchanged scenario preserves source GP."],
-          ["Marketing drives sales", "When enabled, marketing spend and return move the linked Despatch target; uplift is not added twice."],
-          ["Break-even ROAS", "The minimum incremental Despatch return needed for extra marketing spend not to reduce net profit."],
+          ["Drivers", "Daily Order demand, AOV, marketing, forecast ROAS, Costed product GP% and items per order reshape the selected scenario. The summary then bridges Order demand through Shopify reported sales, Product reversals and P&L revenue. Shopify reported sales remains a reconciliation output, so refund settlement batches cannot amplify the forecast. Product reversal rate is shown against Order demand. An unchanged scenario preserves the exact loaded P&L."],
+          ["Marketing drives sales", "When enabled, marketing spend and calibrated channel returns move the linked Order-demand target; uplift is not added twice. Raw Google/Meta platform ROAS remains visible as reference but is not the default forecast return."],
+          ["Break-even ROAS", "The minimum incremental Order-demand return needed for extra marketing spend not to reduce net profit."],
           ["Temporary comparisons", "Named scenario comparisons stay only in the current page and clear when a new actual period loads."]
         ]]
       ]
@@ -124,7 +126,7 @@
         ]],
         ["Cash outflows", [
           ["Supplier payments", "Paid and planned payment-ledger transactions use their saved dates. Remaining invoices use invoice due dates; uninvoiced order balances use the workflow payment date and clearly flagged fallbacks where needed."],
-          ["P&L rule use", "Each active P&L rule has its cash treatment in the same row: charge it in each incurred week or pay it monthly in arrears from a chosen first payment date."],
+          ["P&L rule use", "Each active P&L rule has its calculation basis and cash treatment in the same row: charge it in each incurred week or pay it monthly in arrears from a chosen first payment date. Cashflow shows the saved P&L percentage basis and uses its Despatch forecast as the fallback where the richer Order-demand and shipping bridge is unavailable."],
           ["Monthly recurrence", "The first payment date is an anchor. A date on the 15th repeats on the 15th of every following month inside the horizon; a 29th, 30th or 31st uses the final day when a month is shorter."],
           ["Monthly amount", "Monthly costs are paid one calendar month in arrears. A November payment calculates its amount from October's Despatch, orders or units, then places that amount on the recurring November payment date."],
           ["Marketing boundary", "Historical P&L marketing is backward-looking and is not used as a forecast. The weekly combined Meta + PPC budget is entered only in Cashflow; other one-off items can use a manual movement."],
