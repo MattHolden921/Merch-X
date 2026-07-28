@@ -405,6 +405,7 @@ function windsorConfig() {
 
 let shopifyToken = null;
 let shopifyTokenExpiresAt = 0;
+let shopifyAccessScopesCache = { scopes: new Set(), expiresAt: 0 };
 let googleToken = null;
 let googleTokenExpiresAt = 0;
 
@@ -514,6 +515,10 @@ async function shopifyAccessToken() {
 
   shopifyToken = json.access_token;
   shopifyTokenExpiresAt = Date.now() + Number(json.expires_in || 86400) * 1000;
+  shopifyAccessScopesCache = {
+    scopes: new Set(String(json.scope || "").split(",").map(scope => scope.trim()).filter(Boolean)),
+    expiresAt: Date.now() + 5 * 60 * 1000
+  };
   return shopifyToken;
 }
 
@@ -541,6 +546,28 @@ async function shopifyGraphql(query, variables) {
     throw new Error(`Shopify API error (${response.status} ${response.statusText}, ${domain}, ${apiVersion}):${hint} ${detail}`);
   }
   return json.data;
+}
+
+async function shopifyAccessScopes() {
+  if (Date.now() < shopifyAccessScopesCache.expiresAt && shopifyAccessScopesCache.scopes.size) {
+    return shopifyAccessScopesCache.scopes;
+  }
+  const data = await shopifyGraphql(`query MerchXAccessScopes {
+    currentAppInstallation {
+      accessScopes { handle }
+    }
+  }`, {});
+  const scopes = new Set((data?.currentAppInstallation?.accessScopes || []).map(scope => cleanText(scope.handle)).filter(Boolean));
+  shopifyAccessScopesCache = { scopes, expiresAt: Date.now() + 5 * 60 * 1000 };
+  return scopes;
+}
+
+async function assertShopifyWeightAccess(weightSettings = readShopifyProductWeightSettings()) {
+  if (!weightSettings.enabled) return;
+  const scopes = await shopifyAccessScopes();
+  if (!scopes.has("write_inventory")) {
+    throw new Error("Shopify weights need the Merch X app to have the write_inventory access scope. Add that scope in the Shopify app configuration, approve the updated app access, then restart Merch X.");
+  }
 }
 
 function productSeason(product) {
@@ -10738,6 +10765,22 @@ function writeAppSettingJson(key, value) {
   return value || {};
 }
 
+function readShopifyProductWeightSettings() {
+  return shopifyProductSync.normalizeWeightSettings(readAppSettingJson("shopifyProductWeightDefaults", {}));
+}
+
+function writeShopifyProductWeightSettings(input = {}, req = null) {
+  const settings = shopifyProductSync.normalizeWeightSettings({ ...input, enabled: true });
+  if (!settings.departments.length && !settings.fallbackKilograms) {
+    throw new Error("Add at least one department average or a fallback weight.");
+  }
+  return writeAppSettingJson("shopifyProductWeightDefaults", {
+    ...settings,
+    updatedAt: new Date().toISOString(),
+    updatedBy: req ? actorName(req) : "Team"
+  });
+}
+
 function readSalePlannerConfig() {
   return salePlanner.normalizeSaleCollectionConfig(readAppSettingJson("salePlannerCollections", {}));
 }
@@ -14428,6 +14471,7 @@ function indexedProductParams(product) {
 
 function productReadiness(product, options = {}) {
   const dbData = options.dbData || readOrderDb();
+  const weightSettings = options.weightSettings || readShopifyProductWeightSettings();
   const sku = normalizeSku(product.sku);
   const blocking = [];
   const warnings = [];
@@ -14438,6 +14482,12 @@ function productReadiness(product, options = {}) {
   if (!cleanText(product.productType || product.category)) blocking.push("Missing product type");
   if (!cleanText(product.imageUrl)) blocking.push("Missing image");
   if (!numberOrZero(product.unitCostGbp)) blocking.push("Missing GBP cost");
+  if (weightSettings.enabled && !shopifyProductSync.productWeight(product, weightSettings)) {
+    const department = shopifyProductSync.productDepartment(product);
+    blocking.push(department
+      ? `Missing Shopify average weight for ${department}`
+      : "Missing department for Shopify average weight");
+  }
 
   if (sku) {
     const sameSkuProducts = openOrderSqliteDb().prepare("SELECT id FROM products WHERE sku = ? AND id != ?").all(sku, Number(product.id || 0));
@@ -14457,10 +14507,11 @@ function readCatalogProducts({ includeArchived = false } = {}) {
   const sqlite = openOrderSqliteDb();
   const rows = sqlite.prepare("SELECT * FROM products ORDER BY updated_at DESC").all();
   const dbData = readOrderDb();
+  const weightSettings = readShopifyProductWeightSettings();
   return rows
     .map(row => {
       const product = productFromRow(row);
-      const readiness = productReadiness(product, { dbData });
+      const readiness = productReadiness(product, { dbData, weightSettings });
       return {
         ...product,
         readiness,
@@ -14898,7 +14949,16 @@ function productShopifyPayload(product, fileInput = null, variantProducts = [pro
     product.supplierSku ? { namespace: "custom", key: "supplier_sku", type: "single_line_text_field", value: product.supplierSku } : null
   ].filter(Boolean);
   const metafields = mergeMetafields(product.extraMetafields || [], baseMetafields);
-  const variantInput = shopifyProductSync.sizeVariantInputs(variantProducts, sizeOptionName);
+  const weightSettings = readShopifyProductWeightSettings();
+  if (weightSettings.enabled) {
+    const missingWeights = variantProducts
+      .filter(variantProduct => !shopifyProductSync.productWeight(variantProduct, weightSettings))
+      .map(variantProduct => `${variantProduct.sku || "Unknown SKU"} (${shopifyProductSync.productDepartment(variantProduct) || "no department"})`);
+    if (missingWeights.length) {
+      throw new Error(`Shopify average weight is not configured for ${missingWeights.join(", ")}.`);
+    }
+  }
+  const variantInput = shopifyProductSync.sizeVariantInputs(variantProducts, sizeOptionName, weightSettings);
 
   const input = {
     title: product.title || product.style,
@@ -15006,6 +15066,7 @@ async function pushProductDraftToShopify(product, req) {
   if (!readiness.ready) throw new Error(`Product is not ready: ${readiness.blocking.join(", ")}`);
   const { shop, clientId, clientSecret } = shopifyConfig();
   if (!shop || !clientId || !clientSecret) return { configured: false, message: "Set SHOPIFY_SHOP, SHOPIFY_CLIENT_ID, and SHOPIFY_CLIENT_SECRET to push Shopify drafts." };
+  await assertShopifyWeightAccess();
 
   const existingVariant = await shopifyVariantBySku(product.sku);
   if (existingVariant?.product?.id && normalizeSku(existingVariant.sku) === normalizeSku(product.sku)) {
@@ -15087,6 +15148,7 @@ async function pushProductVariantGroupToShopify(products, req) {
   if (!shop || !clientId || !clientSecret) {
     return { configured: false, ok: false, groupId, message: "Set SHOPIFY_SHOP, SHOPIFY_CLIENT_ID, and SHOPIFY_CLIENT_SECRET to push Shopify drafts." };
   }
+  await assertShopifyWeightAccess();
 
   const conflicts = [];
   for (const product of members) {
@@ -18176,12 +18238,25 @@ async function handleApi(req, res) {
 
   if (req.method === "GET" && url.pathname === "/api/products") {
     const products = readCatalogProducts({ includeArchived: url.searchParams.get("includeArchived") === "1" });
+    const weightSettings = readShopifyProductWeightSettings();
+    const configured = Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret);
+    let weightAccess = { requiredScope: "write_inventory", granted: null, message: "" };
+    if (configured && weightSettings.enabled) {
+      try {
+        weightAccess.granted = (await shopifyAccessScopes()).has("write_inventory");
+        if (!weightAccess.granted) weightAccess.message = "Shopify app permission required: write_inventory.";
+      } catch (error) {
+        weightAccess.message = error.message || "Could not check Shopify inventory permission.";
+      }
+    }
     sendJson(res, 200, {
       products,
       count: products.length,
       suppliers: readCatalogSuppliers().map(supplier => ({ id: supplier.id, name: supplier.name, status: supplier.status })),
       lastIssuedSku: getLastIssuedSku(readOrderDb()),
-      shopifyConfigured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret),
+      shopifyConfigured: configured,
+      shopifyWeightSettings: weightSettings,
+      shopifyWeightAccess: weightAccess,
       generatedAt: new Date().toISOString()
     });
     return true;
@@ -18316,6 +18391,22 @@ async function handleApi(req, res) {
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not update the Shopify size group." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/products/shopify/weight-settings") {
+    if (!requireRoles(req, res, ["Buyer", "Admin"], "Only Admin or Buyer users can update Shopify average weights.")) return true;
+    try {
+      const body = await readJsonBody(req);
+      const shopifyWeightSettings = writeShopifyProductWeightSettings(body.settings || body, req);
+      sendJson(res, 200, {
+        ok: true,
+        shopifyWeightSettings,
+        products: readCatalogProducts({ includeArchived: true })
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not save Shopify average weights." });
     }
     return true;
   }

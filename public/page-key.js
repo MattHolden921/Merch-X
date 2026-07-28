@@ -309,6 +309,8 @@
           ["Preview", "Validates and shows the intended Shopify draft payload without creating a product."],
           ["Group sizes", "Explicitly joins selected local SKUs into one future Shopify product. The first selected SKU is the lead for product-level content; selecting any member later includes the whole group."],
           ["Size-group safeguards", "Members must be unlinked and ready, with unique SKUs/sizes and matching title, supplier, buying code, colour, product type and season. Grouping is never inferred automatically."],
+          ["Average weights", "Buyer or Admin users maintain department averages in kilograms in the Shopify sync view. Saving at least one weight switches the feature on automatically; every new variant receives its department average or the optional fallback, and missing coverage blocks the push."],
+          ["Shopify permission", "Automatic weights require the Merch X Shopify app to have the write_inventory access scope. The page shows Permission needed and blocks new draft pushes when that scope has not been granted."],
           ["Push draft", "Creates a Shopify DRAFT only. A saved size group creates one product with multiple Size variants; inventory quantity is not written by this workflow."]
         ]],
         ["Identifiers", [
