@@ -40,6 +40,15 @@ test("size groups reject ambiguous product identity and duplicate sizes", () => 
   assert.match(result.blocking.join("; "), /sizes must be unique/);
 });
 
+test("size groups require one shared Style Group identity", () => {
+  const result = sync.sizeVariantGroupValidation([
+    product({ id: 1, sku: "15100", size: "S/M", styleGroupGid: "gid://shopify/Metaobject/1" }),
+    product({ id: 2, sku: "15101", size: "M/L", styleGroupGid: "gid://shopify/Metaobject/2" })
+  ]);
+  assert.equal(result.ready, false);
+  assert.match(result.blocking.join("; "), /same Style Group/);
+});
+
 test("selecting one member expands to the complete persistent group", () => {
   const products = [
     product({ id: 1, sku: "15100", size: "S/M", shopifyVariantGroupId: "group-1", shopifyVariantGroupPrimary: true }),

@@ -27,11 +27,16 @@ test("uses GA purchases rather than Shopify units for CVR", () => {
   assert.equal(ranking.productCvr(product({ units: 20, gaViews: 100, gaPurchases: 4 })), 0.04);
 });
 
-test("buying code groups colourways and title fallback covers legacy products", () => {
+test("Style Group is canonical and buying code/title remain legacy fallbacks", () => {
+  const groupedBlue = ranking.styleParts(product({ title: "Harper Dress Navy", styleGroupGid: "gid://shopify/Metaobject/1", styleGroupName: "Harper Dress", buyingCode: "BLUE" }));
+  const groupedPink = ranking.styleParts(product({ title: "Different Pink", styleGroupGid: "gid://shopify/Metaobject/1", styleGroupName: "Harper Dress", buyingCode: "PINK" }));
+  assert.equal(groupedBlue.styleKey, groupedPink.styleKey);
+  assert.equal(groupedBlue.styleSource, "Style Group");
+
   const codedBlue = ranking.styleParts(product({ title: "Harper Dress Navy", buyingCode: "ART-55", color: "Navy" }));
   const codedPink = ranking.styleParts(product({ title: "Completely Different Pink", buyingCode: "ART-55", color: "Pink" }));
   assert.equal(codedBlue.styleKey, codedPink.styleKey);
-  assert.equal(codedBlue.styleSource, "buying code");
+  assert.equal(codedBlue.styleSource, "buying code fallback");
 
   const legacyBlue = ranking.styleParts(product({ title: "Harper Dress Royal Blue", buyingCode: "", color: "Blue" }));
   const legacyPink = ranking.styleParts(product({ title: "Harper Dress Light Pink", buyingCode: "", color: "Pink" }));

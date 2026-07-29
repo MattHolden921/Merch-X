@@ -308,15 +308,19 @@
           ["Sync status", "Not synced, Ready, Synced draft, Conflict or Error describes the handoff/link state; it is separate from product status."],
           ["Preview", "Validates and shows the intended Shopify draft payload without creating a product."],
           ["Group sizes", "Explicitly joins selected local SKUs into one future Shopify product. The first selected SKU is the lead for product-level content; selecting any member later includes the whole group."],
-          ["Size-group safeguards", "Members must be unlinked and ready, with unique SKUs/sizes and matching title, supplier, buying code, colour, product type and season. Grouping is never inferred automatically."],
+          ["Size-group safeguards", "Members must be unlinked and ready, with unique SKUs/sizes and matching title, supplier, Style Group, buying code, colour, product type and season. Grouping is never inferred automatically."],
           ["Average weights", "Buyer or Admin users maintain department averages in kilograms in the Shopify sync view. Saving at least one weight switches the feature on automatically; every new variant receives its department average or the optional fallback, and missing coverage blocks the push."],
           ["Shopify permission", "Automatic weights require the Merch X Shopify app to have the write_inventory access scope. The page shows Permission needed and blocks new draft pushes when that scope has not been granted."],
+          ["Style Group", "Select an existing Product style group or enter a new name. Draft push resolves or creates its metaobject, writes custom.style_group, and adds the Shopify product to the group's Products list."],
+          ["Product CSV import", "Use styleGroupName or Style Group for the readable group name. Existing Shopify references may instead use Style Group GID or the custom.style_group export column."],
+          ["Style Group permission", "Reading, creating and maintaining groups requires read_metaobjects and write_metaobjects in addition to the existing product scopes."],
           ["Push draft", "Creates a Shopify DRAFT only. A saved size group creates one product with multiple Size variants; inventory quantity is not written by this workflow."]
         ]],
         ["Identifiers", [
           ["Supplier identity", "Supplier filters, reports and normal save flows ignore capitalization-only differences while retaining a readable saved label."],
           ["SKU", "Unique local sellable identifier."],
-          ["Buying code", "Style-level code used to group related colourways; written to Shopify custom metadata on new draft creation."],
+          ["Buying code", "Supplier/style reference retained as custom.buying_code. It is no longer the canonical colourway relationship."],
+          ["Style Group identifier", "The shared product_style_group metaobject GID is canonical; its Products list contains the related Shopify product GIDs."],
           ["Colour", "Product-level colour metadata; Size remains the only Shopify variant option for new drafts."],
           ["Shared Shopify product", "Grouped size rows keep separate local SKUs and variant IDs while sharing one Shopify product ID."],
           ["Supplier credit", "Open credit exposure derived from unresolved discrepancy credit notes."]
@@ -358,7 +362,7 @@
           ["GP%", "Calculated excluding VAT from price and variant cost; the lowest known variant margin is used."],
           ["Move", "Positive means moving up the collection; negative means moving down."],
           ["Global position", "Ranking happens before search and movement filters, so filtering never changes the suggested position."],
-          ["Colourway group", "Uses buying code first, then a conservative title/type fallback for legacy products."]
+          ["Colourway group", "Uses custom.style_group first. Buying code and a conservative title/type rule remain temporary fallbacks for unmigrated products."]
         ]],
         ["Apply safeguards", [
           ["Baseline", "A hash of the fully synced Shopify order; Apply stops if live order has changed."],

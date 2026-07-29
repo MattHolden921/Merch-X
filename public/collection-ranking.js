@@ -80,6 +80,8 @@
 
   function styleParts(product) {
     const title = String(product.title || "").replace(/\s+/g, " ").trim();
+    const styleGroupGid = String(product.styleGroupGid || "").trim();
+    const styleGroupName = String(product.styleGroupName || "").trim();
     const buyingCode = normalizedKey(product.buyingCode);
     let style = title;
     let color = String(product.color || "").trim();
@@ -97,9 +99,13 @@
     const fallbackStyle = normalizedKey(style || title);
     const productType = normalizedKey(product.productType);
     return {
-      styleName: style || title,
-      styleKey: buyingCode ? `buying:${buyingCode}` : `title:${productType}:${fallbackStyle}`,
-      styleSource: buyingCode ? "buying code" : "title fallback",
+      styleName: styleGroupName || style || title,
+      styleKey: styleGroupGid
+        ? `style-group:${styleGroupGid}`
+        : buyingCode
+          ? `buying:${buyingCode}`
+          : `title:${productType}:${fallbackStyle}`,
+      styleSource: styleGroupGid ? "Style Group" : buyingCode ? "buying code fallback" : "title fallback",
       colorName: color
     };
   }
@@ -234,7 +240,7 @@
       if (used.has(product.id)) continue;
       const candidates = (groups.get(product.styleKey) || []).filter(item => !used.has(item.id)).sort(sortByScoreThenPosition);
       const first = candidates[0];
-      const maxGap = first.styleSource === "buying code" ? 15 : 10;
+      const maxGap = first.styleSource === "Style Group" ? 18 : first.styleSource === "buying code fallback" ? 15 : 10;
       const second = candidates.slice(1).find(item => Math.abs((first.score || 0) - (item.score || 0)) <= maxGap);
       if (!second) {
         used.add(first.id);

@@ -24,6 +24,7 @@ const seasonalSaleReview = require("./lib/seasonal-sale-review");
 const windsorMarketing = require("./lib/windsor-marketing");
 const bestsellers = require("./lib/bestsellers");
 const shopifyProductSync = require("./lib/shopify-product-sync");
+const productStyleGroups = require("./lib/product-style-groups");
 const newArrivalsCleanup = require("./lib/new-arrivals-cleanup");
 
 const publicDir = path.join(__dirname, "public");
@@ -524,28 +525,36 @@ async function shopifyAccessToken() {
 
 async function shopifyGraphql(query, variables) {
   const { domain, apiVersion } = shopifyConfig();
-  const response = await requestJson(`https://${domain}/admin/api/${apiVersion}/graphql.json`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-shopify-access-token": await shopifyAccessToken()
-    },
-    body: JSON.stringify({ query, variables })
-  });
-  const json = response.json;
-  if (!response.ok || json.errors) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const response = await requestJson(`https://${domain}/admin/api/${apiVersion}/graphql.json`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-shopify-access-token": await shopifyAccessToken()
+      },
+      body: JSON.stringify({ query, variables })
+    });
+    const json = response.json;
     const errors = Array.isArray(json.errors) ? json.errors : [];
-    const missingShopifyQl = errors.some(error =>
-      error?.extensions?.code === "undefinedField" &&
-      error?.extensions?.fieldName === "shopifyqlQuery"
-    );
-    const detail = json.errors ? JSON.stringify(json.errors) : response.statusText;
-    const hint = missingShopifyQl
-      ? " ShopifyQL reports need a newer Shopify Admin API schema; set SHOPIFY_API_VERSION=2026-07 on the server and restart."
-      : "";
-    throw new Error(`Shopify API error (${response.status} ${response.statusText}, ${domain}, ${apiVersion}):${hint} ${detail}`);
+    const throttled = errors.some(error => error?.extensions?.code === "THROTTLED");
+    if (throttled && attempt < 3) {
+      await new Promise(resolve => setTimeout(resolve, 750 * (2 ** attempt)));
+      continue;
+    }
+    if (!response.ok || json.errors) {
+      const missingShopifyQl = errors.some(error =>
+        error?.extensions?.code === "undefinedField" &&
+        error?.extensions?.fieldName === "shopifyqlQuery"
+      );
+      const detail = json.errors ? JSON.stringify(json.errors) : response.statusText;
+      const hint = missingShopifyQl
+        ? " ShopifyQL reports need a newer Shopify Admin API schema; set SHOPIFY_API_VERSION=2026-07 on the server and restart."
+        : "";
+      throw new Error(`Shopify API error (${response.status} ${response.statusText}, ${domain}, ${apiVersion}):${hint} ${detail}`);
+    }
+    return json.data;
   }
-  return json.data;
+  throw new Error("Shopify API remained throttled after bounded retries.");
 }
 
 async function shopifyAccessScopes() {
@@ -567,6 +576,183 @@ async function assertShopifyWeightAccess(weightSettings = readShopifyProductWeig
   const scopes = await shopifyAccessScopes();
   if (!scopes.has("write_inventory")) {
     throw new Error("Shopify weights need the Merch X app to have the write_inventory access scope. Add that scope in the Shopify app configuration, approve the updated app access, then restart Merch X.");
+  }
+}
+
+const PRODUCT_STYLE_GROUP_TYPE = "product_style_group";
+const PRODUCT_STYLE_GROUP_NAME_FIELD = "style_name";
+const PRODUCT_STYLE_GROUP_PRODUCTS_FIELD = "products";
+
+async function shopifyStyleGroupAccess() {
+  const scopes = await shopifyAccessScopes();
+  const missing = ["read_metaobjects", "write_metaobjects"].filter(scope => !scopes.has(scope));
+  return {
+    granted: missing.length === 0,
+    requiredScopes: ["read_metaobjects", "write_metaobjects"],
+    missing,
+    message: missing.length
+      ? `Shopify app permission required: ${missing.join(", ")}. Add the scopes, approve the updated app access, then restart Merch X.`
+      : ""
+  };
+}
+
+async function assertShopifyStyleGroupAccess() {
+  const access = await shopifyStyleGroupAccess();
+  if (!access.granted) throw new Error(access.message);
+  return access;
+}
+
+function normalizeShopifyStyleGroup(metaobject = {}) {
+  const fields = new Map((metaobject.fields || []).map(field => [field.key, field]));
+  const productField = fields.get(PRODUCT_STYLE_GROUP_PRODUCTS_FIELD);
+  let productIds = [];
+  try {
+    productIds = JSON.parse(productField?.value || "[]");
+  } catch {
+    productIds = [];
+  }
+  return {
+    id: metaobject.id || "",
+    handle: metaobject.handle || "",
+    type: metaobject.type || PRODUCT_STYLE_GROUP_TYPE,
+    name: metaobject.displayName || fields.get(PRODUCT_STYLE_GROUP_NAME_FIELD)?.value || metaobject.handle || "",
+    status: metaobject.capabilities?.publishable?.status || "",
+    productIds: Array.isArray(productIds) ? productIds.filter(Boolean) : [],
+    updatedAt: metaobject.updatedAt || ""
+  };
+}
+
+async function readShopifyStyleGroups() {
+  await assertShopifyStyleGroupAccess();
+  const groups = [];
+  let cursor = null;
+  let hasNextPage = true;
+  while (hasNextPage) {
+    const data = await shopifyGraphql(`query MerchXProductStyleGroups($type: String!, $cursor: String) {
+      metaobjects(type: $type, first: 250, after: $cursor) {
+        nodes {
+          id
+          handle
+          type
+          displayName
+          updatedAt
+          capabilities { publishable { status } }
+          fields { key value type }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }`, { type: PRODUCT_STYLE_GROUP_TYPE, cursor });
+    const connection = data?.metaobjects || {};
+    groups.push(...(connection.nodes || []).map(normalizeShopifyStyleGroup));
+    hasNextPage = Boolean(connection.pageInfo?.hasNextPage);
+    cursor = connection.pageInfo?.endCursor || null;
+  }
+  return groups;
+}
+
+async function ensureShopifyStyleGroup(product, options = {}) {
+  const name = cleanText(product.styleGroupName);
+  const existingGid = cleanText(product.styleGroupGid);
+  if (!name && !existingGid) return { product, group: null };
+  await assertShopifyStyleGroupAccess();
+  const groups = Array.isArray(options.groups) ? options.groups : await readShopifyStyleGroups();
+  const handle = cleanText(product.styleGroupHandle) || productStyleGroups.handleForName(name);
+  let group = groups.find(item => item.id === existingGid)
+    || groups.find(item => item.handle === handle)
+    || groups.find(item => productStyleGroups.normalizedKey(item.name) === productStyleGroups.normalizedKey(name));
+  if (!group) {
+    if (!name) throw new Error("The saved Style Group no longer exists in Shopify. Choose it again before pushing.");
+    const data = await shopifyGraphql(`mutation MerchXUpsertProductStyleGroup($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
+      metaobjectUpsert(handle: $handle, metaobject: $metaobject) {
+        metaobject {
+          id handle type displayName updatedAt
+          capabilities { publishable { status } }
+          fields { key value type }
+        }
+        userErrors { field message code }
+      }
+    }`, {
+      handle: { type: PRODUCT_STYLE_GROUP_TYPE, handle },
+      metaobject: {
+        fields: [
+          { key: PRODUCT_STYLE_GROUP_NAME_FIELD, value: name },
+          ...(Array.isArray(options.initialProductIds) && options.initialProductIds.length
+            ? [{ key: PRODUCT_STYLE_GROUP_PRODUCTS_FIELD, value: JSON.stringify([...new Set(options.initialProductIds.filter(Boolean))]) }]
+            : [])
+        ],
+        capabilities: { publishable: { status: "ACTIVE" } }
+      }
+    });
+    const payload = data?.metaobjectUpsert || {};
+    if ((payload.userErrors || []).length) throw new Error(payload.userErrors.map(error => error.message).join("; "));
+    if (!payload.metaobject?.id) throw new Error("Shopify did not return a Style Group metaobject ID.");
+    group = normalizeShopifyStyleGroup(payload.metaobject);
+    if (Array.isArray(options.groups)) options.groups.push(group);
+  }
+  const nextProduct = {
+    ...product,
+    styleGroupName: group.name || name,
+    styleGroupHandle: group.handle || handle,
+    styleGroupGid: group.id,
+    styleGroupSyncStatus: "Resolved"
+  };
+  const updated = options.persist === false ? nextProduct : upsertCatalogProduct(nextProduct);
+  return { product: updated, group };
+}
+
+async function setShopifyStyleGroupProducts(group, productIds = []) {
+  if (!group?.id) return group;
+  await assertShopifyStyleGroupAccess();
+  const nextProductIds = [...new Set([...(group.productIds || []), ...productIds].filter(Boolean))];
+  if (nextProductIds.length === (group.productIds || []).length) return group;
+  const data = await shopifyGraphql(`mutation MerchXUpdateProductStyleGroupMembers($id: ID!, $metaobject: MetaobjectUpdateInput!) {
+    metaobjectUpdate(id: $id, metaobject: $metaobject) {
+      metaobject {
+        id handle type displayName updatedAt
+        capabilities { publishable { status } }
+        fields { key value type }
+      }
+      userErrors { field message code }
+    }
+  }`, {
+    id: group.id,
+    metaobject: {
+      fields: [{ key: PRODUCT_STYLE_GROUP_PRODUCTS_FIELD, value: JSON.stringify(nextProductIds) }],
+      capabilities: { publishable: { status: "ACTIVE" } }
+    }
+  });
+  const payload = data?.metaobjectUpdate || {};
+  if ((payload.userErrors || []).length) throw new Error(payload.userErrors.map(error => error.message).join("; "));
+  if (!payload.metaobject?.id) throw new Error("Shopify did not return the updated Style Group.");
+  return normalizeShopifyStyleGroup(payload.metaobject);
+}
+
+async function repairLocalProductStyleGroup(product, req) {
+  if (!cleanText(product?.shopifyProductGid) || !cleanText(product?.styleGroupGid)) {
+    return { product, warning: "" };
+  }
+  try {
+    const groups = await readShopifyStyleGroups();
+    const group = groups.find(item => item.id === product.styleGroupGid);
+    if (!group) throw new Error("The saved Style Group no longer exists in Shopify.");
+    await setShopifyStyleGroupProducts(group, [product.shopifyProductGid]);
+    const updated = upsertCatalogProduct({ ...product, styleGroupSyncStatus: "Synced" });
+    recordProductSyncEvent(updated, "shopify_style_group_repair", req, {
+      result: "ok",
+      shopifyProductGid: updated.shopifyProductGid,
+      payload: { styleGroupGid: group.id, styleGroupName: group.name }
+    });
+    return { product: updated, warning: "" };
+  } catch (error) {
+    const warning = `Product status refreshed, but Style Group membership still needs repair: ${error.message}`;
+    const updated = upsertCatalogProduct({ ...product, styleGroupSyncStatus: "Error" });
+    recordProductSyncEvent(updated, "shopify_style_group_repair", req, {
+      result: "error",
+      shopifyProductGid: updated.shopifyProductGid,
+      error: error.message || "Could not repair the Style Group member list.",
+      payload: { styleGroupGid: updated.styleGroupGid, styleGroupName: updated.styleGroupName }
+    });
+    return { product: updated, warning };
   }
 }
 
@@ -681,6 +867,9 @@ function normalizeProduct(product, orderMetrics) {
     variantIds,
     supplier: productSupplier(product),
     buyingCode: String(product.buyingCodeMetafield?.value || "").trim(),
+    styleGroupGid: String(product.styleGroupMetafield?.value || "").trim(),
+    styleGroupName: String(product.styleGroupMetafield?.reference?.displayName || "").trim(),
+    styleGroupHandle: String(product.styleGroupMetafield?.reference?.handle || "").trim(),
     season: productSeason(product),
     color: productColor(product),
     imageUrl: image?.url || "",
@@ -3282,6 +3471,12 @@ async function fetchCollectionPlanner(req, res) {
             seasonMetafield: metafield(namespace: "custom", key: "season") { value }
             productStatusMetafield: metafield(namespace: "custom", key: "product_status") { value }
             buyingCodeMetafield: metafield(namespace: "custom", key: "buying_code") { value }
+            styleGroupMetafield: metafield(namespace: "custom", key: "style_group") {
+              value
+              reference {
+                ... on Metaobject { id handle displayName }
+              }
+            }
             createdAt
             publishedAt
             updatedAt
@@ -4488,6 +4683,22 @@ function openOrderSqliteDb() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS style_group_migration_audit (
+      id TEXT PRIMARY KEY,
+      actor_name TEXT,
+      preview_hash TEXT NOT NULL,
+      status TEXT NOT NULL,
+      requested_groups INTEGER DEFAULT 0,
+      requested_products INTEGER DEFAULT 0,
+      completed_groups INTEGER DEFAULT 0,
+      completed_products INTEGER DEFAULT 0,
+      payload TEXT,
+      result TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      finished_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS issued_skus (
       sku TEXT PRIMARY KEY,
       issued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -5544,6 +5755,7 @@ function openOrderSqliteDb() {
   orderSqliteDb.prepare("CREATE INDEX IF NOT EXISTS idx_products_supplier ON products(supplier_name, product_status, sync_status)").run();
   orderSqliteDb.prepare("CREATE INDEX IF NOT EXISTS idx_products_shopify ON products(shopify_product_gid, shopify_variant_gid)").run();
   orderSqliteDb.prepare("CREATE INDEX IF NOT EXISTS idx_product_sync_events_product ON product_sync_events(product_id, created_at)").run();
+  orderSqliteDb.prepare("CREATE INDEX IF NOT EXISTS idx_style_group_migration_audit_created ON style_group_migration_audit(created_at)").run();
   orderSqliteDb.prepare("CREATE INDEX IF NOT EXISTS idx_suppliers_status ON suppliers(status, name)").run();
   migrateInvoiceFilesToDisk(orderSqliteDb);
   importOrderJsonIfNeeded(orderSqliteDb);
@@ -14423,6 +14635,10 @@ function productFromRow(row) {
     lastSyncedAt: data.lastSyncedAt || row.last_synced_at || "",
     shopifyVariantGroupId: data.shopifyVariantGroupId || "",
     shopifyVariantGroupPrimary: Boolean(data.shopifyVariantGroupPrimary),
+    styleGroupName: data.styleGroupName || "",
+    styleGroupHandle: data.styleGroupHandle || "",
+    styleGroupGid: data.styleGroupGid || "",
+    styleGroupSyncStatus: data.styleGroupSyncStatus || (data.styleGroupGid ? "Synced" : ""),
     productStatusCode: data.productStatusCode || "N",
     detailsAndFit: data.detailsAndFit || "",
     fabricCare: data.fabricCare || "",
@@ -14551,6 +14767,10 @@ function normalizeProductInput(input = {}, existing = {}) {
     status = existing.status === "Live" ? "Live" : localProductStatusFromShopifyStatus(merged.shopifyStatus || existing.shopifyStatus);
   }
   const rawTags = merged.tags || firstNonEmpty(merged, ["Tags"]);
+  const rawStyleGroup = cleanText(merged.styleGroupName || firstNonEmpty(merged, ["Style Group", "Style Group Name"]));
+  const rawStyleGroupReference = cleanText(
+    merged.styleGroupGid || firstNonEmpty(merged, ["Style Group GID", "Style Group (product.metafields.custom.style_group)"])
+  );
   const rawColour = merged.colour || merged.color || firstNonEmpty(merged, [
     "Variant Colour (product.metafields.custom.variant_colour)",
     "Product Group Swatch (product.metafields.custom.product_group_swatch)"
@@ -14597,6 +14817,10 @@ function normalizeProductInput(input = {}, existing = {}) {
     lastSyncedAt: cleanText(merged.lastSyncedAt),
     shopifyVariantGroupId: cleanText(merged.shopifyVariantGroupId),
     shopifyVariantGroupPrimary: Boolean(merged.shopifyVariantGroupPrimary),
+    styleGroupName: rawStyleGroup,
+    styleGroupHandle: cleanText(merged.styleGroupHandle || firstNonEmpty(merged, ["Style Group Handle"]) || productStyleGroups.handleForName(rawStyleGroup)),
+    styleGroupGid: rawStyleGroupReference.startsWith("gid://shopify/Metaobject/") ? rawStyleGroupReference : "",
+    styleGroupSyncStatus: cleanText(merged.styleGroupSyncStatus),
     productStatusCode: cleanText(merged.productStatusCode || firstNonEmpty(merged, ["Product Status (product.metafields.custom.product_status)"]) || "N"),
     detailsAndFit: cleanText(merged.detailsAndFit || firstNonEmpty(merged, ["Details and Fit (product.metafields.custom.details_and_fit)"])),
     fabricCare: cleanText(merged.fabricCare || firstNonEmpty(merged, ["Fabric & Care (product.metafields.custom.fabric_care)"])),
@@ -14946,7 +15170,8 @@ function productShopifyPayload(product, fileInput = null, variantProducts = [pro
     product.season ? { namespace: "custom", key: "season", type: "single_line_text_field", value: product.season } : null,
     supplier ? { namespace: "custom", key: "supplier", type: "single_line_text_field", value: supplier } : null,
     buyingCode ? { namespace: "custom", key: "buying_code", type: "single_line_text_field", value: buyingCode } : null,
-    product.supplierSku ? { namespace: "custom", key: "supplier_sku", type: "single_line_text_field", value: product.supplierSku } : null
+    product.supplierSku ? { namespace: "custom", key: "supplier_sku", type: "single_line_text_field", value: product.supplierSku } : null,
+    product.styleGroupGid ? { namespace: "custom", key: "style_group", type: "metaobject_reference", value: product.styleGroupGid } : null
   ].filter(Boolean);
   const metafields = mergeMetafields(product.extraMetafields || [], baseMetafields);
   const weightSettings = readShopifyProductWeightSettings();
@@ -15086,8 +15311,10 @@ async function pushProductDraftToShopify(product, req) {
     throw shopifyPushError(`SKU ${product.sku} already exists in Shopify on ${existingVariant.product.title || "another product"}. Refresh status or choose a different SKU before pushing.`, "duplicate_sku", { existingVariant });
   }
 
-  const fileInput = await stagedShopifyImageFile(product);
-  const input = productShopifyPayload(product, fileInput);
+  const styleGroupResolution = await ensureShopifyStyleGroup(product);
+  const pushProduct = styleGroupResolution.product;
+  const fileInput = await stagedShopifyImageFile(pushProduct);
+  const input = productShopifyPayload(pushProduct, fileInput);
   const response = await shopifyGraphql(`mutation createProductDraft($productSet: ProductSetInput!, $synchronous: Boolean!) {
     productSet(input: $productSet, synchronous: $synchronous) {
       product {
@@ -15105,9 +15332,9 @@ async function pushProductDraftToShopify(product, req) {
   if ((payload.userErrors || []).length) throw new Error(payload.userErrors.map(error => error.message).join("; "));
   const shopifyProduct = payload.product;
   if (!shopifyProduct?.id) throw new Error("Shopify did not return a product ID.");
-  const variant = (shopifyProduct.variants?.nodes || []).find(item => normalizeSku(item.sku) === normalizeSku(product.sku)) || shopifyProduct.variants?.nodes?.[0] || {};
-  const updated = upsertCatalogProduct({
-    ...product,
+  const variant = (shopifyProduct.variants?.nodes || []).find(item => normalizeSku(item.sku) === normalizeSku(pushProduct.sku)) || shopifyProduct.variants?.nodes?.[0] || {};
+  let updated = upsertCatalogProduct({
+    ...pushProduct,
     status: "Shopify draft",
     shopifyProductGid: shopifyProduct.id,
     shopifyVariantGid: variant.id || "",
@@ -15118,10 +15345,31 @@ async function pushProductDraftToShopify(product, req) {
   recordProductSyncEvent(updated, "shopify_push_draft", req, {
     result: "ok",
     shopifyProductGid: shopifyProduct.id,
-    payload: { sku: product.sku, title: input.title, status: "DRAFT" },
+    payload: { sku: pushProduct.sku, title: input.title, status: "DRAFT" },
     data: { shopifyProduct, input }
   });
-  return { configured: true, product: updated, shopifyProduct };
+  let styleGroupWarning = "";
+  if (styleGroupResolution.group) {
+    try {
+      await setShopifyStyleGroupProducts(styleGroupResolution.group, [shopifyProduct.id]);
+      updated = upsertCatalogProduct({ ...updated, styleGroupSyncStatus: "Synced" });
+      recordProductSyncEvent(updated, "shopify_style_group_linked", req, {
+        result: "ok",
+        shopifyProductGid: shopifyProduct.id,
+        payload: { styleGroupGid: styleGroupResolution.group.id, styleGroupName: styleGroupResolution.group.name }
+      });
+    } catch (error) {
+      styleGroupWarning = `The draft was created, but the Style Group member list still needs repair: ${error.message}`;
+      updated = upsertCatalogProduct({ ...updated, styleGroupSyncStatus: "Error" });
+      recordProductSyncEvent(updated, "shopify_style_group_linked", req, {
+        result: "error",
+        shopifyProductGid: shopifyProduct.id,
+        error: error.message || "Could not update the Style Group member list.",
+        payload: { styleGroupGid: styleGroupResolution.group.id, styleGroupName: styleGroupResolution.group.name }
+      });
+    }
+  }
+  return { configured: true, product: updated, shopifyProduct, styleGroupWarning };
 }
 
 async function pushProductVariantGroupToShopify(products, req) {
@@ -15172,8 +15420,19 @@ async function pushProductVariantGroupToShopify(products, req) {
     throw shopifyPushError(`Cannot create the grouped draft because ${conflicts.map(item => item.product.sku).join(", ")} already ${conflicts.length === 1 ? "exists" : "exist"} in Shopify. Use Refresh status before trying again.`, "duplicate_sku", { products: conflictProducts, conflicts });
   }
 
-  const fileInput = await stagedShopifyImageFile(lead);
-  const input = productShopifyPayload(lead, fileInput, members);
+  const styleGroupResolution = await ensureShopifyStyleGroup(lead);
+  const resolvedLead = styleGroupResolution.product;
+  const resolvedMembers = members.map(member => member.id === lead.id
+    ? resolvedLead
+    : upsertCatalogProduct({
+      ...member,
+      styleGroupName: resolvedLead.styleGroupName,
+      styleGroupHandle: resolvedLead.styleGroupHandle,
+      styleGroupGid: resolvedLead.styleGroupGid,
+      styleGroupSyncStatus: resolvedLead.styleGroupSyncStatus
+    }));
+  const fileInput = await stagedShopifyImageFile(resolvedLead);
+  const input = productShopifyPayload(resolvedLead, fileInput, resolvedMembers);
   const response = await shopifyGraphql(`mutation createProductVariantDraft($productSet: ProductSetInput!, $synchronous: Boolean!) {
     productSet(input: $productSet, synchronous: $synchronous) {
       product {
@@ -15193,9 +15452,9 @@ async function pushProductVariantGroupToShopify(products, req) {
   if (!shopifyProduct?.id) throw new Error("Shopify did not return a product ID for the size-variant group.");
 
   const variantsBySku = new Map((shopifyProduct.variants?.nodes || []).map(variant => [normalizeSku(variant.sku), variant]));
-  const missingSkus = members.filter(product => !variantsBySku.get(normalizeSku(product.sku))?.id).map(product => product.sku);
+  const missingSkus = resolvedMembers.filter(product => !variantsBySku.get(normalizeSku(product.sku))?.id).map(product => product.sku);
   const sqlite = openOrderSqliteDb();
-  const updated = sqlite.transaction(() => members.map(product => {
+  let updated = sqlite.transaction(() => resolvedMembers.map(product => {
     const variant = variantsBySku.get(normalizeSku(product.sku));
     return upsertCatalogProduct({
       ...product,
@@ -15216,6 +15475,16 @@ async function pushProductVariantGroupToShopify(products, req) {
       data: { shopifyProduct, input }
     });
   }
+  let styleGroupWarning = "";
+  if (styleGroupResolution.group) {
+    try {
+      await setShopifyStyleGroupProducts(styleGroupResolution.group, [shopifyProduct.id]);
+      updated = sqlite.transaction(() => updated.map(product => upsertCatalogProduct({ ...product, styleGroupSyncStatus: "Synced" })))();
+    } catch (error) {
+      styleGroupWarning = `The grouped draft was created, but the Style Group member list still needs repair: ${error.message}`;
+      updated = sqlite.transaction(() => updated.map(product => upsertCatalogProduct({ ...product, styleGroupSyncStatus: "Error" })))();
+    }
+  }
   return {
     configured: true,
     ok: missingSkus.length === 0,
@@ -15224,7 +15493,8 @@ async function pushProductVariantGroupToShopify(products, req) {
     products: updated,
     shopifyProduct,
     missingSkus,
-    message: missingSkus.length ? `The Shopify product was created, but variant IDs were not returned for ${missingSkus.join(", ")}. Refresh status to reconcile them.` : ""
+    styleGroupWarning,
+    message: missingSkus.length ? `The Shopify product was created, but variant IDs were not returned for ${missingSkus.join(", ")}. Refresh status to reconcile them.` : styleGroupWarning
   };
 }
 
@@ -15262,7 +15532,7 @@ async function refreshProductShopifyStatus(product, req) {
     variant = variantNode || {};
     if (node?.id && normalizeSku(variant.sku) === normalizeSku(product.sku)) {
       const shopifyState = syncedProductStateFromShopifyStatus(node.status);
-      const updated = upsertCatalogProduct({
+      let updated = upsertCatalogProduct({
         ...product,
         shopifyProductGid: node.id,
         shopifyVariantGid: variant.id || product.shopifyVariantGid || "",
@@ -15277,7 +15547,15 @@ async function refreshProductShopifyStatus(product, req) {
         payload: { sku: product.sku, matchedExisting: true },
         data
       });
-      return { configured: true, product: updated, found: true, linkedExisting: true };
+      const styleGroupRepair = await repairLocalProductStyleGroup(updated, req);
+      updated = styleGroupRepair.product;
+      return {
+        configured: true,
+        product: updated,
+        found: true,
+        linkedExisting: true,
+        styleGroupWarning: styleGroupRepair.warning
+      };
     }
   }
   if (!node) {
@@ -15287,7 +15565,7 @@ async function refreshProductShopifyStatus(product, req) {
   }
   const shopifyState = syncedProductStateFromShopifyStatus(node.status);
   const groupedVariantMissing = Boolean(product.shopifyVariantGroupId && !variant.id);
-  const updated = upsertCatalogProduct({
+  let updated = upsertCatalogProduct({
     ...product,
     shopifyProductGid: node.id,
     shopifyVariantGid: groupedVariantMissing ? "" : variant.id || product.shopifyVariantGid || "",
@@ -15302,7 +15580,15 @@ async function refreshProductShopifyStatus(product, req) {
     error: groupedVariantMissing ? `Shopify product does not contain grouped SKU ${product.sku}.` : "",
     data
   });
-  return { configured: true, product: updated, found: true, conflict: groupedVariantMissing };
+  const styleGroupRepair = await repairLocalProductStyleGroup(updated, req);
+  updated = styleGroupRepair.product;
+  return {
+    configured: true,
+    product: updated,
+    found: true,
+    conflict: groupedVariantMissing,
+    styleGroupWarning: styleGroupRepair.warning
+  };
 }
 
 async function reconcileOrderProductsFromShopify(order, req) {
@@ -18241,12 +18527,20 @@ async function handleApi(req, res) {
     const weightSettings = readShopifyProductWeightSettings();
     const configured = Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret);
     let weightAccess = { requiredScope: "write_inventory", granted: null, message: "" };
+    let styleGroupAccess = { requiredScopes: ["read_metaobjects", "write_metaobjects"], granted: null, missing: [], message: "" };
     if (configured && weightSettings.enabled) {
       try {
         weightAccess.granted = (await shopifyAccessScopes()).has("write_inventory");
         if (!weightAccess.granted) weightAccess.message = "Shopify app permission required: write_inventory.";
       } catch (error) {
         weightAccess.message = error.message || "Could not check Shopify inventory permission.";
+      }
+    }
+    if (configured) {
+      try {
+        styleGroupAccess = await shopifyStyleGroupAccess();
+      } catch (error) {
+        styleGroupAccess.message = error.message || "Could not check Shopify Style Group permissions.";
       }
     }
     sendJson(res, 200, {
@@ -18257,6 +18551,7 @@ async function handleApi(req, res) {
       shopifyConfigured: configured,
       shopifyWeightSettings: weightSettings,
       shopifyWeightAccess: weightAccess,
+      shopifyStyleGroupAccess: styleGroupAccess,
       generatedAt: new Date().toISOString()
     });
     return true;
@@ -18407,6 +18702,26 @@ async function handleApi(req, res) {
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not save Shopify average weights." });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/products/shopify/style-groups") {
+    if (!requireRoles(req, res, ["Buyer", "Admin", "Merchandising"])) return true;
+    try {
+      const access = await shopifyStyleGroupAccess();
+      if (!access.granted) {
+        sendJson(res, 200, { configured: true, access, groups: [] });
+        return true;
+      }
+      sendJson(res, 200, {
+        configured: true,
+        access,
+        groups: await readShopifyStyleGroups(),
+        generatedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not load Shopify Style Groups." });
     }
     return true;
   }
