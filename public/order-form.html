@@ -744,8 +744,9 @@ async function lookupSku(id){
     applyProductToLine(id,result.product,{replaceCopiedImage:val(`duplicated-${id}`)==="1"});
     set(`duplicated-${id}`,"");
     setLineSource(id,source,lookupSku);
-    state.textContent=`Prefilled from ${source}`;
-    state.className="lookup-state ok";
+    const sourceLabel=source==="removed_order_line"?"saved removed order line":source;
+    state.textContent=result.message||`Prefilled from ${sourceLabel}`;
+    state.className=source==="removed_order_line"?"lookup-state warn":"lookup-state ok";
   }else{
     if(val(`duplicated-${id}`)==="1"&&val(`pendingImage-${id}`)){
       setLineImage(id,val(`pendingImage-${id}`));
@@ -942,14 +943,30 @@ function exportCleanPdf(){
   pdfWindow.document.close();
 }
 
+async function saveOrderPayload(order){
+  let response=await apiFetch("/api/order-form/orders",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(order)});
+  let result=await response.json();
+  if(response.status===409&&result.code==="order_line_removal_confirmation_required"&&(result.removedSkus||[]).length){
+    const skus=result.removedSkus.join(", ");
+    if(!window.confirm(`This save removes ${result.removedSkus.length} existing SKU line${result.removedSkus.length===1?"":"s"}:\n\n${skus}\n\nTheir quantities will disappear from this purchase order and downstream barcode, warehouse and intake work. Save these removals?`)){
+      notice("Save cancelled. No order lines were removed.","warn");
+      return null;
+    }
+    order.removedLineSkusAcknowledged=result.removedSkus;
+    response=await apiFetch("/api/order-form/orders",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(order)});
+    result=await response.json();
+  }
+  if(!response.ok||!result.ok){notice(result.error||"Could not save order.","err");return null;}
+  return result;
+}
+
 el("order-form").addEventListener("submit",async event=>{
   event.preventDefault();
   const order=collectOrder();
   if(!order.supplier.name){notice("Add a supplier name before saving.","err");return;}
   if(!order.lines.length){notice("Add at least one order line before saving.","err");return;}
-  const response=await apiFetch("/api/order-form/orders",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(order)});
-  const result=await response.json();
-  if(!response.ok||!result.ok){notice(result.error||"Could not save order.","err");return;}
+  const result=await saveOrderPayload(order);
+  if(!result)return;
   notice(`${result.order.orderNumber} saved. Supplier and SKU details are now available for future orders.`);
   await loadBootstrap();
   loadSavedOrder(result.order.id);

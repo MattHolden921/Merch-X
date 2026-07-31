@@ -214,10 +214,12 @@
           ["Local SKU", "A Merch X-issued SKU reserved against existing products, orders and prior issued numbers."],
           ["Buying code", "Supplier/style code shared by related variants or colourways; it is not the same as the unique SKU."],
           ["Colour and material", "Stored as separate product attributes so downstream product and Shopify workflows keep their meaning."],
+          ["Restore removed SKU", "An explicit SKU lookup can refill a saved product removed from the latest order snapshot. Review and enter its order quantity before saving it back onto the purchase order."],
           ["Line image", "Saved with the order line and available to warehouse and product workflows."]
         ]],
         ["Saving", [
           ["Purchase order", "Saving creates the order snapshot and enriches related supplier/product records without wiping curated master data."],
+          ["Removing lines", "Updating an existing order cannot silently drop SKU lines. Merch X lists every removed SKU and requires a second explicit confirmation because barcode, warehouse and intake quantities will also change."],
           ["Credit balance", "Outstanding supplier credit shown for context; it is not automatically applied to the new order."],
           ["Next step", "Approval, payment and intake are managed from Orders after the form is saved."]
         ]]
@@ -232,7 +234,7 @@
           ["Payment", "Tracks deposit, balance or payment progress; invoice matching uses ordered supplier cost without a VAT uplift."],
           ["Finance notifications", "Before Buying Director approval, the invoice panel warns that a saved invoice stays with the director and Finance is not notified early. The save confirmation repeats this. After approval, a new invoice or credit note notifies the current Finance assignee, or active Finance users when unassigned. If the save already creates the same Finance handoff, Merch X sends one notification rather than a duplicate."],
           ["Payment ledger", "Finance records dated Planned or Paid supplier transactions against an invoice or the whole order. EUR payments lock the order FX rate into a GBP cashflow value; only planned transactions can be deleted."],
-          ["Product gate", "Every line needs a SKU connected to a recognised Shopify product/state before batches and receipts can be booked."],
+          ["Product gate", "Every standalone line needs a recognised Shopify product/state. A saved size-group line also needs its own exact Shopify variant ID; the shared product ID alone does not release intake."],
           ["Batch vs order Received", "A batch Received is a factual delivery state; the order reaches Received only after all batches and discrepancy review."],
           ["Composite status", "A derived order status based on the current approval, payment, intake and archive state."]
         ]],
@@ -247,7 +249,8 @@
         ["Reports and checks", [
           ["Live / New Arrivals", "Read-only Shopify check by SKU for active/live state and the exact New Arrivals collection tag."],
           ["Warehouse report", "Printable order-line image and quantity report for the selected batch scope."],
-          ["Label job", "Immutable barcode-label snapshot using two Code 128 SKU labels per ordered unit plus configured spares. Supplier guides group buying-code/style matches without regard to capitalization. Choose all lines in the current scope or select only newly added colour/style lines for a follow-up job. Blocking issues stop generation; warnings require confirmation before the job is created."],
+          ["Size variants", "Shopify size groups share one product ID, but saved purchase-order rows, quantities and barcode rows remain separate by SKU and Size."],
+          ["Label job", "Immutable barcode-label snapshot using two Code 128 SKU labels per ordered unit plus configured spares. Supplier guides may place buying-code/style matches in one section, but each SKU/Size keeps its own row and label quantity. Choose all lines in the current scope or select only newly added colour/style lines for a follow-up job. Blocking issues stop generation; warnings require confirmation before the job is created."],
           ["Archive vs delete", "Archive preserves the record outside active work; delete is a restricted destructive action."]
         ]]
       ]
@@ -307,7 +310,7 @@
           ["Readiness", "Requires SKU, supplier, title/style, RRP, product type, image, cost and unique local SKU."],
           ["Sync status", "Not synced, Ready, Synced draft, Conflict or Error describes the handoff/link state; it is separate from product status."],
           ["Preview", "Validates and shows the intended Shopify draft payload without creating a product."],
-          ["Group sizes", "Explicitly joins selected local SKUs into one future Shopify product. The first selected SKU is the lead for product-level content; selecting any member later includes the whole group."],
+          ["Group sizes", "Explicitly joins selected local SKUs into one future Shopify product only. The first selected SKU is the lead for product-level content; purchase-order and barcode rows remain separate by SKU/Size, and selecting any member later includes the whole Shopify group."],
           ["Size-group safeguards", "Members must be unlinked and ready, with unique SKUs/sizes and matching title, supplier, Style Group, buying code, colour, product type and season. Grouping is never inferred automatically."],
           ["Average weights", "Buyer or Admin users maintain department averages in kilograms in the Shopify sync view. Saving at least one weight switches the feature on automatically; every new variant receives its department average or the optional fallback, and missing coverage blocks the push."],
           ["Shopify permission", "Automatic weights require the Merch X Shopify app to have the write_inventory access scope. The page shows Permission needed and blocks new draft pushes when that scope has not been granted."],

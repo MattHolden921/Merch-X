@@ -25,6 +25,8 @@ const windsorMarketing = require("./lib/windsor-marketing");
 const bestsellers = require("./lib/bestsellers");
 const shopifyProductSync = require("./lib/shopify-product-sync");
 const productStyleGroups = require("./lib/product-style-groups");
+const productCompletion = require("./lib/product-completion");
+const orderLineIntegrity = require("./lib/order-line-integrity");
 const newArrivalsCleanup = require("./lib/new-arrivals-cleanup");
 
 const publicDir = path.join(__dirname, "public");
@@ -6583,28 +6585,11 @@ function catalogProductMap() {
 }
 
 function productIsShopifyComplete(product = {}) {
-  const status = String(product.status || product.productStatus || "").trim().toLowerCase();
-  const syncStatus = String(product.syncStatus || "").trim().toLowerCase();
-  const shopifyStatus = String(product.shopifyStatus || "").trim().toUpperCase();
-  return Boolean(
-    product.shopifyProductGid
-    || product.shopifyVariantGid
-    || ["synced", "synced draft"].includes(syncStatus)
-    || status === "shopify draft"
-    || status === "live"
-    || shopifyStatus === "DRAFT"
-    || shopifyStatus === "ACTIVE"
-  );
+  return productCompletion.productIsShopifyComplete(product);
 }
 
 function productCompletionSource(product = {}) {
-  if (product.shopifyProductGid || product.shopifyVariantGid) return "Shopify linked";
-  if (product.syncStatus === "Synced draft") return "Synced draft";
-  if (product.status === "Live") return "Live";
-  if (product.status === "Shopify draft") return "Shopify draft";
-  if (product.shopifyStatus) return product.shopifyStatus;
-  if (product.syncStatus) return product.syncStatus;
-  return product.status || "Not synced";
+  return productCompletion.productCompletionSource(product);
 }
 
 function orderProductCompletion(order, productMap = null) {
@@ -6620,6 +6605,7 @@ function orderProductCompletion(order, productMap = null) {
       sku,
       buyingCode: line?.buyingCode || line?.supplierSku || "",
       style: line?.style || line?.description || "",
+      size: line?.size || "",
       complete,
       status: complete ? "Complete" : sku ? "Needs Shopify" : "Missing SKU",
       source: productCompletionSource(product),
@@ -14079,9 +14065,20 @@ function migrateReissuedOrderLineSkus(sqlite, storedOrder) {
 
 function saveOrderFormOrder(dbData, savedOrder) {
   const sqlite = openOrderSqliteDb();
+  const acknowledgedRemovedSkus = Array.isArray(savedOrder.removedLineSkusAcknowledged)
+    ? savedOrder.removedLineSkusAcknowledged
+    : [];
   const storedOrder = materializeOrderImages(savedOrder);
+  delete storedOrder.removedLineSkusAcknowledged;
   const existingOrder = sqlite.prepare("SELECT id, data FROM orders WHERE order_number = ?").get(String(storedOrder.orderNumber || ""));
   const previousOrder = parseJson(existingOrder?.data, null);
+  const removedSkus = orderLineIntegrity.removedOrderSkus(previousOrder || {}, storedOrder);
+  if (removedSkus.length && !orderLineIntegrity.acknowledgedRemovalsCover(removedSkus, acknowledgedRemovedSkus)) {
+    const error = new Error(`This update removes ${removedSkus.length} saved SKU line${removedSkus.length === 1 ? "" : "s"}: ${removedSkus.join(", ")}. Confirm the removal before saving.`);
+    error.code = "order_line_removal_confirmation_required";
+    error.removedSkus = removedSkus;
+    throw error;
+  }
   const incomingOrderId = String(storedOrder.id);
   const canonicalOrderId = String(existingOrder?.id || incomingOrderId);
   storedOrder.id = canonicalOrderId;
@@ -19259,7 +19256,8 @@ async function handleApi(req, res) {
 
     const db = readOrderDb();
     const masterProductCandidate = findCatalogProduct(sku);
-    const masterProduct = productHasStaleOrderReference(db, masterProductCandidate) ? null : masterProductCandidate;
+    const removedOrderProduct = productHasStaleOrderReference(db, masterProductCandidate) ? masterProductCandidate : null;
+    const masterProduct = removedOrderProduct ? null : masterProductCandidate;
     const savedProduct = masterProduct || db.products.find(product => normalizeSku(product.sku) === sku && !productHasStaleOrderReference(db, product)) || null;
     if (masterProduct) {
       sendJson(res, 200, {
@@ -19268,6 +19266,16 @@ async function handleApi(req, res) {
         source: "master",
         shopifyConfigured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret),
         message: ""
+      });
+      return true;
+    }
+    if (removedOrderProduct) {
+      sendJson(res, 200, {
+        found: true,
+        product: removedOrderProduct,
+        source: "removed_order_line",
+        shopifyConfigured: Boolean(shopifyConfig().shop && shopifyConfig().clientId && shopifyConfig().clientSecret),
+        message: `This saved SKU was removed from the latest ${removedOrderProduct.lastOrderNumber || "order"} snapshot. Review its quantity before saving it back onto an order.`
       });
       return true;
     }
@@ -19335,7 +19343,12 @@ async function handleApi(req, res) {
       writeLastIssuedSkuSetting(getLastIssuedSku(refreshed));
       sendJson(res, 200, { ok: true, order: savedOrder, nextOrderNumber: nextOrderNumber(refreshed) });
     } catch (error) {
-      sendJson(res, 400, { error: error.message || "Could not save order" });
+      const removalConfirmationRequired = error.code === "order_line_removal_confirmation_required";
+      sendJson(res, removalConfirmationRequired ? 409 : 400, {
+        error: error.message || "Could not save order",
+        code: error.code || "",
+        removedSkus: error.removedSkus || []
+      });
     }
     return true;
   }

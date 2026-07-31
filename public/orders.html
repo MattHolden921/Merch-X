@@ -142,8 +142,8 @@ textarea{min-height:70px;resize:vertical}
 .discrepancy-table th:nth-child(6),.discrepancy-table td:nth-child(6){width:124px}
 .discrepancy-table th:nth-child(7),.discrepancy-table td:nth-child(7){width:130px}
 .empty-state{padding:38px 16px;text-align:center;color:var(--ds-text-muted);font-size:13px;line-height:1.6}
-.line-table-wrap{overflow-x:hidden;border:1px solid var(--ds-line);border-radius:var(--ds-radius)}
-.line-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.line-table-wrap{overflow-x:auto;border:1px solid var(--ds-line);border-radius:var(--ds-radius)}
+.line-table{width:100%;min-width:1180px;border-collapse:collapse;table-layout:fixed}
 .line-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line)}
 .line-table td{font-size:11px;color:var(--ds-text-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);vertical-align:top;overflow-wrap:anywhere}
 .line-table tr:last-child td{border-bottom:0}
@@ -1052,7 +1052,7 @@ function renderLineTable(order){
     ${liveCheckSummary(order)}
     ${lineFilterTabs()}
     <div class="line-table-wrap"><table class="line-table">
-      <thead><tr><th>Batch</th><th>Product</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th>Colour code</th><th>Material</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
+      <thead><tr><th>Batch</th><th>Product</th><th>SKU</th><th>Buying code</th><th>Style</th><th>Category</th><th>Colour</th><th>Colour code</th><th>Material</th><th>Size</th><th class="num">Qty</th><th class="num">Unit GBP</th><th class="num">Unit EUR</th><th class="num">Line GBP</th><th class="num">Line EUR</th></tr></thead>
       <tbody>${visible.map(({line,index})=>{
         const productStatus=productLineStatus(order,index);
         return `<tr>
@@ -1065,6 +1065,7 @@ function renderLineTable(order){
         <td>${escapeHtml(line.colour||line.color||"")}</td>
         <td>${escapeHtml(line.colourCode||line.colorCode||"")}</td>
         <td>${escapeHtml(line.material||"")}</td>
+        <td>${escapeHtml(line.size||"")}</td>
         <td class="num">${Number(line.quantity||0).toLocaleString("en-GB")}</td>
         <td class="num">${money.format(lineUnitGbp(line))}</td>
         <td class="num">${eurMoney.format(lineUnitEur(line,order))}</td>

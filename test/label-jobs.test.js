@@ -45,6 +45,26 @@ test("supplier guide grouping ignores buying-code and style capitalization", () 
   assert.equal(new Set(result.rows.map(row => row.supplierGuideGroupKey)).size, 1);
 });
 
+test("keeps size SKUs separate when they share one Shopify product", () => {
+  const sharedProductGid = "gid://shopify/Product/1";
+  const result = buildLabelJobSnapshot({
+    order: {
+      lines: [
+        { sku: "15100", buyingCode: "MIA24", style: "Mia dress", colour: "Navy", size: "S", quantity: 10, shopifyProductGid: sharedProductGid, shopifyVariantGid: "gid://shopify/ProductVariant/11" },
+        { sku: "15101", buyingCode: "MIA24", style: "Mia dress", colour: "Navy", size: "M", quantity: 12, shopifyProductGid: sharedProductGid, shopifyVariantGid: "gid://shopify/ProductVariant/12" }
+      ]
+    }
+  });
+
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.rows.map(row => [row.sku, row.size, row.orderedQuantity]), [
+    ["15100", "S", 10],
+    ["15101", "M", 12]
+  ]);
+  assert.equal(result.totals.skus, 2);
+  assert.equal(result.totals.labelsRequired, 44);
+});
+
 test("uses batch allocations and rejects empty scopes", () => {
   const batchLines = [{ batchId: "b1", lineIndex: 1, quantity: 5 }];
   const result = buildLabelJobSnapshot({ order, batchLines, scopeType: "batch", batchId: "b1" });
