@@ -21,7 +21,7 @@
 .analysis-row strong{display:block;color:var(--ds-text);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .analysis-row span{display:block;color:var(--ds-text-soft);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .analysis-row b{font-weight:650;color:var(--ds-text);white-space:nowrap}
-.analysis-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 170px 170px auto auto;gap:10px;align-items:end;margin:14px 0 10px}
+.analysis-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) 150px 150px 130px auto auto auto auto;gap:10px;align-items:end;margin:14px 0 10px}
 .analysis-table{width:100%;min-width:1510px;border-collapse:collapse;table-layout:fixed}
 .analysis-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ds-text-soft);text-align:left;background:var(--ds-bg-muted);padding:7px 6px;border-bottom:1px solid var(--ds-line);white-space:nowrap}
 .analysis-table td{font-size:11px;color:var(--ds-text-muted);padding:8px 6px;border-bottom:1px solid var(--ds-line);vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
@@ -164,7 +164,10 @@
       <div class="field"><label>Analysis search</label><input id="analysis-search" placeholder="Product, SKU, type, reason"></div>
       <div class="field"><label>Outcome</label><select class="select" id="analysis-outcome-filter"><option value="">All outcomes</option><option value="worked">Worked</option><option value="watch">Watch</option><option value="deepen">Deepen</option><option value="remove">Remove</option></select></div>
       <div class="field"><label>Confidence</label><select class="select" id="analysis-confidence-filter"><option value="">All confidence</option><option value="unavailable">Unavailable</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+      <div class="field"><label>Commercial target</label><select class="select" id="forced-markdown-target"><option value="40">40% off</option><option value="50">50% off</option><option value="60" selected>60% off</option></select></div>
+      <button class="btn primary" type="button" id="force-markdown-btn" disabled>Force further markdown</button>
       <button class="btn" type="button" id="analysis-images-btn" aria-pressed="false">Show images</button>
+      <span class="pill" id="analysis-selected-count">0 selected</span>
       <span class="pill" id="analysis-visible-count">0 products</span>
     </div>
     <div class="table-wrap" id="analysis-table-wrap"></div>
@@ -200,7 +203,7 @@
       <div class="field"><label>Search</label><input id="search" placeholder="Product, SKU, type, warning"></div>
       <div class="field"><label>Status</label><select class="select" id="status-filter"><option value="">All statuses</option><option>Planned</option><option>Applied</option><option>Removed</option><option>Error</option></select></div>
       <div class="field"><label>Type</label><select class="select" id="type-filter"></select></div>
-      <div class="field"><label>Discount</label><select class="select" id="discount-filter"><option value="">All discounts</option><option value="10">10%+</option><option value="20">20%+</option><option value="30">30%+</option><option value="40">40%+</option><option value="50">50%</option></select></div>
+      <div class="field"><label>Discount</label><select class="select" id="discount-filter"><option value="">All discounts</option><option value="10">10%+</option><option value="20">20%+</option><option value="30">30%+</option><option value="40">40%+</option><option value="50">50%+</option><option value="60">60%+</option></select></div>
       <div class="field"><label>Warnings</label><select class="select" id="warning-filter"><option value="">All rows</option><option value="warnings">With warnings</option><option value="clean">No warnings</option></select></div>
       <div class="field"><label>&nbsp;</label><button class="btn" type="button" id="clear-filters-btn">Clear filters</button></div>
     </div>
@@ -270,6 +273,7 @@ const dateFmt=new Intl.DateTimeFormat("en-GB",{day:"2-digit",month:"short",hour:
 let state={plans:[],plan:null,items:[],events:[],metrics:{},analysis:{summary:{},actionSummary:{},exceptions:{worked:[],watch:[],deepen:[],remove:[]},actions:[]},collections:[],collectionConfig:{rootSaleCollectionId:"",childCollectionByType:{}},collectionProductTypes:[],recentJobs:[],policies:{minGpPct:0,requireCostAtDiscount:40},canApply:false,shopifyConfigured:false,shopifyMessage:"",collectionCount:0};
 let selectedRows=new Set();
 let selectedActions=new Set();
+let selectedAnalysis=new Set();
 let analysisImagesVisible=false;
 const analysisImageCache=new Map();
 let pendingJob=null;
@@ -434,8 +438,14 @@ function analysisTotals(rows){
 
 function renderAnalysisTable(){
   const rows=analysisRows();
+  const target=Number(val("forced-markdown-target")||60);
+  const eligible=rows.filter(row=>row.outcome!=="remove"&&Number(row.discountPercent||0)<target);
+  const validIds=new Set((state.analysis?.outcomes||[]).map(row=>row.itemId));
+  selectedAnalysis=new Set([...selectedAnalysis].filter(id=>validIds.has(id)));
   el("analysis-images-btn").textContent=analysisImagesVisible?"Hide images":"Show images";
   el("analysis-images-btn").setAttribute("aria-pressed",String(analysisImagesVisible));
+  el("analysis-selected-count").textContent=`${selectedAnalysis.size.toLocaleString("en-GB")} selected`;
+  el("force-markdown-btn").disabled=!selectedAnalysis.size;
   el("analysis-visible-count").textContent=`${rows.length.toLocaleString("en-GB")} product${rows.length===1?"":"s"}`;
   if(!rows.length){
     el("analysis-table-wrap").innerHTML='<p class="empty-state">No analysis rows match the current filters.</p>';
@@ -448,9 +458,10 @@ function renderAnalysisTable(){
   const postCvr=totals.postViews>0?totals.postPurchases/totals.postViews:0;
   el("analysis-table-wrap").innerHTML=`<table class="analysis-table">
     <thead><tr>
-      <th style="width:250px">Product / evidence</th><th style="width:95px">Outcome</th><th style="width:220px">Before markdown</th><th style="width:220px">After markdown</th><th style="width:175px">Change</th><th style="width:190px">Next step</th><th>Why</th>
+      <th style="width:34px"><input type="checkbox" aria-label="Select all visible products eligible for a further markdown" ${eligible.length&&eligible.every(row=>selectedAnalysis.has(row.itemId))?"checked":""} onchange="setAllVisibleAnalysis(this.checked)"></th><th style="width:250px">Product / evidence</th><th style="width:95px">Outcome</th><th style="width:220px">Before markdown</th><th style="width:220px">After markdown</th><th style="width:175px">Change</th><th style="width:190px">Next step</th><th>Why</th>
     </tr></thead>
     <tbody>${rows.map(row=>`<tr>
+      <td><input type="checkbox" aria-label="Select ${attr(row.title)} for a further markdown" ${selectedAnalysis.has(row.itemId)?"checked":""} ${row.outcome==="remove"||Number(row.discountPercent||0)>=target?"disabled":""} onchange="toggleAnalysisRow('${attr(row.itemId)}',this.checked)"></td>
       <td><div class="analysis-product-cell${analysisImagesVisible?"":" images-hidden"}">${analysisImagesVisible?analysisImageHtml(row):""}<div class="action-main"><strong title="${attr(row.title)}">${escapeHtml(row.title||"-")}</strong><span>${escapeHtml(row.sku||"-")} · ${escapeHtml(row.productType||"-")} · ${Number(row.comparableWeeks||0)} matched week${Number(row.comparableWeeks||0)===1?"":"s"} · ${escapeHtml(row.confidence||"unavailable")}</span><span>${escapeHtml(analysisPeriodText(row))}</span></div></div></td>
       <td><span class="badge ${attr(row.outcome)}">${escapeHtml(outcomeLabel(row.outcome))}</span></td>
       <td><div class="analysis-pair"><b>${Number(row.preUnits||0).toLocaleString("en-GB")} units · ST ${rateText(row.preUnits,Number(row.preUnits||0)+Number(row.preStock||0))}</b><span>End stock ${Number(row.preStock||0).toLocaleString("en-GB")} · ${Number(row.preGaViews||0).toLocaleString("en-GB")} views · CVR ${cvrText(row.preGaPurchases,row.preGaViews)}</span></div></td>
@@ -460,7 +471,7 @@ function renderAnalysisTable(){
       <td title="${attr(row.reason)}">${escapeHtml(row.reason||"-")}</td>
     </tr>`).join("")}</tbody>
     <tfoot><tr>
-      <td>${rows.length.toLocaleString("en-GB")} filtered products</td><td>Totals</td>
+      <td></td><td>${rows.length.toLocaleString("en-GB")} filtered products</td><td>Totals</td>
       <td><div class="analysis-pair"><b>${totals.preUnits.toLocaleString("en-GB")} units · ST ${rateText(totals.preUnits,totals.preUnits+totals.preStock)}</b><span>End stock ${totals.preStock.toLocaleString("en-GB")} · ${totals.preViews.toLocaleString("en-GB")} views · CVR ${cvrText(totals.prePurchases,totals.preViews)}</span></div></td>
       <td><div class="analysis-pair"><b>${totals.postUnits.toLocaleString("en-GB")} units · ST ${rateText(totals.postUnits,totals.postUnits+totals.postStock)}</b><span>End stock ${totals.postStock.toLocaleString("en-GB")} · ${totals.postViews.toLocaleString("en-GB")} views · CVR ${cvrText(totals.postPurchases,totals.postViews)}</span></div></td>
       <td><div class="analysis-pair"><b>ST ${ppText(postSt-preSt)}</b><span>CVR ${ppText(postCvr-preCvr)}</span></div></td><td></td><td></td>
@@ -544,7 +555,7 @@ function actionRowHtml(action){
   return `<tr>
     <td><input type="checkbox" aria-label="Select ${attr(action.title)} action" ${selectedActions.has(action.id)?"checked":""} onchange="toggleAction('${attr(action.id)}',this.checked)"></td>
     <td><div class="action-main"><strong title="${attr(action.title)}">${escapeHtml(action.title||"-")}</strong><span>${escapeHtml(action.sku||"-")} - ${escapeHtml(action.productType||"-")} - ${escapeHtml(action.season||"-")}</span></div></td>
-    <td><span class="badge ${attr(action.actionType)}">${escapeHtml(actionLabel(action.actionType))}</span>${action.changed?` <span class="badge pending">Changed</span>`:""}</td>
+    <td><span class="badge ${attr(action.actionType)}">${escapeHtml(actionLabel(action.actionType))}</span>${action.manualOverride?` <span class="badge pending">Manual override</span>`:""}${action.changed?` <span class="badge pending">Changed</span>`:""}</td>
     <td><div class="price-pair"><b>${moneyText(action.currentPrice)} / ${discountText(action.currentDiscountPercent)}</b><span>RRP ${moneyText(action.originalPrice)}</span></div></td>
     <td>${actionRecommendedHtml(action)}</td>
     <td><div class="price-pair"><b>${actionSignal(action)}</b><span>${Number(action.daysObserved||0)}d - stock ${Number(action.postStock||0).toLocaleString("en-GB")} - views ${Number(action.postGaViews||0).toLocaleString("en-GB")}</span></div></td>
@@ -785,6 +796,7 @@ async function loadPlanner(planId=val("plan-select")){
     state={...state,...data};
     analysisImagesVisible=false;
     selectedActions.clear();
+    selectedAnalysis.clear();
     const legacyReady=state.plan?.status==="Ready"&&!state.plan?.data?.approvedSnapshotHash;
     el("status-note").className=legacyReady||state.plan?.status==="Awaiting approval"?"status warn":"status ok";
     el("status-note").textContent=!state.plan?"Import products from Weekly Actions or Product Merchandising to start a sale plan.":legacyReady?`${state.plan.name} predates approval snapshots. Reopen, review, submit, and approve it before applying.`:state.plan.status==="Awaiting approval"?`${state.plan.name} is awaiting Admin approval.`:`${state.plan.name} loaded.`;
@@ -908,6 +920,12 @@ async function refreshAnalysis(){
 
 function toggleRow(id,checked){if(checked)selectedRows.add(id);else selectedRows.delete(id);renderTable();}
 function setAllVisible(checked){for(const item of filteredItems()){if(checked)selectedRows.add(item.id);else selectedRows.delete(item.id);}renderTable();}
+function toggleAnalysisRow(id,checked){if(checked)selectedAnalysis.add(id);else selectedAnalysis.delete(id);renderAnalysisTable();}
+function setAllVisibleAnalysis(checked){
+  const target=Number(val("forced-markdown-target")||60);
+  for(const row of analysisRows())if(row.outcome!=="remove"&&Number(row.discountPercent||0)<target){if(checked)selectedAnalysis.add(row.itemId);else selectedAnalysis.delete(row.itemId);}
+  renderAnalysisTable();
+}
 function toggleAction(id,checked){if(checked)selectedActions.add(id);else selectedActions.delete(id);renderActions();}
 function setAllVisibleActions(checked){for(const action of actionRows()){if(checked)selectedActions.add(action.id);else selectedActions.delete(action.id);}renderActions();}
 function clearFilters(){["search","status-filter","type-filter","discount-filter","warning-filter"].forEach(id=>el(id).value="");selectedRows.clear();render();}
@@ -930,6 +948,28 @@ async function updateActions(status){
     el("action-note").className="status err";
     el("action-note").textContent=error.message;
   }
+}
+
+async function forceFurtherMarkdown(){
+  const itemIds=[...selectedAnalysis];
+  const targetDiscountPercent=Number(val("forced-markdown-target")||60);
+  if(!itemIds.length){el("analysis-note").className="status warn";el("analysis-note").textContent="Select at least one analysed product first.";return;}
+  const button=el("force-markdown-btn");
+  button.disabled=true;
+  el("analysis-note").className="status warn";
+  el("analysis-note").textContent=`Creating ${targetDiscountPercent}% commercial markdown recommendations...`;
+  try{
+    const data=await apiJson("/api/sale-planner/analysis/actions/force-markdown",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({planId:state.plan?.id||"",itemIds,targetDiscountPercent})});
+    selectedAnalysis.clear();
+    state={...state,...data};
+    el("status-note").className="status ok";
+    el("status-note").textContent=`Added ${Number(data.created||0).toLocaleString("en-GB")} manual ${targetDiscountPercent}% further-markdown recommendation${Number(data.created||0)===1?"":"s"} to the action queue.`;
+    render();
+  }catch(error){
+    el("analysis-note").className="status err";
+    el("analysis-note").textContent=error.message;
+    renderAnalysisTable();
+  }finally{button.disabled=!selectedAnalysis.size;}
 }
 
 async function createActionPlan(actionType){
@@ -1078,6 +1118,8 @@ async function reconcileSelected(){
 
 ["search","status-filter","type-filter","discount-filter","warning-filter"].forEach(id=>el(id).addEventListener("input",renderTable));
 ["analysis-search","analysis-outcome-filter","analysis-confidence-filter"].forEach(id=>el(id).addEventListener("input",renderAnalysisTable));
+el("forced-markdown-target").addEventListener("input",()=>{selectedAnalysis.clear();renderAnalysisTable();});
+el("force-markdown-btn").addEventListener("click",forceFurtherMarkdown);
 el("analysis-images-btn").addEventListener("click",toggleAnalysisImages);
 ["action-search","action-type-filter","action-status-filter"].forEach(id=>el(id).addEventListener("input",renderActions));
 el("refresh-btn").addEventListener("click",()=>loadPlanner());

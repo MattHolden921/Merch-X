@@ -12136,6 +12136,7 @@ function writeSaleAnalysisActions(planId, actions = []) {
   const write = db.transaction(() => {
     for (const action of actions) {
       const existing = currentByKey.get(`${action.itemId}:${action.actionType}`);
+      if (existing?.data?.manualOverride && existing.status === "Pending") continue;
       const changed = !existing || existing.sourceSignature !== action.sourceSignature;
       const status = changed ? "Pending" : existing.status;
       const payload = {
@@ -12148,7 +12149,7 @@ function writeSaleAnalysisActions(planId, actions = []) {
       if (existing) update.run(payload);
       else insert.run(payload);
     }
-    const stale = currentRows.filter(action => !nextKeys.has(`${action.itemId}:${action.actionType}`) && action.status === "Pending");
+    const stale = currentRows.filter(action => !nextKeys.has(`${action.itemId}:${action.actionType}`) && action.status === "Pending" && !action.data?.manualOverride);
     for (const action of stale) {
       db.prepare(`
         UPDATE sale_analysis_actions
@@ -12217,6 +12218,8 @@ function compactSaleAction(action) {
     sellThroughLift: action.sellThroughLift,
     cvrLift: action.cvrLift,
     reason: action.reason,
+    manualOverride: Boolean(action.data?.manualOverride),
+    evidenceOutcome: action.data?.evidenceOutcome || "",
     followUpPlanId: action.followUpPlanId,
     updatedAt: action.updatedAt
   };
@@ -12581,6 +12584,76 @@ async function handleSalePlannerActionsUpdate(req, res) {
     ...actorData(req)
   });
   sendJson(res, 200, { ok: true, updated: rows.map(row => row.id), ...(await readSalePlannerResponse(req, planId)) });
+}
+
+async function handleSalePlannerActionsForceMarkdown(req, res) {
+  const body = await readJsonBody(req);
+  const planId = String(body.planId || "").trim();
+  const itemIds = [...new Set((body.itemIds || []).map(String).filter(Boolean))];
+  const targetDiscountPercent = Number(body.targetDiscountPercent || 60);
+  if (!planId) throw new Error("Missing sale plan.");
+  if (!itemIds.length) throw new Error("Choose at least one analysed product.");
+  if (itemIds.length > 5000) throw new Error("Choose no more than 5,000 analysed products.");
+  const db = openOrderSqliteDb();
+  const plan = salePlanFromRow(db.prepare("SELECT * FROM sale_plans WHERE id = ?").get(planId));
+  if (!plan) throw new Error("Sale plan not found.");
+  const requested = new Set(itemIds);
+  const items = readSalePlannerItems(planId).filter(item => requested.has(String(item.id)));
+  const outcomes = db.prepare("SELECT * FROM sale_markdown_outcomes WHERE plan_id = ?").all(planId).map(saleOutcomeFromRow);
+  const outcomeByItem = new Map(outcomes.map(outcome => [String(outcome.itemId), outcome]));
+  if (items.length !== itemIds.length) throw new Error("One or more selected products are not in this sale plan.");
+
+  const actions = items.map(item => {
+    const outcome = outcomeByItem.get(String(item.id));
+    if (!outcome) throw new Error(`${item.title} has no saved analysis outcome. Refresh analysis first.`);
+    if (outcome.outcome === "remove") throw new Error(`${item.title} is recommended for removal and cannot be forced into a further markdown.`);
+    const recommendation = salePlanner.manualMarkdownActionRecommendation(outcome, item, targetDiscountPercent, { roundingRule: "nearest-pound" });
+    const action = {
+      id: crypto.randomUUID(), planId, itemId: item.id, outcomeId: outcome.id || "", actionType: "deepen",
+      status: "Pending", priority: recommendation.priority, title: item.title || outcome.title || "",
+      sku: item.sku || outcome.data?.sku || "", productType: item.productType || outcome.productType || "",
+      season: item.season || outcome.season || "", currentPrice: recommendation.currentPrice,
+      originalPrice: recommendation.originalPrice, currentDiscountPercent: recommendation.currentDiscountPercent,
+      recommendedDiscountPercent: recommendation.recommendedDiscountPercent,
+      recommendedTargetPrice: recommendation.recommendedTargetPrice, postStock: Number(outcome.postStock || 0),
+      daysObserved: Number(outcome.daysObserved || 0), postGaViews: Number(outcome.postGaViews || 0),
+      viewsPerWeek: Number(outcome.daysObserved || 0) > 0 ? Math.round((Number(outcome.postGaViews || 0) / Math.max(Number(outcome.daysObserved) / 7, 1)) * 10) / 10 : 0,
+      sellThroughLift: Number(outcome.sellThroughLift || 0), cvrLift: Number(outcome.cvrLift || 0),
+      reason: recommendation.reason,
+      data: { ...recommendation.data, outcome: outcome.outcome, sourcePlanId: planId, sourceItemId: item.id,
+        sourceProductKey: outcome.productKey || item.productKey || "", sourceShopifyProductId: outcome.shopifyProductId || item.shopifyProductId || "",
+        forcedBy: actorName(req), forcedAt: new Date().toISOString() }
+    };
+    action.sourceSignature = actionSignature(action);
+    return action;
+  });
+
+  const upsert = db.prepare(`
+    INSERT INTO sale_analysis_actions (
+      id, plan_id, item_id, outcome_id, action_type, status, priority, title, sku, product_type, season,
+      current_price, original_price, current_discount_percent, recommended_discount_percent, recommended_target_price,
+      post_stock, days_observed, post_ga_views, views_per_week, sell_through_lift, cvr_lift,
+      reason, source_signature, changed, data, created_at, updated_at
+    ) VALUES (
+      @id, @planId, @itemId, @outcomeId, @actionType, 'Pending', @priority, @title, @sku, @productType, @season,
+      @currentPrice, @originalPrice, @currentDiscountPercent, @recommendedDiscountPercent, @recommendedTargetPrice,
+      @postStock, @daysObserved, @postGaViews, @viewsPerWeek, @sellThroughLift, @cvrLift,
+      @reason, @sourceSignature, 1, @data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    ) ON CONFLICT(plan_id, item_id, action_type) DO UPDATE SET
+      outcome_id=excluded.outcome_id, status='Pending', priority=excluded.priority, title=excluded.title, sku=excluded.sku,
+      product_type=excluded.product_type, season=excluded.season, current_price=excluded.current_price,
+      original_price=excluded.original_price, current_discount_percent=excluded.current_discount_percent,
+      recommended_discount_percent=excluded.recommended_discount_percent, recommended_target_price=excluded.recommended_target_price,
+      post_stock=excluded.post_stock, days_observed=excluded.days_observed, post_ga_views=excluded.post_ga_views,
+      views_per_week=excluded.views_per_week, sell_through_lift=excluded.sell_through_lift, cvr_lift=excluded.cvr_lift,
+      reason=excluded.reason, source_signature=excluded.source_signature, changed=1, data=excluded.data,
+      follow_up_plan_id=NULL, decided_by=NULL, decided_at=NULL, updated_at=CURRENT_TIMESTAMP
+  `);
+  db.transaction(() => actions.forEach(action => upsert.run({ ...action, data: JSON.stringify(action.data) })))();
+  recordSalePlanEvent(planId, "", "analysis_manual_markdown", actorName(req), `${actions.length} product${actions.length === 1 ? "" : "s"} forced to a ${targetDiscountPercent}% markdown recommendation`, {
+    itemIds, targetDiscountPercent, ...actorData(req)
+  });
+  sendJson(res, 200, { ok: true, created: actions.length, ...(await readSalePlannerResponse(req, planId)) });
 }
 
 function createSalePlanRecord(input = {}, req = {}) {
@@ -19109,6 +19182,16 @@ async function handleApi(req, res) {
       await handleSalePlannerActionsUpdate(req, res);
     } catch (error) {
       sendJson(res, 400, { error: error.message || "Could not update sale analysis actions" });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sale-planner/analysis/actions/force-markdown") {
+    if (!requireRoles(req, res, ["Buyer", "Merchandising", "Admin"])) return true;
+    try {
+      await handleSalePlannerActionsForceMarkdown(req, res);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Could not force further markdown recommendations" });
     }
     return true;
   }

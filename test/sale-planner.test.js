@@ -8,6 +8,7 @@ const {
   gpPercentFromRetail,
   matchSaleChildCollection,
   markdownActionRecommendation,
+  manualMarkdownActionRecommendation,
   markdownLearningStep,
   markdownOutcome,
   mergeSaleCollectionConfig,
@@ -54,6 +55,10 @@ test("deepens existing markdowns and uses compare-at as original price", () => {
   assert.equal(suggestion.existingMarkdownPercent, 20);
   assert.equal(suggestion.discountPercent, 30);
   assert.equal(suggestion.targetPrice, 35);
+
+  const further = recommendMarkdown({ title: "Marked 50", price: 25, compareAtPrice: 50, stock: 15, units: 1, coverWks: 8 }, { now: "2026-06-23" });
+  assert.equal(further.discountPercent, 60);
+  assert.equal(further.targetPrice, 20);
 });
 
 test("explicit sale RRP overrides current markdown prices", () => {
@@ -212,7 +217,8 @@ test("validates sale state, price, collection, stock, cost, and GP guardrails", 
 
 test("builds action recommendations and flags low views before deeper markdowns", () => {
   assert.equal(nextMarkdownStep(20), 30);
-  assert.equal(nextMarkdownStep(50), 50);
+  assert.equal(nextMarkdownStep(50), 60);
+  assert.equal(nextMarkdownStep(60), 60);
 
   const lowViews = lowViewSignal({ daysObserved: 14, postGaViews: 20, postStock: 18 });
   assert.equal(lowViews.lowViews, true);
@@ -246,4 +252,16 @@ test("builds action recommendations and flags low views before deeper markdowns"
   }, { originalPrice: 50, currentPrice: 40, discountPercent: 20 });
   assert.equal(remove.actionType, "remove");
   assert.equal(remove.recommendedTargetPrice, 50);
+
+  const forced = manualMarkdownActionRecommendation({ outcome: "watch" }, {
+    originalPrice: 50, currentPrice: 25, discountPercent: 50
+  }, 60);
+  assert.equal(forced.actionType, "deepen");
+  assert.equal(forced.recommendedDiscountPercent, 60);
+  assert.equal(forced.recommendedTargetPrice, 20);
+  assert.equal(forced.data.manualOverride, true);
+  assert.equal(forced.data.evidenceOutcome, "watch");
+  assert.throws(() => manualMarkdownActionRecommendation({ outcome: "watch" }, {
+    originalPrice: 50, currentPrice: 25, discountPercent: 50
+  }, 50), /deeper than the current/);
 });
