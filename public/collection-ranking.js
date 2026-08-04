@@ -15,7 +15,9 @@
     "Orange", "Pink", "Purple", "Red", "Sage", "White", "Yellow"
   ].sort((left, right) => right.length - left.length);
 
-  const GA_STRATEGIES = new Set(["conversionLift", "goldDust"]);
+  const GA_STRATEGIES = new Set(["conversionLift", "goldDust", "fairExposure"]);
+  const FAIR_EXPOSURE_MIN_VIEWS_PER_WEEK = 25;
+  const FAIR_EXPOSURE_ROW_SIZE = 4;
 
   function clamp01(value) {
     return Math.max(0, Math.min(1, Number(value) || 0));
@@ -76,6 +78,27 @@
   function grossProfitContribution(product) {
     if (product.margin == null) return 0;
     return Math.max(0, Number(product.revenue) || 0) / 1.2 * clamp01(Number(product.margin) / 100);
+  }
+
+  function viewsPerWeek(product, days) {
+    return Math.max(0, Number(product.gaViews) || 0) / Math.max(1, Number(days) || 30) * 7;
+  }
+
+  function isLowVisibility(product, context) {
+    return viewsPerWeek(product, context.days) < FAIR_EXPOSURE_MIN_VIEWS_PER_WEEK;
+  }
+
+  function rotationDayNumber(options = {}) {
+    const explicitDate = String(options.rotationDate || "").trim();
+    const explicitTime = /^\d{4}-\d{2}-\d{2}$/.test(explicitDate)
+      ? Date.parse(`${explicitDate}T00:00:00Z`)
+      : NaN;
+    const time = Number.isFinite(explicitTime) ? explicitTime : Number(options.now) || Date.now();
+    return Math.floor(time / 86400000);
+  }
+
+  function stableExposureKey(product) {
+    return normalizedKey(product.id || product.handle || product.title);
   }
 
   function styleParts(product) {
@@ -190,6 +213,8 @@
         return signal.gpContribution * 35 + signal.margin * 25 + signal.sales * 15 + signal.stock * 10 + (context.gaAvailable ? signal.cvr * 10 : 5) + stability;
       case "goldDust":
         return signal.cvr * 45 + signal.underExposure * 20 + signal.margin * 10 + signal.stock * 10 + signal.gpContribution * 10 + stability;
+      case "fairExposure":
+        return signal.sales * 35 + signal.units * 25 + signal.gpContribution * 15 + signal.stock * 10 + signal.margin * 10 + stability;
       default:
         return signal.sales * 35 + signal.units * 25 + signal.gpContribution * 15 + signal.stock * 10 + signal.margin * 10 + stability;
     }
@@ -198,7 +223,17 @@
   function reasonForStrategy(product, context, strategy) {
     const signal = signals(product, context);
     const parts = [];
-    if (strategy === "newArrivals") {
+    if (strategy === "fairExposure") {
+      if (isLowVisibility(product, context)) {
+        parts.push("daily exposure rotation");
+        parts.push(`${viewsPerWeek(product, context.days).toFixed(1)} GA4 views/week`);
+        parts.push(`${Number(product.stock || 0).toLocaleString("en-GB")} stock units`);
+      } else {
+        parts.push("bestseller anchor");
+        parts.push(Number(product.revenue || 0) > 0 ? `£${Math.round(Number(product.revenue)).toLocaleString("en-GB")} net sales` : "no recent net sales");
+        parts.push(`${Number(product.units || 0).toLocaleString("en-GB")} net units`);
+      }
+    } else if (strategy === "newArrivals") {
       parts.push(`${Math.round(signal.recency * 100)}% launch recency`);
       parts.push(`${((Number(product.units) || 0) / Math.max(1, Math.min(context.days, ageDays(product, context.now)))).toFixed(2)} units/live day`);
     } else if (strategy === "conversionLift" || strategy === "goldDust") {
@@ -226,6 +261,26 @@
       || String(left.title || "").localeCompare(String(right.title || ""));
   }
 
+  function colourwayScoreGap(product) {
+    return product.styleSource === "Style Group" ? 18 : product.styleSource === "buying code fallback" ? 15 : 10;
+  }
+
+  function isCloseColourway(first, candidate) {
+    return first.styleKey === candidate.styleKey
+      && Math.abs((first.score || 0) - (candidate.score || 0)) <= colourwayScoreGap(first);
+  }
+
+  function takeCloseColourwayBlock(queue, maximumSize = 2) {
+    if (!queue.length || maximumSize < 1) return [];
+    const first = queue.shift();
+    if (maximumSize < 2) return [first];
+    const matchIndex = queue.findIndex(candidate => isCloseColourway(first, candidate));
+    if (matchIndex < 0) return [first];
+    const second = queue.splice(matchIndex, 1)[0];
+    const note = `paired colourway via ${first.styleSource}`;
+    return [first, second].map(item => ({ ...item, reason: `${item.reason}; ${note}` }));
+  }
+
   function groupCloseColourways(scored) {
     const groups = new Map();
     for (const product of scored) {
@@ -240,8 +295,7 @@
       if (used.has(product.id)) continue;
       const candidates = (groups.get(product.styleKey) || []).filter(item => !used.has(item.id)).sort(sortByScoreThenPosition);
       const first = candidates[0];
-      const maxGap = first.styleSource === "Style Group" ? 18 : first.styleSource === "buying code fallback" ? 15 : 10;
-      const second = candidates.slice(1).find(item => Math.abs((first.score || 0) - (item.score || 0)) <= maxGap);
+      const second = candidates.slice(1).find(item => isCloseColourway(first, item));
       if (!second) {
         used.add(first.id);
         blocks.push({ score: first.score, items: [first] });
@@ -256,6 +310,57 @@
       });
     }
     return blocks.sort((left, right) => (right.score || 0) - (left.score || 0)).flatMap(block => block.items);
+  }
+
+  function fairExposureOrder(scored, context, options = {}) {
+    const bestSellerOrder = [...scored].sort(sortByScoreThenPosition);
+    const exposure = bestSellerOrder.filter(product => isLowVisibility(product, context));
+    const exposureIds = new Set(exposure.map(product => product.id));
+    const anchors = bestSellerOrder.filter(product => !exposureIds.has(product.id));
+    if (!anchors.length && bestSellerOrder.length) {
+      anchors.push(bestSellerOrder[0]);
+      const promotedIndex = exposure.findIndex(product => product.id === bestSellerOrder[0].id);
+      if (promotedIndex >= 0) exposure.splice(promotedIndex, 1);
+    }
+    const rotatedCandidates = exposure
+      .sort((left, right) => stableExposureKey(left).localeCompare(stableExposureKey(right)) || sortByScoreThenPosition(left, right));
+    if (!rotatedCandidates.length) return groupCloseColourways(anchors);
+
+    const offset = rotationDayNumber(options) % rotatedCandidates.length;
+    const rotatedUnseen = rotatedCandidates.slice(offset).concat(rotatedCandidates.slice(0, offset));
+    const anchorQueue = [...anchors];
+    const exposureQueue = [...rotatedUnseen];
+    const mixed = [];
+    while (anchorQueue.length || exposureQueue.length) {
+      const row = [];
+      if (anchorQueue.length) {
+        const primary = anchorQueue.shift();
+        let matchIndex = anchorQueue.findIndex(candidate => isCloseColourway(primary, candidate));
+        let match = matchIndex >= 0 ? anchorQueue.splice(matchIndex, 1)[0] : null;
+        if (!match) {
+          matchIndex = exposureQueue.findIndex(candidate => isCloseColourway(primary, candidate));
+          if (matchIndex >= 0) match = exposureQueue.splice(matchIndex, 1)[0];
+        }
+        const anchorItems = match ? [primary, match] : [primary];
+        const pairNote = match ? `; paired colourway via ${primary.styleSource}` : "";
+        row.push(...anchorItems.map(product => ({
+          ...product,
+          reason: `bestseller anchor; ${Number(product.revenue || 0) > 0 ? `£${Math.round(Number(product.revenue)).toLocaleString("en-GB")} net sales` : "no recent net sales"}; ${Number(product.units || 0).toLocaleString("en-GB")} net units${pairNote}`
+        })));
+      }
+      while (row.length < FAIR_EXPOSURE_ROW_SIZE && exposureQueue.length) {
+        row.push(...takeCloseColourwayBlock(exposureQueue, FAIR_EXPOSURE_ROW_SIZE - row.length));
+      }
+      while (row.length < FAIR_EXPOSURE_ROW_SIZE && anchorQueue.length) {
+        const product = anchorQueue.shift();
+        row.push({
+          ...product,
+          reason: `bestseller anchor; ${Number(product.revenue || 0) > 0 ? `£${Math.round(Number(product.revenue)).toLocaleString("en-GB")} net sales` : "no recent net sales"}; ${Number(product.units || 0).toLocaleString("en-GB")} net units`
+        });
+      }
+      mixed.push(...row);
+    }
+    return mixed;
   }
 
   function rankProducts(products, options = {}) {
@@ -285,7 +390,10 @@
     }
     eligible.sort(sortByScoreThenPosition);
     ineligible.sort((left, right) => Number(left.currentPosition || 999999) - Number(right.currentPosition || 999999));
-    return { rows: groupCloseColourways(eligible).concat(ineligible), unavailableReason: "", context };
+    const rankedEligible = strategy === "fairExposure"
+      ? fairExposureOrder(eligible, context, options)
+      : groupCloseColourways(eligible);
+    return { rows: rankedEligible.concat(ineligible), unavailableReason: "", context };
   }
 
   return {
@@ -293,6 +401,8 @@
     ageDays,
     createContext,
     eligibilityReason,
+    fairExposureOrder,
+    isLowVisibility,
     productCvr,
     rankProducts,
     signals,

@@ -58,6 +58,49 @@ test("GA strategies are unavailable without GA data", () => {
   assert.match(result.unavailableReason, /GA4/);
 });
 
+test("Fair Exposure keeps sensible bestseller and uplift pairs together in a four-product row", () => {
+  const rows = ranking.rankProducts([
+    product({ id: "seen-1", styleGroupGid: "gid://style/anchor", currentPosition: 1, revenue: 900, gaViews: 300 }),
+    product({ id: "seen-2", styleGroupGid: "gid://style/anchor", currentPosition: 2, revenue: 800, gaViews: 260 }),
+    product({ id: "seen-3", styleGroupGid: "gid://style/other-1", currentPosition: 3, revenue: 700, gaViews: 240 }),
+    product({ id: "seen-4", styleGroupGid: "gid://style/other-2", currentPosition: 4, revenue: 600, gaViews: 220 }),
+    product({ id: "low-a", styleGroupGid: "gid://style/uplift", currentPosition: 20, revenue: 0, units: 0, gaViews: 10 }),
+    product({ id: "low-b", styleGroupGid: "gid://style/uplift", currentPosition: 21, revenue: 0, units: 0, gaViews: 20 })
+  ], { strategy: "fairExposure", days: 30, gaAvailable: true, rotationDate: "2026-08-04" }).rows;
+
+  assert.deepEqual(rows.slice(0, 2).map(row => row.id), ["seen-1", "seen-2"]);
+  assert.deepEqual(new Set(rows.slice(2, 4).map(row => row.id)), new Set(["low-a", "low-b"]));
+  assert.ok(rows.slice(0, 4).every(row => row.reason.includes("paired colourway via Style Group")));
+});
+
+test("Fair Exposure uses three uplift slots when the bestseller has no sensible match", () => {
+  const rows = ranking.rankProducts([
+    product({ id: "seen", styleGroupGid: "gid://style/anchor", revenue: 900, gaViews: 300 }),
+    product({ id: "low-a", styleGroupGid: "gid://style/a", gaViews: 10 }),
+    product({ id: "low-b", styleGroupGid: "gid://style/b", gaViews: 20 }),
+    product({ id: "low-c", styleGroupGid: "gid://style/c", gaViews: 30 })
+  ], { strategy: "fairExposure", days: 30, gaAvailable: true, rotationDate: "2026-08-04" }).rows;
+
+  assert.equal(rows[0].id, "seen");
+  assert.ok(rows.slice(1, 4).every(row => row.reason.includes("daily exposure rotation")));
+});
+
+test("Fair Exposure advances the zero-view queue each day and requires GA4", () => {
+  const products = [
+    product({ id: "seen", styleGroupGid: "gid://style/seen", revenue: 900, gaViews: 200 }),
+    product({ id: "unseen-a", styleGroupGid: "gid://style/a", gaViews: 0 }),
+    product({ id: "unseen-b", styleGroupGid: "gid://style/b", gaViews: 0 }),
+    product({ id: "unseen-c", styleGroupGid: "gid://style/c", gaViews: 0 })
+  ];
+  const firstDay = ranking.rankProducts(products, { strategy: "fairExposure", gaAvailable: true, rotationDate: "2026-08-04" }).rows.filter(row => row.reason.includes("daily exposure rotation")).map(row => row.id);
+  const nextDay = ranking.rankProducts(products, { strategy: "fairExposure", gaAvailable: true, rotationDate: "2026-08-05" }).rows.filter(row => row.reason.includes("daily exposure rotation")).map(row => row.id);
+  const unavailable = ranking.rankProducts(products, { strategy: "fairExposure", gaAvailable: false });
+
+  assert.notEqual(firstDay[0], nextDay[0]);
+  assert.deepEqual(new Set(firstDay), new Set(nextDay));
+  assert.match(unavailable.unavailableReason, /GA4/);
+});
+
 test("inactive, unpublished, and out-of-stock products stay below eligible products", () => {
   const rows = ranking.rankProducts([
     product({ id: "draft", status: "DRAFT", revenue: 1000 }),

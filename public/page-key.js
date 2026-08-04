@@ -312,6 +312,7 @@
           ["Preview", "Validates and shows the intended Shopify draft payload without creating a product."],
           ["Group sizes", "Explicitly joins selected local SKUs into one future Shopify product only. The first selected SKU is the lead for product-level content; purchase-order and barcode rows remain separate by SKU/Size, and selecting any member later includes the whole Shopify group."],
           ["Size-group safeguards", "Members must be unlinked and ready, with unique SKUs/sizes and matching title, supplier, Style Group, buying code, colour, product type and season. Grouping is never inferred automatically."],
+          ["Shopify grouping column", "The main product register keeps every SKU on its own row and shows whether it is a separate Shopify product or a Lead/Member of one shared size-variant product."],
           ["Average weights", "Buyer or Admin users maintain department averages in kilograms in the Shopify sync view. Saving at least one weight switches the feature on automatically; every new variant receives its department average or the optional fallback, and missing coverage blocks the push."],
           ["Shopify permission", "Automatic weights require the Merch X Shopify app to have the write_inventory access scope. The page shows Permission needed and blocks new draft pushes when that scope has not been granted."],
           ["Style Group", "Select an existing Product style group or enter a new name. Draft push resolves or creates its metaobject, writes custom.style_group, and adds the Shopify product to the group's Products list."],
@@ -354,6 +355,7 @@
       sections: [
         ["Strategies", [
           ["Best Sellers", "Balances net sales, net units, gross-profit contribution, stock and margin."],
+          ["Fair Exposure · Daily", "Builds four-product rows with one bestseller plus a sensible Style Group/legacy colourway match, then fills the remaining two positions with low-view products. If the anchor has no match, all three remaining positions can be low-view uplifts. The low-view queue advances daily."],
           ["New Arrivals", "Adds units per live day so recently launched products can compete fairly."],
           ["Clearance", "Prioritises high cover, weak sell-through, weak sales and sale signals."],
           ["High Margin", "Prioritises gross-profit contribution and GP% excluding VAT."],
