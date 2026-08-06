@@ -1,6 +1,6 @@
 # Merch X Project Spec
 
-Last reviewed: 2026-07-28
+Last reviewed: 2026-08-06
 
 This is the shared logic and product reference for Merch X. Keep it current when the app's workflows, calculations, data model, integrations, or page responsibilities change.
 
@@ -45,7 +45,7 @@ The app favours simple operational tools over a large framework:
 - `public/pnl.html`: finance P&L planner using live Shopify actuals, saved cost rules, manual marketing spend, and driver-based profit scenarios.
 - `public/cashflow.html`: Finance-led 13-week cashflow planner combining weekly Despatch and Meta + PPC budgets, three-business-day estimated receipts, supplier commitments, P&L rules with weekly or monthly-in-arrears cash treatment, quarterly UK VAT payment forecasts, and manual cash movements.
 - `public/sku-register.html`: local SKU register and safe deletion of unused issued SKUs.
-- `public/products.html`: product and supplier master-data workspace, local SKU enrichment, readiness review, and Shopify draft push workflow.
+- `public/products.html`: product and supplier master-data workspace, local SKU enrichment, readiness review, latest purchase-order links by SKU, and Shopify draft push workflow.
 - `public/merchandising.html`: Shopify product merchandising view using product, order, and optional GA4 metrics.
 - `public/new-in-performance.html`: launch and image-refresh performance report for recent New In products, draft pipeline rows, image-change impact comparisons, marketing actions, share links, CSV export, and an Admin-only workflow that removes the exact New Arrivals product tag from ageing products.
 - `public/collection-planner.html`: Shopify collection reorder planning and apply-to-Shopify workflow.
@@ -236,7 +236,7 @@ Order form and local SKUs:
 
 Product and supplier master data:
 
-- `GET /api/products`
+- `GET /api/products` (includes the latest saved order ID, number, and date for each SKU so Products can open the order directly)
 - `POST /api/products`
 - `GET /api/products/detail`
 - `POST /api/products/update`

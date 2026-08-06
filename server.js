@@ -26,6 +26,7 @@ const bestsellers = require("./lib/bestsellers");
 const shopifyProductSync = require("./lib/shopify-product-sync");
 const productStyleGroups = require("./lib/product-style-groups");
 const productCompletion = require("./lib/product-completion");
+const { latestOrderBySku, orderByNumber } = require("./lib/product-order-history");
 const orderLineIntegrity = require("./lib/order-line-integrity");
 const newArrivalsCleanup = require("./lib/new-arrivals-cleanup");
 
@@ -14793,13 +14794,20 @@ function readCatalogProducts({ includeArchived = false } = {}) {
   const sqlite = openOrderSqliteDb();
   const rows = sqlite.prepare("SELECT * FROM products ORDER BY updated_at DESC").all();
   const dbData = readOrderDb();
+  const latestOrders = latestOrderBySku(dbData.orders || []);
+  const ordersByNumber = orderByNumber(dbData.orders || []);
   const weightSettings = readShopifyProductWeightSettings();
   return rows
     .map(row => {
       const product = productFromRow(row);
+      const latestOrder = latestOrders.get(normalizeSku(product.sku)) ||
+        ordersByNumber.get(cleanText(product.lastOrderNumber).toUpperCase());
       const readiness = productReadiness(product, { dbData, weightSettings });
       return {
         ...product,
+        lastOrderId: latestOrder?.id || "",
+        lastOrderNumber: latestOrder?.orderNumber || product.lastOrderNumber || "",
+        lastOrderedAt: latestOrder?.orderDate || latestOrder?.savedAt || product.lastOrderedAt || "",
         readiness,
         shopifyAdminUrl: publicShopifyAdminUrl(product.shopifyProductGid)
       };

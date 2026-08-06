@@ -327,6 +327,7 @@
           ["Style Group identifier", "The shared product_style_group metaobject GID is canonical; its Products list contains the related Shopify product GIDs."],
           ["Colour", "Product-level colour metadata; Size remains the only Shopify variant option for new drafts."],
           ["Shared Shopify product", "Grouped size rows keep separate local SKUs and variant IDs while sharing one Shopify product ID."],
+          ["Last order", "The most recent saved purchase order containing the SKU, based on order date (or saved time when no order date exists). Retained history also keeps removed or reissued legacy lines linked. Select the order number to open it in Orders."],
           ["Supplier credit", "Open credit exposure derived from unresolved discrepancy credit notes."]
         ]]
       ]
